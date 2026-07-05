@@ -112,3 +112,4 @@ AUTH0_AUDIENCE=your-api-identifier
 - `npm run build` - Compile TypeScript to JavaScript
 - `npm start` - Run compiled server
 - `npm run seed` - (Future) Seed database with sample data
+# GitHub write access verified 2026-07-05T20:43:01Z
