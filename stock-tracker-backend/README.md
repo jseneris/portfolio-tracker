@@ -38,7 +38,6 @@ The API will start on `http://localhost:5000` and automatically create the requi
 - **type**: `deposit`, `withdrawal`, `interest`, `fee`
 - **amount**: Transaction amount (decimal)
 - **transactionDate**: Date of transaction
-- **notes**: Optional notes
 - **createdAt/updatedAt**: Timestamps
 
 ### StockTransactions
@@ -51,19 +50,27 @@ The API will start on `http://localhost:5000` and automatically create the requi
 - **amount**: Total transaction amount
 - **multiplier**: For stock splits
 - **transactionDate**: Date of transaction
-- **notes**: Optional notes
 - **createdAt/updatedAt**: Timestamps
+- **splitAdjusted**: flag to indicate if affected by stock split 
+- **lastSplitId**: Foriegn Key to Split Info
 
 ### Lots
 - **id**: Unique identifier
 - **userId**: User identifier
 - **ticker**: Stock ticker symbol
 - **transactionId**: Reference to buy transaction
+- **soureceType**: 
 - **originalQuantity**: Initial shares purchased
 - **remainingQuantity**: Current shares in lot
 - **unitCost**: Cost per share
 - **purchaseDate**: Date lot was acquired
 - **createdAt/updatedAt**: Timestamps
+- **splitAdjusted**: flag to indicate if affected by stock split 
+- **lastSplitId**: Foriegn Key to Split Info
+
+### LotAllocations
+
+### StockSplits
 
 ## API Endpoints
 
