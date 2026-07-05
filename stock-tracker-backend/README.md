@@ -51,32 +51,46 @@ The API will start on `http://localhost:5000` and automatically create the requi
 - **multiplier**: For stock splits
 - **transactionDate**: Date of transaction
 - **createdAt/updatedAt**: Timestamps
-- **splitAdjusted**: flag to indicate if affected by stock split 
-- **lastSplitId**: Foriegn Key to Split Info
+- **splitAdjusted**: flag to indicate if affected by stock split
+- **lastSplitId**: Foreign key to the `StockSplits` record that last adjusted this transaction
 
 ### Lots
 - **id**: Unique identifier
 - **userId**: User identifier
 - **ticker**: Stock ticker symbol
-- **transactionId**: Reference to buy transaction
-- **soureceType**: 
-- **originalQuantity**: Initial shares purchased
-- **remainingQuantity**: Current shares in lot
-- **unitCost**: Cost per share
+- **transactionId**: Reference to the buy or dividend transaction that created this lot
+- **sourceType**: `purchase` or `dividend` - distinguishes lots created by a buy from lots created by a reinvested dividend
+- **originalQuantity**: Initial shares in the lot
+- **remainingQuantity**: Current shares in the lot after any sale allocations
+- **unitCost**: Cost per share (adjusted by any applicable stock split)
 - **purchaseDate**: Date lot was acquired
 - **createdAt/updatedAt**: Timestamps
-- **splitAdjusted**: flag to indicate if affected by stock split 
-- **lastSplitId**: Foriegn Key to Split Info
+- **splitAdjusted**: flag to indicate if affected by stock split
+- **lastSplitId**: Foreign key to the most recent `StockSplits` record applied to this lot
 
 ### LotAllocations
+Records which lot(s) a sale transaction drew from and how much of each lot was consumed. This is the audit trail behind the user's explicit lot-selection on every sell - there is no automatic FIFO/LIFO allocation.
+- **id**: Unique identifier
+- **userId**: User identifier
+- **saleTransactionId**: Reference to the `sell` StockTransactions row
+- **lotId**: Reference to the Lots row this allocation consumed shares from
+- **quantityConsumed**: Number of shares taken from the lot for this sale
+- **createdAt**: Timestamp
 
 ### StockSplits
+Audit record of each stock split applied to a ticker, used to retroactively adjust affected lots/transactions and to flag which records were touched.
+- **id**: Unique identifier
+- **userId**: User identifier
+- **ticker**: Stock ticker symbol
+- **multiplier**: Split ratio (e.g. `2` for a 2-for-1 split)
+- **splitDate**: Effective date of the split; lots/transactions on or before this date are adjusted
+- **createdAt**: Timestamp
 
 ## API Endpoints
 
 ### Cash Transactions
 - `GET /api/cash` - Get all cash transactions
-- `GET /api/cash/summary` - Get cash summary (deposits, withdrawals, interest, fees)
+- `GET /api/cash/summary` - Get cash summary (deposits, withdrawals, interest, fees, available cash, cost basis)
 - `POST /api/cash` - Create cash transaction
 - `PUT /api/cash/:id` - Update cash transaction
 - `DELETE /api/cash/:id` - Delete cash transaction
@@ -84,16 +98,19 @@ The API will start on `http://localhost:5000` and automatically create the requi
 ### Stock Transactions
 - `GET /api/stocks` - Get all stock transactions
 - `GET /api/stocks/:ticker` - Get transactions for ticker
-- `GET /api/stocks/:ticker/summary` - Get ticker summary
-- `POST /api/stocks` - Create stock transaction
+- `GET /api/stocks/:ticker/summary` - Get ticker summary (total shares across all lots, lot count, cost basis)
+- `POST /api/stocks` - Create stock transaction (`buy`, `sell`, `div`)
+  - `buy`: creates a new `purchase` lot for `quantity` shares at `price`
+  - `div`: creates a new `dividend` lot (reinvested shares); does not affect available cash
+  - `sell`: **requires** a body field `allocations: [{ lotId, quantity }, ...]` whose quantities sum to the sale `quantity`. The API validates each referenced lot belongs to the user/ticker and has enough remaining shares, then decrements each lot's `remainingQuantity` and writes a `LotAllocations` audit row per lot. There is no default/automatic lot selection - the caller must explicitly choose which lot(s) to consume. Requests missing or mismatched allocations are rejected with `400`.
 - `PUT /api/stocks/:id` - Update stock transaction
 - `DELETE /api/stocks/:id` - Delete stock transaction
 
 ### Lots
 - `GET /api/lots` - Get all lots
-- `GET /api/lots/:ticker` - Get lots for ticker
+- `GET /api/lots/:ticker` - Get lots for ticker with `remainingQuantity > 0`. Supports an optional `?sourceType=purchase` or `?sourceType=dividend` query filter to scope the results to just purchase lots or just dividend lots.
 - `PUT /api/lots/:id` - Update lot (adjust remaining quantity)
-- `POST /api/lots/:ticker/split` - Apply stock split
+- `POST /api/lots/:ticker/split` - Apply a stock split. Body: `{ multiplier, splitDate }`. Inserts a `StockSplits` audit row, then for every lot/transaction on or before `splitDate`: multiplies `quantity`/`originalQuantity`/`remainingQuantity` by `multiplier`, divides `price`/`unitCost` by `multiplier` (so cost basis is unchanged), and sets `splitAdjusted = true` with `lastSplitId` pointing at the new split record.
 
 ## Authentication
 

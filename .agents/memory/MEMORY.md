@@ -1,0 +1,1 @@
+- [Stock lot "count" spec ambiguity](stock-lot-count-spec.md) — projectdescription.md's dividend/sale test wording resolved via a `sourceType` filter, not a schema change.

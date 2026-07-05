@@ -5,6 +5,13 @@ import sql from 'mssql';
 
 const router = Router();
 
+const ALLOCATION_TOLERANCE = 1e-6;
+
+interface Allocation {
+  lotId: string;
+  quantity: number;
+}
+
 // GET all stock transactions for user
 router.get('/', async (req: Request, res: Response) => {
   try {
@@ -78,33 +85,80 @@ router.get('/:ticker/summary', async (req: Request, res: Response) => {
 // CREATE stock transaction
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { ticker, type, quantity, price, multiplier, transactionDate } = req.body;
+    const { ticker, type, quantity, price, multiplier, transactionDate, allocations } = req.body as {
+      ticker: string;
+      type: string;
+      quantity?: number;
+      price?: number;
+      multiplier?: number;
+      transactionDate: string;
+      allocations?: Allocation[];
+    };
     const userId = req.user?.id!;
     
     if (!ticker || !type || !transactionDate) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
-    
-    const id = uuidv4();
-    const request = getPool().request();
-    
+
+    const normalizedTicker = ticker.toUpperCase();
+    const pool = getPool();
+
     // Calculate amount based on transaction type
-    let amount = null;
-    if (type === 'buy' || type === 'sell') {
+    let amount: number | null = null;
+    if (type === 'buy' || type === 'sell' || type === 'div') {
+      if (quantity == null || price == null) {
+        return res.status(400).json({ error: `${type} transactions require quantity and price` });
+      }
       amount = quantity * price;
-    } else if (type === 'div') {
-      amount = quantity;
+    }
+
+    // Sell transactions require the user to explicitly choose which lots are consumed
+    if (type === 'sell') {
+      if (!Array.isArray(allocations) || allocations.length === 0) {
+        return res.status(400).json({ error: 'Sell transactions require explicit lot allocations' });
+      }
+
+      const allocatedTotal = allocations.reduce((sum, a) => sum + Number(a.quantity), 0);
+      if (Math.abs(allocatedTotal - Number(quantity)) > ALLOCATION_TOLERANCE) {
+        return res.status(400).json({
+          error: `Allocated quantity (${allocatedTotal}) does not match sell quantity (${quantity})`
+        });
+      }
+
+      // Validate each referenced lot belongs to this user/ticker and has enough remaining shares
+      for (const allocation of allocations) {
+        const lotCheck = await pool.request()
+          .input('lotId', sql.UniqueIdentifier, allocation.lotId)
+          .input('userId', sql.NVarChar, userId)
+          .input('ticker', sql.NVarChar, normalizedTicker)
+          .query(`
+            SELECT id, remainingQuantity FROM Lots
+            WHERE id = @lotId AND userId = @userId AND ticker = @ticker
+          `);
+
+        const lotRow = lotCheck.recordset[0];
+        if (!lotRow) {
+          return res.status(400).json({ error: `Lot ${allocation.lotId} not found for ${normalizedTicker}` });
+        }
+        if (Number(lotRow.remainingQuantity) + ALLOCATION_TOLERANCE < Number(allocation.quantity)) {
+          return res.status(400).json({
+            error: `Lot ${allocation.lotId} does not have enough remaining shares to allocate ${allocation.quantity}`
+          });
+        }
+      }
     }
     
-    await request
+    const id = uuidv4();
+
+    await pool.request()
       .input('id', sql.UniqueIdentifier, id)
       .input('userId', sql.NVarChar, userId)
-      .input('ticker', sql.NVarChar, ticker.toUpperCase())
+      .input('ticker', sql.NVarChar, normalizedTicker)
       .input('type', sql.NVarChar, type)
-      .input('quantity', sql.Decimal(18, 8), quantity || null)
-      .input('price', sql.Decimal(18, 4), price || null)
+      .input('quantity', sql.Decimal(18, 8), quantity ?? null)
+      .input('price', sql.Decimal(18, 4), price ?? null)
       .input('amount', sql.Decimal(18, 4), amount)
-      .input('multiplier', sql.Decimal(18, 4), multiplier || null)
+      .input('multiplier', sql.Decimal(18, 8), multiplier ?? null)
       .input('transactionDate', sql.DateTime2, new Date(transactionDate))
       .query(`
         INSERT INTO StockTransactions 
@@ -112,19 +166,68 @@ router.post('/', async (req: Request, res: Response) => {
         VALUES (@id, @userId, @ticker, @type, @quantity, @price, @amount, @multiplier, @transactionDate)
       `);
     
-    // If it's a buy transaction, create a lot
+    // If it's a buy transaction, create a purchase lot
     if (type === 'buy') {
       const lotId = uuidv4();
-      await request
+      await pool.request()
         .input('lotId', sql.UniqueIdentifier, lotId)
+        .input('userId', sql.NVarChar, userId)
+        .input('ticker', sql.NVarChar, normalizedTicker)
         .input('transactionId', sql.UniqueIdentifier, id)
+        .input('quantity', sql.Decimal(18, 8), quantity)
+        .input('price', sql.Decimal(18, 4), price)
+        .input('transactionDate', sql.DateTime2, new Date(transactionDate))
         .query(`
-          INSERT INTO Lots (id, userId, ticker, transactionId, originalQuantity, remainingQuantity, unitCost, purchaseDate)
-          VALUES (@lotId, @userId, @ticker, @transactionId, @quantity, @quantity, @price, @transactionDate)
+          INSERT INTO Lots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
+          VALUES (@lotId, @userId, @ticker, @transactionId, 'purchase', @quantity, @quantity, @price, @transactionDate)
         `);
     }
+
+    // Dividends are reinvested only: they create their own lot rather than affecting cash directly
+    if (type === 'div') {
+      const lotId = uuidv4();
+      await pool.request()
+        .input('lotId', sql.UniqueIdentifier, lotId)
+        .input('userId', sql.NVarChar, userId)
+        .input('ticker', sql.NVarChar, normalizedTicker)
+        .input('transactionId', sql.UniqueIdentifier, id)
+        .input('quantity', sql.Decimal(18, 8), quantity)
+        .input('price', sql.Decimal(18, 4), price)
+        .input('transactionDate', sql.DateTime2, new Date(transactionDate))
+        .query(`
+          INSERT INTO Lots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
+          VALUES (@lotId, @userId, @ticker, @transactionId, 'dividend', @quantity, @quantity, @price, @transactionDate)
+        `);
+    }
+
+    // Sells consume the lots the user explicitly chose, recording the allocation for auditability
+    if (type === 'sell' && allocations) {
+      for (const allocation of allocations) {
+        await pool.request()
+          .input('lotId', sql.UniqueIdentifier, allocation.lotId)
+          .input('userId', sql.NVarChar, userId)
+          .input('quantity', sql.Decimal(18, 8), allocation.quantity)
+          .query(`
+            UPDATE Lots
+            SET remainingQuantity = remainingQuantity - @quantity, updatedAt = GETUTCDATE()
+            WHERE id = @lotId AND userId = @userId
+          `);
+
+        const allocationId = uuidv4();
+        await pool.request()
+          .input('allocationId', sql.UniqueIdentifier, allocationId)
+          .input('userId', sql.NVarChar, userId)
+          .input('saleTransactionId', sql.UniqueIdentifier, id)
+          .input('lotId', sql.UniqueIdentifier, allocation.lotId)
+          .input('quantity', sql.Decimal(18, 8), allocation.quantity)
+          .query(`
+            INSERT INTO LotAllocations (id, userId, saleTransactionId, lotId, quantityConsumed)
+            VALUES (@allocationId, @userId, @saleTransactionId, @lotId, @quantity)
+          `);
+      }
+    }
     
-    res.status(201).json({ id, ticker: ticker.toUpperCase(), type, quantity, price, transactionDate });
+    res.status(201).json({ id, ticker: normalizedTicker, type, quantity, price, amount, transactionDate });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
