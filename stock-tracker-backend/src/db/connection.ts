@@ -153,6 +153,46 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LotAllocations_LotId') CREATE INDEX IX_LotAllocations_LotId ON LotAllocations(lotId);
   `);
 
+  // LotAllocations needs updatedAt so we can retroactively rescale quantityConsumed when a
+  // split occurs after the sale it audits (a sale recorded before a split reflects pre-split
+  // share counts that must be rescaled to stay consistent with the now-split-adjusted lot).
+  await request.batch(`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('LotAllocations') AND name = 'updatedAt')
+      ALTER TABLE LotAllocations ADD updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE();
+  `);
+
+  // Widen price/unitCost precision so repeated stock splits don't compound rounding error.
+  // These columns get divided by each split's multiplier in place; DECIMAL(18,4) loses enough
+  // precision after 2+ splits that "cost basis unchanged" can drift. DECIMAL(18,8) matches the
+  // precision already used for share quantities and keeps that invariant solid across many splits.
+  await request.batch(`
+    ALTER TABLE StockTransactions ALTER COLUMN price DECIMAL(18, 8);
+  `);
+  await request.batch(`
+    ALTER TABLE Lots ALTER COLUMN unitCost DECIMAL(18, 8) NOT NULL;
+  `);
+
+  // Create SplitAdjustments table: records every split that touched every individual lot,
+  // transaction, or lot allocation - unlike the single lastSplitId/splitAdjusted columns (which
+  // only remember the most recent split), this preserves full history when a ticker splits
+  // more than once, mirroring the LotAllocations audit-table pattern.
+  await request.batch(`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SplitAdjustments')
+    CREATE TABLE SplitAdjustments (
+      id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+      userId NVARCHAR(255) NOT NULL,
+      splitId UNIQUEIDENTIFIER NOT NULL,
+      entityType NVARCHAR(20) NOT NULL CHECK (entityType IN ('lot', 'transaction', 'allocation')),
+      entityId UNIQUEIDENTIFIER NOT NULL,
+      multiplier DECIMAL(18, 8) NOT NULL,
+      createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+      FOREIGN KEY (splitId) REFERENCES StockSplits(id)
+    );
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SplitAdjustments_UserId') CREATE INDEX IX_SplitAdjustments_UserId ON SplitAdjustments(userId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SplitAdjustments_SplitId') CREATE INDEX IX_SplitAdjustments_SplitId ON SplitAdjustments(splitId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SplitAdjustments_EntityId') CREATE INDEX IX_SplitAdjustments_EntityId ON SplitAdjustments(entityId);
+  `);
+
   console.log('✓ Database tables initialized');
 }
 
