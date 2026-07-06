@@ -76,19 +76,44 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockTransactions_Date') CREATE INDEX IX_StockTransactions_Date ON StockTransactions(transactionDate);
   `);
 
-  // Create StockSplits table (records each split event for auditability/idempotency)
+  // Create StockSplits table (records each split event for auditability/idempotency).
+  // Splits are specified as a ratio (e.g. "2-for-1", "5-for-3") rather than a raw multiplier,
+  // matching how splits are actually announced; ratioNumerator/ratioDenominator preserve the
+  // original ratio the caller entered, while multiplier (= numerator / denominator) is kept
+  // alongside it since it's what the adjustment math actually applies.
   await request.batch(`
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StockSplits')
     CREATE TABLE StockSplits (
       id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
       userId NVARCHAR(255) NOT NULL,
       ticker NVARCHAR(10) NOT NULL,
+      ratioNumerator DECIMAL(18, 8) NOT NULL,
+      ratioDenominator DECIMAL(18, 8) NOT NULL,
       multiplier DECIMAL(18, 8) NOT NULL,
       splitDate DATETIME2 NOT NULL,
       createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
     );
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockSplits_UserId') CREATE INDEX IX_StockSplits_UserId ON StockSplits(userId);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockSplits_Ticker') CREATE INDEX IX_StockSplits_Ticker ON StockSplits(ticker);
+  `);
+
+  // Migrate existing StockSplits rows created before ratioNumerator/ratioDenominator existed:
+  // add the columns (backfilled as multiplier-for-1 so old rows remain valid) if missing.
+  await request.batch(`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('StockSplits') AND name = 'ratioNumerator')
+      ALTER TABLE StockSplits ADD ratioNumerator DECIMAL(18, 8) NULL;
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('StockSplits') AND name = 'ratioDenominator')
+      ALTER TABLE StockSplits ADD ratioDenominator DECIMAL(18, 8) NULL;
+  `);
+  await request.batch(`
+    UPDATE StockSplits SET ratioNumerator = multiplier WHERE ratioNumerator IS NULL;
+    UPDATE StockSplits SET ratioDenominator = 1 WHERE ratioDenominator IS NULL;
+  `);
+  await request.batch(`
+    ALTER TABLE StockSplits ALTER COLUMN ratioNumerator DECIMAL(18, 8) NOT NULL;
+  `);
+  await request.batch(`
+    ALTER TABLE StockSplits ALTER COLUMN ratioDenominator DECIMAL(18, 8) NOT NULL;
   `);
 
   // Create Lots table (individual purchase/dividend batches)

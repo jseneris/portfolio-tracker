@@ -89,31 +89,38 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
   let began = false;
   try {
     const { ticker } = req.params;
-    const { multiplier, splitDate } = req.body;
+    const { ratioNumerator, ratioDenominator, splitDate } = req.body;
     const userId = req.user?.id!;
 
-    if (!multiplier || !splitDate) {
-      return res.status(400).json({ error: 'Missing multiplier or splitDate' });
+    // Splits are specified as a ratio (e.g. "2-for-1" -> ratioNumerator=2, ratioDenominator=1;
+    // "5-for-3" -> ratioNumerator=5, ratioDenominator=3), matching how splits are actually
+    // announced, rather than requiring the caller to pre-compute a single decimal multiplier.
+    if (ratioNumerator == null || ratioDenominator == null || !splitDate) {
+      return res.status(400).json({ error: 'Missing ratioNumerator, ratioDenominator, or splitDate' });
     }
-    if (Number(multiplier) <= 0) {
-      return res.status(400).json({ error: 'multiplier must be a positive number' });
+    if (Number(ratioNumerator) <= 0 || Number(ratioDenominator) <= 0) {
+      return res.status(400).json({ error: 'ratioNumerator and ratioDenominator must both be positive numbers' });
     }
 
     const normalizedTicker = ticker.toUpperCase();
     const parsedSplitDate = new Date(splitDate);
+    const multiplier = Number(ratioNumerator) / Number(ratioDenominator);
 
     await transaction.begin();
     began = true;
 
-    // Idempotency guard: reject re-applying the exact same split (same ticker/multiplier/date) twice
+    // Idempotency guard: reject re-applying the exact same split (same ticker/ratio/date) twice
     const dupeCheck = await new sql.Request(transaction)
       .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, normalizedTicker)
-      .input('multiplier', sql.Decimal(18, 8), multiplier)
+      .input('ratioNumerator', sql.Decimal(18, 8), ratioNumerator)
+      .input('ratioDenominator', sql.Decimal(18, 8), ratioDenominator)
       .input('splitDate', sql.DateTime2, parsedSplitDate)
       .query(`
         SELECT id FROM StockSplits
-        WHERE userId = @userId AND ticker = @ticker AND multiplier = @multiplier AND splitDate = @splitDate
+        WHERE userId = @userId AND ticker = @ticker
+          AND ratioNumerator = @ratioNumerator AND ratioDenominator = @ratioDenominator
+          AND splitDate = @splitDate
       `);
     if (dupeCheck.recordset.length > 0) {
       await transaction.rollback();
@@ -127,11 +134,13 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
       .input('splitId', sql.UniqueIdentifier, splitId)
       .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, normalizedTicker)
+      .input('ratioNumerator', sql.Decimal(18, 8), ratioNumerator)
+      .input('ratioDenominator', sql.Decimal(18, 8), ratioDenominator)
       .input('multiplier', sql.Decimal(18, 8), multiplier)
       .input('splitDate', sql.DateTime2, parsedSplitDate)
       .query(`
-        INSERT INTO StockSplits (id, userId, ticker, multiplier, splitDate)
-        VALUES (@splitId, @userId, @ticker, @multiplier, @splitDate)
+        INSERT INTO StockSplits (id, userId, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
+        VALUES (@splitId, @userId, @ticker, @ratioNumerator, @ratioDenominator, @multiplier, @splitDate)
       `);
 
     // Update all lots for this ticker with purchaseDate <= splitDate.
@@ -200,7 +209,14 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
     await transaction.commit();
     began = false;
 
-    res.json({ splitId, message: 'Stock split applied', ticker: normalizedTicker, multiplier });
+    res.json({
+      splitId,
+      message: 'Stock split applied',
+      ticker: normalizedTicker,
+      ratioNumerator: Number(ratioNumerator),
+      ratioDenominator: Number(ratioDenominator),
+      multiplier
+    });
   } catch (error) {
     if (began) {
       try {

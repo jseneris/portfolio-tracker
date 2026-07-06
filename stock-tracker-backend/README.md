@@ -77,11 +77,13 @@ Records which lot(s) a sale transaction drew from and how much of each lot was c
 - **createdAt/updatedAt**: Timestamps
 
 ### StockSplits
-Audit record of each stock split applied to a ticker, used to retroactively adjust affected lots/transactions/allocations and to flag which records were touched. A given ticker can have any number of `StockSplits` rows (one per split event); the same `(userId, ticker, multiplier, splitDate)` combination cannot be applied twice.
+Audit record of each stock split applied to a ticker, used to retroactively adjust affected lots/transactions/allocations and to flag which records were touched. A given ticker can have any number of `StockSplits` rows (one per split event); the same `(userId, ticker, ratioNumerator, ratioDenominator, splitDate)` combination cannot be applied twice.
 - **id**: Unique identifier
 - **userId**: User identifier
 - **ticker**: Stock ticker symbol
-- **multiplier**: Split ratio (e.g. `2` for a 2-for-1 split)
+- **ratioNumerator**: The "new shares" side of the split ratio as entered by the caller (e.g. `2` for a 2-for-1 split, `5` for a 5-for-3 split)
+- **ratioDenominator**: The "old shares" side of the split ratio as entered by the caller (e.g. `1` for a 2-for-1 split, `3` for a 5-for-3 split)
+- **multiplier**: Derived as `ratioNumerator / ratioDenominator`; this is the factor actually applied to share quantities (and its inverse to price/unitCost)
 - **splitDate**: Effective date of the split; lots/transactions/allocations dated on or before this date are adjusted
 - **createdAt**: Timestamp
 
@@ -119,7 +121,7 @@ Full history of every individual record touched by every split, so a ticker can 
 - `GET /api/lots` - Get all lots
 - `GET /api/lots/:ticker` - Get lots for ticker with `remainingQuantity > 0`. Supports an optional `?sourceType=purchase` or `?sourceType=dividend` query filter to scope the results to just purchase lots or just dividend lots.
 - `PUT /api/lots/:id` - Update lot (adjust remaining quantity)
-- `POST /api/lots/:ticker/split` - Apply a stock split. Body: `{ multiplier, splitDate }`. Runs as a single database transaction: rejects (`409`) re-applying the exact same `(ticker, multiplier, splitDate)` split twice, inserts a `StockSplits` audit row, then for every lot/`buy`/`sell`/`div` transaction/lot allocation dated on or before `splitDate`: multiplies `quantity`/`originalQuantity`/`remainingQuantity`/`quantityConsumed` by `multiplier`, divides `price`/`unitCost` by `multiplier` (so cost basis is unchanged), sets `splitAdjusted = true` with `lastSplitId` pointing at the new split record, and logs each affected row to `SplitAdjustments` so multiple sequential splits on the same ticker each remain traceable rather than only the most recent one.
+- `POST /api/lots/:ticker/split` - Apply a stock split. Body: `{ ratioNumerator, ratioDenominator, splitDate }` - the split is specified as a ratio matching how splits are actually announced (e.g. a 2-for-1 split is `{ ratioNumerator: 2, ratioDenominator: 1 }`, a 5-for-3 split is `{ ratioNumerator: 5, ratioDenominator: 3 }`). The API derives `multiplier = ratioNumerator / ratioDenominator` internally. Runs as a single database transaction: rejects (`409`) re-applying the exact same `(ticker, ratioNumerator, ratioDenominator, splitDate)` split twice, inserts a `StockSplits` audit row (storing the ratio and the derived multiplier), then for every lot/`buy`/`sell`/`div` transaction/lot allocation dated on or before `splitDate`: multiplies `quantity`/`originalQuantity`/`remainingQuantity`/`quantityConsumed` by `multiplier`, divides `price`/`unitCost` by `multiplier` (so cost basis is unchanged), sets `splitAdjusted = true` with `lastSplitId` pointing at the new split record, and logs each affected row to `SplitAdjustments` so multiple sequential splits on the same ticker each remain traceable rather than only the most recent one.
 
 ## Authentication
 

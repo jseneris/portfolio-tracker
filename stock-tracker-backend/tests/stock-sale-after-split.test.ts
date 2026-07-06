@@ -55,7 +55,7 @@ describe('Stock Sale After Split Test', () => {
     await request(server)
       .post(`${LOTS_API_PATH}/AAPL/split`)
       .set('x-user-id', TEST_USER_ID)
-      .send({ multiplier: 2, splitDate: '2026-02-10' })
+      .send({ ratioNumerator: 2, ratioDenominator: 1, splitDate: '2026-02-10' })
       .expect(200)
 
     const lotsAfterSplit = await request(server)

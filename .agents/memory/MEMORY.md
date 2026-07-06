@@ -1,1 +1,2 @@
 - [Stock lot "count" spec ambiguity](stock-lot-count-spec.md) — projectdescription.md's dividend/sale test wording resolved via a `sourceType` filter, not a schema change.
+- [Stock split ratio API](stock-split-ratio-api.md) — splits are specified as ratioNumerator/ratioDenominator (e.g. 2-for-1, 5-for-3), not a raw multiplier; multiplier is derived server-side.
