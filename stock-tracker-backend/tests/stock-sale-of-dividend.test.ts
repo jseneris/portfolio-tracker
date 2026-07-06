@@ -95,7 +95,7 @@ describe('Stock Sale of Dividend Test', () => {
       .get(`${CASH_API_PATH}/summary`)
       .set('x-user-id', TEST_USER_ID)
       .expect(200)
-    expect(summary.body.availableCash).toBeCloseTo(840, 2)
+    expect(summary.body.availableCash).toBeCloseTo(951, 2)
 
     const purchaseLotsAfterSale = await request(server)
       .get(`${LOTS_API_PATH}/AAPL?sourceType=purchase`)

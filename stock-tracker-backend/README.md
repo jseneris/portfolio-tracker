@@ -48,7 +48,6 @@ The API will start on `http://localhost:5000` and automatically create the requi
 - **quantity**: Number of shares
 - **price**: Price per share
 - **amount**: Total transaction amount
-- **multiplier**: For stock splits
 - **transactionDate**: Date of transaction
 - **createdAt/updatedAt**: Timestamps
 - **splitAdjusted**: flag to indicate if affected by stock split

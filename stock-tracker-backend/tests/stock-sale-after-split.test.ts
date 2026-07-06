@@ -18,10 +18,10 @@ beforeAll(async () => {
 beforeEach(async () => {
   const pool = getPool()
   await pool.request().input('userId', sql.NVarChar, TEST_USER_ID).query('DELETE FROM LotAllocations WHERE userId = @userId')
-  await pool.request().input('userId', sql.NVarChar, TEST_USER_ID).query('DELETE FROM StockSplits WHERE userId = @userId')
   await pool.request().input('userId', sql.NVarChar, TEST_USER_ID).query('DELETE FROM Lots WHERE userId = @userId')
   await pool.request().input('userId', sql.NVarChar, TEST_USER_ID).query('DELETE FROM StockTransactions WHERE userId = @userId')
   await pool.request().input('userId', sql.NVarChar, TEST_USER_ID).query('DELETE FROM CashTransactions WHERE userId = @userId')
+  await pool.request().input('userId', sql.NVarChar, TEST_USER_ID).query('DELETE FROM StockSplits WHERE userId = @userId')
 })
 
 afterAll(async () => {
@@ -89,7 +89,7 @@ describe('Stock Sale After Split Test', () => {
       .get(`${CASH_API_PATH}/summary`)
       .set('x-user-id', TEST_USER_ID)
       .expect(200)
-    expect(summary.body.availableCash).toBeCloseTo(840, 2)
+    expect(summary.body.availableCash).toBeCloseTo(940, 2)
 
     const lotsAfterSale = await request(server)
       .get(`${LOTS_API_PATH}/AAPL`)

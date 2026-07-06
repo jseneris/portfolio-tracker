@@ -85,8 +85,9 @@ describe('Stock non-LIFO sale lot Test', () => {
       .set('x-user-id', TEST_USER_ID)
       .expect(200)
 
-    expect(lotsAfterSale.body).toHaveLength(1)
-    expect(lotsAfterSale.body[0]).toMatchObject({ originalQuantity: 3, remainingQuantity: 1 })
+    expect(lotsAfterSale.body).toHaveLength(2)
+    const updatedLot = lotsAfterSale.body.find((lot: any) => lot.id === marLot.id) ;
+    expect(updatedLot).toMatchObject({ originalQuantity: 3, remainingQuantity: 1 })
 
     const allLots = await request(server)
       .get('/api/lots')

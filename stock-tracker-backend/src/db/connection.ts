@@ -67,7 +67,6 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
       quantity DECIMAL(18, 8),
       price DECIMAL(18, 4),
       amount DECIMAL(18, 4),
-      multiplier DECIMAL(18, 8),
       transactionDate DATETIME2 NOT NULL,
       createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
       updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
