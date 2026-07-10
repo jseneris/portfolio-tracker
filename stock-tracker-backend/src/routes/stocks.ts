@@ -85,17 +85,16 @@ router.get('/:ticker/summary', async (req: Request, res: Response) => {
 // CREATE stock transaction
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { ticker, type, quantity, price, multiplier, transactionDate, allocations } = req.body as {
+    const { ticker, type, quantity, price, transactionDate, allocations } = req.body as {
       ticker: string;
       type: string;
       quantity?: number;
       price?: number;
-      multiplier?: number;
       transactionDate: string;
       allocations?: Allocation[];
     };
-    const userId = req.user?.id!;
-    
+    const userId = req.user?.id!;    
+
     if (!ticker || !type || !transactionDate) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -158,14 +157,14 @@ router.post('/', async (req: Request, res: Response) => {
       .input('quantity', sql.Decimal(18, 8), quantity ?? null)
       .input('price', sql.Decimal(18, 8), price ?? null)
       .input('amount', sql.Decimal(18, 4), amount)
-      .input('multiplier', sql.Decimal(18, 8), multiplier ?? null)
       .input('transactionDate', sql.DateTime2, new Date(transactionDate))
       .query(`
         INSERT INTO StockTransactions 
-        (id, userId, ticker, type, quantity, price, amount, multiplier, transactionDate)
-        VALUES (@id, @userId, @ticker, @type, @quantity, @price, @amount, @multiplier, @transactionDate)
+        (id, userId, ticker, type, quantity, price, amount, transactionDate)
+        VALUES (@id, @userId, @ticker, @type, @quantity, @price, @amount, @transactionDate)
       `);
     
+
     // If it's a buy transaction, create a purchase lot
     if (type === 'buy') {
       const lotId = uuidv4();
@@ -182,6 +181,7 @@ router.post('/', async (req: Request, res: Response) => {
           VALUES (@lotId, @userId, @ticker, @transactionId, 'purchase', @quantity, @quantity, @price, @transactionDate)
         `);
     }
+
 
     // Dividends are reinvested only: they create their own lot rather than affecting cash directly
     if (type === 'div') {

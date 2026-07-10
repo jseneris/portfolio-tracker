@@ -315,4 +315,40 @@ describe('Table CRUD — write, read, delete across all tables', () => {
       .query('SELECT 1 AS found FROM CashTransactions WHERE id = @id')
     expect(result.recordset).toHaveLength(0)
   })
+
+  it('handcheck',async () => {
+    await getPool().request()
+            .input('id', sql.UniqueIdentifier, splitId)
+            .input('userId', sql.NVarChar, 'test')
+            .input('ticker', sql.NVarChar, 'TEST')
+            .input('ratioNumerator', sql.Decimal(18, 8), 5)
+            .input('ratioDenominator', sql.Decimal(18, 8), 3)
+            .input('multiplier', sql.Decimal(18, 8), 3)
+            .input('splitDate', sql.DateTime2, '2026-02-10')
+            .query(`
+               INSERT INTO StockSplits (id, userId, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
+               VALUES (@id, @userId, @ticker, @ratioNumerator, @ratioDenominator, @multiplier, @splitDate)
+               `)
+  })
+
+    it('handcheck2',async () => {
+    await getPool().request()
+      .input('userId', sql.NVarChar, 'test')
+      .input('ticker', sql.NVarChar, 'TEST')
+      .input('multiplier', sql.Decimal(18, 8), 3)
+      .input('splitDate', sql.DateTime2, '2026-02-10')
+      .input('splitId', sql.UniqueIdentifier, splitId)
+      .query(`
+        UPDATE Lots
+        SET originalQuantity = originalQuantity * @multiplier,
+            remainingQuantity = remainingQuantity * @multiplier,
+            unitCost = unitCost / @multiplier,
+            splitAdjusted = 1,
+            lastSplitId = @splitId,
+            updatedAt = GETUTCDATE()
+        OUTPUT @splitId, @userId, 'lot', inserted.id, @multiplier, GETUTCDATE()
+        INTO SplitAdjustments (splitId, userId, entityType, entityId, multiplier, createdAt)
+        WHERE userId = @userId AND ticker = @ticker AND purchaseDate <= @splitDate
+      `)
+  })
 })

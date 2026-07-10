@@ -106,6 +106,8 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
     const parsedSplitDate = new Date(splitDate);
     const multiplier = Number(ratioNumerator) / Number(ratioDenominator);
 
+    console.log('Applying stock split:')
+
     await transaction.begin();
     began = true;
 
@@ -128,10 +130,12 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
       return res.status(409).json({ error: 'This split has already been applied' });
     }
 
+    console.log('dupecheck')
     // Record the split event for auditability/idempotency
     const splitId = uuidv4();
+
     await new sql.Request(transaction)
-      .input('splitId', sql.UniqueIdentifier, splitId)
+      .input('id', sql.UniqueIdentifier, splitId)
       .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, normalizedTicker)
       .input('ratioNumerator', sql.Decimal(18, 8), ratioNumerator)
@@ -139,10 +143,11 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
       .input('multiplier', sql.Decimal(18, 8), multiplier)
       .input('splitDate', sql.DateTime2, parsedSplitDate)
       .query(`
-        INSERT INTO StockSplits (id, userId, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
-        VALUES (@splitId, @userId, @ticker, @ratioNumerator, @ratioDenominator, @multiplier, @splitDate)
-      `);
+         INSERT INTO StockSplits (id, userId, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
+         VALUES (@id, @userId, @ticker, @ratioNumerator, @ratioDenominator, @multiplier, @splitDate)
+         `);
 
+console.log('made it here')
     // Update all lots for this ticker with purchaseDate <= splitDate.
     // Quantities multiply and unitCost divides by the same factor so cost basis (qty * unitCost) is unchanged.
     // Every affected lot is also logged into SplitAdjustments to preserve full multi-split history.
@@ -165,6 +170,7 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
         WHERE userId = @userId AND ticker = @ticker AND purchaseDate <= @splitDate
       `);
 
+      console.log('sdlkjsd')
     // Update stock transactions for this ticker so historical buy/sell/div records reflect the split too.
     // Dividend ('div') rows are included so reinvested-dividend lots and their originating
     // transaction stay consistent with each other after any number of splits.
