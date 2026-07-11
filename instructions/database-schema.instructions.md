@@ -19,7 +19,7 @@ This file describes the current database schema.  Any changes should be reflecte
 - **id**: Unique identifier
 - **userId**: User identifier
 - **ticker**: Stock ticker symbol (e.g., AAPL)
-- **type**: `buy`, `sell`, `div`, `split`
+- **type**: `buy`, `sell`, `div`
 - **quantity**: Number of shares
 - **price**: Price per share, `DECIMAL(18,8)` (adjusted by any applicable stock split(s); widened precision keeps this accurate across repeated splits)
 - **amount**: Total transaction amount
@@ -52,7 +52,7 @@ Records which lot(s) a sale transaction drew from and how much of each lot was c
 - **createdAt/updatedAt**: Timestamps
 
 ### StockSplits
-Audit record of each stock split applied to a ticker, used to retroactively adjust affected lots/transactions/allocations and to flag which records were touched. A given ticker can have any number of `StockSplits` rows (one per split event); the same `(userId, ticker, ratioNumerator, ratioDenominator, splitDate)` combination cannot be applied twice.
+Audit record of each stock split applied to a ticker, used to retroactively adjust affected lots/transactions/allocations and to flag which records were touched. A given ticker can have any number of `StockSplits` rows (one per split event); the same `(ticker, ratioNumerator, ratioDenominator, splitDate)` combination cannot be applied twice.
 - **id**: Unique identifier
 - **userId**: User identifier
 - **ticker**: Stock ticker symbol
