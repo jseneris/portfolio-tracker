@@ -63,7 +63,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
       id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
       userId NVARCHAR(255) NOT NULL,
       ticker NVARCHAR(10) NOT NULL,
-      type NVARCHAR(50) NOT NULL CHECK (type IN ('buy', 'sell', 'div', 'split')),
+      type NVARCHAR(50) NOT NULL CHECK (type IN ('buy', 'sell', 'div')),
       quantity DECIMAL(18, 8),
       price DECIMAL(18, 4),
       amount DECIMAL(18, 4),
@@ -74,6 +74,29 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockTransactions_UserId') CREATE INDEX IX_StockTransactions_UserId ON StockTransactions(userId);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockTransactions_Ticker') CREATE INDEX IX_StockTransactions_Ticker ON StockTransactions(ticker);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockTransactions_Date') CREATE INDEX IX_StockTransactions_Date ON StockTransactions(transactionDate);
+  `);
+
+  // Normalize StockTransactions.type constraint for existing databases so only
+  // buy/sell/div are allowed there. Split events are tracked in StockSplits.
+  await request.batch(`
+    DECLARE @dropSql NVARCHAR(MAX) = N'';
+    SELECT @dropSql = @dropSql + N'ALTER TABLE StockTransactions DROP CONSTRAINT [' + cc.name + N'];'
+    FROM sys.check_constraints cc
+    WHERE cc.parent_object_id = OBJECT_ID('StockTransactions')
+      AND cc.definition LIKE '%[[]type[]]%' 
+      AND cc.definition LIKE '%split%';
+
+    IF LEN(@dropSql) > 0
+      EXEC sp_executesql @dropSql;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.check_constraints
+      WHERE parent_object_id = OBJECT_ID('StockTransactions')
+        AND name = 'CK_StockTransactions_Type'
+    )
+      ALTER TABLE StockTransactions
+      ADD CONSTRAINT CK_StockTransactions_Type
+      CHECK (type IN ('buy', 'sell', 'div'));
   `);
 
   // Create StockSplits table (records each split event for auditability/idempotency).

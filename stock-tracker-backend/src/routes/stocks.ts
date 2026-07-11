@@ -324,7 +324,7 @@ router.post('/', async (req: Request, res: Response) => {
 router.put('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { ticker, type, quantity, price, multiplier, transactionDate } = req.body;
+    const { ticker, type, quantity, price, transactionDate } = req.body;
     const userId = req.user?.id!;
     
     const request = getPool().request();
@@ -343,12 +343,11 @@ router.put('/:id', async (req: Request, res: Response) => {
       .input('quantity', sql.Decimal(18, 8), quantity || null)
       .input('price', sql.Decimal(18, 8), price || null)
       .input('amount', sql.Decimal(18, 4), amount)
-      .input('multiplier', sql.Decimal(18, 4), multiplier || null)
       .input('transactionDate', sql.DateTime2, new Date(transactionDate))
       .query(`
         UPDATE StockTransactions 
-        SET type = @type, quantity = @quantity, price = @price, amount = @amount, 
-            multiplier = @multiplier, transactionDate = @transactionDate, updatedAt = GETUTCDATE()
+        SET type = @type, quantity = @quantity, price = @price, amount = @amount,
+            transactionDate = @transactionDate, updatedAt = GETUTCDATE()
         WHERE id = @id AND userId = @userId
       `);
     
