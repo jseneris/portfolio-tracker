@@ -17,11 +17,32 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   const pool = getPool()
+
+  // Remove direct user-owned rows first.
   await pool.request().input('userId', sql.NVarChar, TEST_USER_ID).query('DELETE FROM LotAllocations WHERE userId = @userId')
+  await pool.request().input('userId', sql.NVarChar, TEST_USER_ID).query('DELETE FROM SplitAdjustments WHERE userId = @userId')
   await pool.request().input('userId', sql.NVarChar, TEST_USER_ID).query('DELETE FROM Lots WHERE userId = @userId')
   await pool.request().input('userId', sql.NVarChar, TEST_USER_ID).query('DELETE FROM StockTransactions WHERE userId = @userId')
   await pool.request().input('userId', sql.NVarChar, TEST_USER_ID).query('DELETE FROM CashTransactions WHERE userId = @userId')
-  await pool.request().input('userId', sql.NVarChar, TEST_USER_ID).query('DELETE FROM StockSplits WHERE userId = @userId')
+
+  // Split rows are now global by ticker, so clear ticker-scoped leftovers in FK-safe order.
+  await pool.request()
+    .input('ticker', sql.NVarChar, 'AAPL')
+    .query(`
+      DELETE la
+      FROM LotAllocations la
+      JOIN StockTransactions st ON la.saleTransactionId = st.id
+      WHERE st.ticker = @ticker
+    `)
+  await pool.request().input('ticker', sql.NVarChar, 'AAPL').query('DELETE FROM Lots WHERE ticker = @ticker')
+  await pool.request().input('ticker', sql.NVarChar, 'AAPL').query('DELETE FROM StockTransactions WHERE ticker = @ticker')
+  await pool.request()
+    .input('ticker', sql.NVarChar, 'AAPL')
+    .query(`
+      DELETE FROM SplitAdjustments
+      WHERE splitId IN (SELECT id FROM StockSplits WHERE ticker = @ticker)
+    `)
+  await pool.request().input('ticker', sql.NVarChar, 'AAPL').query('DELETE FROM StockSplits WHERE ticker = @ticker')
 })
 
 afterAll(async () => {
@@ -63,10 +84,12 @@ describe('Stock Sale After Split Test', () => {
       .set('x-user-id', TEST_USER_ID)
       .expect(200)
 
-    const splitLot = lotsAfterSplit.body.find((lot: any) => lot.remainingQuantity === 6)
-    const unsplitLot = lotsAfterSplit.body.find((lot: any) => lot.remainingQuantity === 2)
+    const splitLot = lotsAfterSplit.body.find((lot: any) => Boolean(lot.splitAdjusted))
+    const unsplitLot = lotsAfterSplit.body.find((lot: any) => !Boolean(lot.splitAdjusted))
     expect(splitLot).toBeTruthy()
     expect(unsplitLot).toBeTruthy()
+    expect(Number(splitLot.remainingQuantity)).toBeCloseTo(5, 6)
+    expect(Number(unsplitLot.remainingQuantity)).toBeCloseTo(2, 6)
 
     // Sell 4 shares: 2 shares from each lot
     await request(server)
@@ -97,6 +120,7 @@ describe('Stock Sale After Split Test', () => {
       .expect(200)
 
     expect(lotsAfterSale.body).toHaveLength(1)
-    expect(lotsAfterSale.body[0]).toMatchObject({ id: splitLot.id, remainingQuantity: 4 })
+    expect(lotsAfterSale.body[0].id).toBe(splitLot.id)
+    expect(Number(lotsAfterSale.body[0].remainingQuantity)).toBeCloseTo(3, 6)
   })
 })

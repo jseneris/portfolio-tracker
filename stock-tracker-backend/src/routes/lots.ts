@@ -90,7 +90,7 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
   try {
     const { ticker } = req.params;
     const { ratioNumerator, ratioDenominator, splitDate } = req.body;
-    const userId = req.user?.id!;
+    const actorUserId = req.user?.id!;
 
     // Splits are specified as a ratio (e.g. "2-for-1" -> ratioNumerator=2, ratioDenominator=1;
     // "5-for-3" -> ratioNumerator=5, ratioDenominator=3), matching how splits are actually
@@ -106,21 +106,19 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
     const parsedSplitDate = new Date(splitDate);
     const multiplier = Number(ratioNumerator) / Number(ratioDenominator);
 
-    console.log('Applying stock split:')
-
     await transaction.begin();
     began = true;
 
-    // Idempotency guard: reject re-applying the exact same split (same ticker/ratio/date) twice
+    // Idempotency guard: reject re-applying the exact same split (same ticker/ratio/date) twice.
+    // Split events are global to the ticker, so this check is intentionally not scoped to userId.
     const dupeCheck = await new sql.Request(transaction)
-      .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, normalizedTicker)
       .input('ratioNumerator', sql.Decimal(18, 8), ratioNumerator)
       .input('ratioDenominator', sql.Decimal(18, 8), ratioDenominator)
       .input('splitDate', sql.DateTime2, parsedSplitDate)
       .query(`
         SELECT id FROM StockSplits
-        WHERE userId = @userId AND ticker = @ticker
+        WHERE ticker = @ticker
           AND ratioNumerator = @ratioNumerator AND ratioDenominator = @ratioDenominator
           AND splitDate = @splitDate
       `);
@@ -130,13 +128,12 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
       return res.status(409).json({ error: 'This split has already been applied' });
     }
 
-    console.log('dupecheck')
     // Record the split event for auditability/idempotency
     const splitId = uuidv4();
 
     await new sql.Request(transaction)
       .input('id', sql.UniqueIdentifier, splitId)
-      .input('userId', sql.NVarChar, userId)
+      .input('userId', sql.NVarChar, actorUserId)
       .input('ticker', sql.NVarChar, normalizedTicker)
       .input('ratioNumerator', sql.Decimal(18, 8), ratioNumerator)
       .input('ratioDenominator', sql.Decimal(18, 8), ratioDenominator)
@@ -147,12 +144,19 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
          VALUES (@id, @userId, @ticker, @ratioNumerator, @ratioDenominator, @multiplier, @splitDate)
          `);
 
-console.log('made it here')
+    const lotTargets = await new sql.Request(transaction)
+      .input('ticker', sql.NVarChar, normalizedTicker)
+      .input('splitDate', sql.DateTime2, parsedSplitDate)
+      .query(`
+        SELECT id, userId
+        FROM Lots
+        WHERE ticker = @ticker AND purchaseDate <= @splitDate
+      `);
+
     // Update all lots for this ticker with purchaseDate <= splitDate.
     // Quantities multiply and unitCost divides by the same factor so cost basis (qty * unitCost) is unchanged.
     // Every affected lot is also logged into SplitAdjustments to preserve full multi-split history.
     await new sql.Request(transaction)
-      .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, normalizedTicker)
       .input('multiplier', sql.Decimal(18, 8), multiplier)
       .input('splitDate', sql.DateTime2, parsedSplitDate)
@@ -165,17 +169,36 @@ console.log('made it here')
             splitAdjusted = 1,
             lastSplitId = @splitId,
             updatedAt = GETUTCDATE()
-        OUTPUT @splitId, @userId, 'lot', inserted.id, @multiplier, GETUTCDATE()
-        INTO SplitAdjustments (splitId, userId, entityType, entityId, multiplier, createdAt)
-        WHERE userId = @userId AND ticker = @ticker AND purchaseDate <= @splitDate
+        WHERE ticker = @ticker AND purchaseDate <= @splitDate
       `);
 
-      console.log('sdlkjsd')
+    for (const lot of lotTargets.recordset) {
+      await new sql.Request(transaction)
+        .input('id', sql.UniqueIdentifier, uuidv4())
+        .input('splitId', sql.UniqueIdentifier, splitId)
+        .input('userId', sql.NVarChar, lot.userId)
+        .input('entityType', sql.NVarChar, 'lot')
+        .input('entityId', sql.UniqueIdentifier, lot.id)
+        .input('multiplier', sql.Decimal(18, 8), multiplier)
+        .query(`
+          INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
+          VALUES (@id, @splitId, @userId, @entityType, @entityId, @multiplier)
+        `);
+    }
+
+    const transactionTargets = await new sql.Request(transaction)
+      .input('ticker', sql.NVarChar, normalizedTicker)
+      .input('splitDate', sql.DateTime2, parsedSplitDate)
+      .query(`
+        SELECT id, userId
+        FROM StockTransactions
+        WHERE ticker = @ticker AND transactionDate <= @splitDate AND type IN ('buy', 'sell', 'div')
+      `);
+
     // Update stock transactions for this ticker so historical buy/sell/div records reflect the split too.
     // Dividend ('div') rows are included so reinvested-dividend lots and their originating
     // transaction stay consistent with each other after any number of splits.
     await new sql.Request(transaction)
-      .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, normalizedTicker)
       .input('multiplier', sql.Decimal(18, 8), multiplier)
       .input('splitDate', sql.DateTime2, parsedSplitDate)
@@ -187,16 +210,37 @@ console.log('made it here')
             splitAdjusted = 1,
             lastSplitId = @splitId,
             updatedAt = GETUTCDATE()
-        OUTPUT @splitId, @userId, 'transaction', inserted.id, @multiplier, GETUTCDATE()
-        INTO SplitAdjustments (splitId, userId, entityType, entityId, multiplier, createdAt)
-        WHERE userId = @userId AND ticker = @ticker AND transactionDate <= @splitDate AND type IN ('buy', 'sell', 'div')
+        WHERE ticker = @ticker AND transactionDate <= @splitDate AND type IN ('buy', 'sell', 'div')
+      `);
+
+    for (const stockTx of transactionTargets.recordset) {
+      await new sql.Request(transaction)
+        .input('id', sql.UniqueIdentifier, uuidv4())
+        .input('splitId', sql.UniqueIdentifier, splitId)
+        .input('userId', sql.NVarChar, stockTx.userId)
+        .input('entityType', sql.NVarChar, 'transaction')
+        .input('entityId', sql.UniqueIdentifier, stockTx.id)
+        .input('multiplier', sql.Decimal(18, 8), multiplier)
+        .query(`
+          INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
+          VALUES (@id, @splitId, @userId, @entityType, @entityId, @multiplier)
+        `);
+    }
+
+    const allocationTargets = await new sql.Request(transaction)
+      .input('ticker', sql.NVarChar, normalizedTicker)
+      .input('splitDate', sql.DateTime2, parsedSplitDate)
+      .query(`
+        SELECT la.id, la.userId
+        FROM LotAllocations la
+        JOIN StockTransactions st ON la.saleTransactionId = st.id
+        WHERE st.ticker = @ticker AND st.transactionDate <= @splitDate
       `);
 
     // Rescale historical LotAllocations rows for sales that happened on or before the split date.
     // Those rows recorded "shares consumed" in pre-split terms; without rescaling them they'd
     // permanently drift out of sync with the now-split-adjusted Lots.remainingQuantity.
     await new sql.Request(transaction)
-      .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, normalizedTicker)
       .input('multiplier', sql.Decimal(18, 8), multiplier)
       .input('splitDate', sql.DateTime2, parsedSplitDate)
@@ -205,12 +249,24 @@ console.log('made it here')
         UPDATE la
         SET la.quantityConsumed = la.quantityConsumed * @multiplier,
             la.updatedAt = GETUTCDATE()
-        OUTPUT @splitId, @userId, 'allocation', inserted.id, @multiplier, GETUTCDATE()
-        INTO SplitAdjustments (splitId, userId, entityType, entityId, multiplier, createdAt)
         FROM LotAllocations la
         JOIN StockTransactions st ON la.saleTransactionId = st.id
-        WHERE la.userId = @userId AND st.ticker = @ticker AND st.transactionDate <= @splitDate
+        WHERE st.ticker = @ticker AND st.transactionDate <= @splitDate
       `);
+
+    for (const allocation of allocationTargets.recordset) {
+      await new sql.Request(transaction)
+        .input('id', sql.UniqueIdentifier, uuidv4())
+        .input('splitId', sql.UniqueIdentifier, splitId)
+        .input('userId', sql.NVarChar, allocation.userId)
+        .input('entityType', sql.NVarChar, 'allocation')
+        .input('entityId', sql.UniqueIdentifier, allocation.id)
+        .input('multiplier', sql.Decimal(18, 8), multiplier)
+        .query(`
+          INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
+          VALUES (@id, @splitId, @userId, @entityType, @entityId, @multiplier)
+        `);
+    }
 
     await transaction.commit();
     began = false;

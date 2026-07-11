@@ -346,8 +346,6 @@ describe('Table CRUD — write, read, delete across all tables', () => {
             splitAdjusted = 1,
             lastSplitId = @splitId,
             updatedAt = GETUTCDATE()
-        OUTPUT @splitId, @userId, 'lot', inserted.id, @multiplier, GETUTCDATE()
-        INTO SplitAdjustments (splitId, userId, entityType, entityId, multiplier, createdAt)
         WHERE userId = @userId AND ticker = @ticker AND purchaseDate <= @splitDate
       `)
   })

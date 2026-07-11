@@ -19,7 +19,7 @@ Edit `.env.local` with your SQL Server connection details:
 DB_SERVER=your-server.com
 DB_USER=your-user
 DB_PASSWORD=your-password
-DB_NAME=Stock Tracker
+DB_NAME=your-db
 ```
 
 ### 3. Start Development Server
@@ -30,98 +30,7 @@ npm run dev
 
 The API will start on `http://localhost:5000` and automatically create the required database tables.
 
-## Database Schema
 
-### CashTransactions
-- **id**: Unique identifier
-- **userId**: User identifier (from Auth0)
-- **type**: `deposit`, `withdrawal`, `interest`, `fee`
-- **amount**: Transaction amount (decimal)
-- **transactionDate**: Date of transaction
-- **createdAt/updatedAt**: Timestamps
-
-### StockTransactions
-- **id**: Unique identifier
-- **userId**: User identifier
-- **ticker**: Stock ticker symbol (e.g., AAPL)
-- **type**: `buy`, `sell`, `div`, `split`
-- **quantity**: Number of shares
-- **price**: Price per share, `DECIMAL(18,8)` (adjusted by any applicable stock split(s); widened precision keeps this accurate across repeated splits)
-- **amount**: Total transaction amount
-- **transactionDate**: Date of transaction
-- **createdAt/updatedAt**: Timestamps
-- **splitAdjusted**: flag to indicate if affected by at least one stock split
-- **lastSplitId**: Foreign key to the most recent `StockSplits` record applied to this transaction (see `SplitAdjustments` for the *full* split history, not just the latest one)
-
-### Lots
-- **id**: Unique identifier
-- **userId**: User identifier
-- **ticker**: Stock ticker symbol
-- **transactionId**: Reference to the buy or dividend transaction that created this lot
-- **sourceType**: `purchase` or `dividend` - distinguishes lots created by a buy from lots created by a reinvested dividend
-- **originalQuantity**: Initial shares in the lot
-- **remainingQuantity**: Current shares in the lot after any sale allocations
-- **unitCost**: Cost per share, `DECIMAL(18,8)` (adjusted by any applicable stock split(s); widened precision keeps cost basis accurate across repeated splits)
-- **purchaseDate**: Date lot was acquired
-- **createdAt/updatedAt**: Timestamps
-- **splitAdjusted**: flag to indicate if affected by at least one stock split
-- **lastSplitId**: Foreign key to the most recent `StockSplits` record applied to this lot (see `SplitAdjustments` for the *full* split history, not just the latest one)
-
-### LotAllocations
-Records which lot(s) a sale transaction drew from and how much of each lot was consumed. This is the audit trail behind the user's explicit lot-selection on every sell - there is no automatic FIFO/LIFO allocation.
-- **id**: Unique identifier
-- **userId**: User identifier
-- **saleTransactionId**: Reference to the `sell` StockTransactions row
-- **lotId**: Reference to the Lots row this allocation consumed shares from
-- **quantityConsumed**: Number of shares taken from the lot for this sale. Rescaled by any stock split whose `splitDate` is on or after the sale's `transactionDate`, so this stays consistent with the split-adjusted lot it references.
-- **createdAt/updatedAt**: Timestamps
-
-### StockSplits
-Audit record of each stock split applied to a ticker, used to retroactively adjust affected lots/transactions/allocations and to flag which records were touched. A given ticker can have any number of `StockSplits` rows (one per split event); the same `(userId, ticker, ratioNumerator, ratioDenominator, splitDate)` combination cannot be applied twice.
-- **id**: Unique identifier
-- **userId**: User identifier
-- **ticker**: Stock ticker symbol
-- **ratioNumerator**: The "new shares" side of the split ratio as entered by the caller (e.g. `2` for a 2-for-1 split, `5` for a 5-for-3 split)
-- **ratioDenominator**: The "old shares" side of the split ratio as entered by the caller (e.g. `1` for a 2-for-1 split, `3` for a 5-for-3 split)
-- **multiplier**: Derived as `ratioNumerator / ratioDenominator`; this is the factor actually applied to share quantities (and its inverse to price/unitCost)
-- **splitDate**: Effective date of the split; lots/transactions/allocations dated on or before this date are adjusted
-- **createdAt**: Timestamp
-
-### SplitAdjustments
-Full history of every individual record touched by every split, so a ticker can be split multiple times without losing track of what happened at each step (the `lastSplitId`/`splitAdjusted` columns on `Lots`/`StockTransactions` only ever show the *most recent* split - this table has one row per split per affected record).
-- **id**: Unique identifier
-- **userId**: User identifier
-- **splitId**: Reference to the `StockSplits` row that caused this adjustment
-- **entityType**: `lot`, `transaction`, or `allocation` - which table the affected record lives in
-- **entityId**: Id of the affected `Lots` / `StockTransactions` / `LotAllocations` row
-- **multiplier**: The multiplier applied to this record by this split
-- **createdAt**: Timestamp
-
-## API Endpoints
-
-### Cash Transactions
-- `GET /api/cash` - Get all cash transactions
-- `GET /api/cash/summary` - Get cash summary (deposits, withdrawals, interest, fees, available cash, cost basis)
-- `POST /api/cash` - Create cash transaction
-- `PUT /api/cash/:id` - Update cash transaction
-- `DELETE /api/cash/:id` - Delete cash transaction
-
-### Stock Transactions
-- `GET /api/stocks` - Get all stock transactions
-- `GET /api/stocks/:ticker` - Get transactions for ticker
-- `GET /api/stocks/:ticker/summary` - Get ticker summary (total shares across all lots, lot count, cost basis)
-- `POST /api/stocks` - Create stock transaction (`buy`, `sell`, `div`)
-  - `buy`: creates a new `purchase` lot for `quantity` shares at `price`
-  - `div`: creates a new `dividend` lot (reinvested shares); does not affect available cash
-  - `sell`: **requires** a body field `allocations: [{ lotId, quantity }, ...]` whose quantities sum to the sale `quantity`. The API validates each referenced lot belongs to the user/ticker and has enough remaining shares, then decrements each lot's `remainingQuantity` and writes a `LotAllocations` audit row per lot. There is no default/automatic lot selection - the caller must explicitly choose which lot(s) to consume. Requests missing or mismatched allocations are rejected with `400`.
-- `PUT /api/stocks/:id` - Update stock transaction
-- `DELETE /api/stocks/:id` - Delete stock transaction
-
-### Lots
-- `GET /api/lots` - Get all lots
-- `GET /api/lots/:ticker` - Get lots for ticker with `remainingQuantity > 0`. Supports an optional `?sourceType=purchase` or `?sourceType=dividend` query filter to scope the results to just purchase lots or just dividend lots.
-- `PUT /api/lots/:id` - Update lot (adjust remaining quantity)
-- `POST /api/lots/:ticker/split` - Apply a stock split. Body: `{ ratioNumerator, ratioDenominator, splitDate }` - the split is specified as a ratio matching how splits are actually announced (e.g. a 2-for-1 split is `{ ratioNumerator: 2, ratioDenominator: 1 }`, a 5-for-3 split is `{ ratioNumerator: 5, ratioDenominator: 3 }`). The API derives `multiplier = ratioNumerator / ratioDenominator` internally. Runs as a single database transaction: rejects (`409`) re-applying the exact same `(ticker, ratioNumerator, ratioDenominator, splitDate)` split twice, inserts a `StockSplits` audit row (storing the ratio and the derived multiplier), then for every lot/`buy`/`sell`/`div` transaction/lot allocation dated on or before `splitDate`: multiplies `quantity`/`originalQuantity`/`remainingQuantity`/`quantityConsumed` by `multiplier`, divides `price`/`unitCost` by `multiplier` (so cost basis is unchanged), sets `splitAdjusted = true` with `lastSplitId` pointing at the new split record, and logs each affected row to `SplitAdjustments` so multiple sequential splits on the same ticker each remain traceable rather than only the most recent one.
 
 ## Authentication
 

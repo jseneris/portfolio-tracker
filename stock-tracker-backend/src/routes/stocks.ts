@@ -12,6 +12,94 @@ interface Allocation {
   quantity: number;
 }
 
+// GET portfolio summary in one database call (cash summary + stock rollup)
+router.get('/portfolio/summary', async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id!;
+    const summaryResult = await getPool().request()
+      .input('userId', sql.NVarChar, userId)
+      .query(`
+        ;WITH CashAgg AS (
+          SELECT
+            SUM(CASE WHEN type = 'deposit' THEN amount ELSE 0 END) AS deposits,
+            SUM(CASE WHEN type = 'withdrawal' THEN amount ELSE 0 END) AS withdrawals,
+            SUM(CASE WHEN type = 'interest' THEN amount ELSE 0 END) AS interest,
+            SUM(CASE WHEN type = 'fee' THEN amount ELSE 0 END) AS fees
+          FROM CashTransactions
+          WHERE userId = @userId
+        ),
+        StockCashAgg AS (
+          SELECT
+            SUM(CASE WHEN type = 'buy' THEN amount ELSE 0 END) AS buys,
+            SUM(CASE WHEN type = 'sell' THEN amount ELSE 0 END) AS sells
+          FROM StockTransactions
+          WHERE userId = @userId
+        ),
+        StockTotals AS (
+          SELECT
+            SUM(remainingQuantity * unitCost) AS totalStockCostBasis,
+            COUNT(DISTINCT ticker) AS stockCount
+          FROM Lots
+          WHERE userId = @userId AND remainingQuantity > 0
+        )
+        SELECT
+          COALESCE(c.deposits, 0) AS deposits,
+          COALESCE(c.withdrawals, 0) AS withdrawals,
+          COALESCE(c.interest, 0) AS interest,
+          COALESCE(c.fees, 0) AS fees,
+          COALESCE(s.buys, 0) AS buys,
+          COALESCE(s.sells, 0) AS sells,
+          COALESCE(c.deposits, 0) - COALESCE(c.withdrawals, 0) + COALESCE(c.interest, 0) - COALESCE(c.fees, 0) - COALESCE(s.buys, 0) + COALESCE(s.sells, 0) AS availableCash,
+          COALESCE(c.deposits, 0) - COALESCE(c.withdrawals, 0) AS cashBasis,
+          COALESCE(c.interest, 0) - COALESCE(c.fees, 0) AS adjustments,
+          COALESCE(t.totalStockCostBasis, 0) AS totalStockCostBasis,
+          COALESCE(t.stockCount, 0) AS stockCount
+        FROM CashAgg c
+        CROSS JOIN StockCashAgg s
+        CROSS JOIN StockTotals t;
+      `);
+
+    const stocksResult = await getPool().request()
+      .input('userId', sql.NVarChar, userId)
+      .query(`
+        SELECT
+          ticker,
+          SUM(remainingQuantity) AS totalShares,
+          SUM(remainingQuantity * unitCost) AS costBasis,
+          COUNT(*) AS lotCount
+        FROM Lots
+        WHERE userId = @userId AND remainingQuantity > 0
+        GROUP BY ticker
+        ORDER BY ticker ASC;
+      `);
+
+    const summaryRow = (summaryResult.recordset[0] ?? {}) as any;
+    const stocks = (stocksResult.recordset ?? []) as any[];
+
+    res.json({
+      deposits: Number(summaryRow.deposits || 0),
+      withdrawals: Number(summaryRow.withdrawals || 0),
+      interest: Number(summaryRow.interest || 0),
+      fees: Number(summaryRow.fees || 0),
+      buys: Number(summaryRow.buys || 0),
+      sells: Number(summaryRow.sells || 0),
+      availableCash: Number(summaryRow.availableCash || 0),
+      cashBasis: Number(summaryRow.cashBasis || 0),
+      adjustments: Number(summaryRow.adjustments || 0),
+      totalStockCostBasis: Number(summaryRow.totalStockCostBasis || 0),
+      stockCount: Number(summaryRow.stockCount || 0),
+      stocks: stocks.map((row: any) => ({
+        ticker: row.ticker,
+        totalShares: Number(row.totalShares || 0),
+        costBasis: Number(row.costBasis || 0),
+        lotCount: Number(row.lotCount || 0)
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 // GET all stock transactions for user
 router.get('/', async (req: Request, res: Response) => {
   try {
@@ -64,7 +152,7 @@ router.get('/:ticker/summary', async (req: Request, res: Response) => {
         SELECT 
           SUM(remainingQuantity) as totalShares,
           COUNT(*) as numberOfLots,
-          SUM(originalQuantity * unitCost) as costBasis
+          SUM(remainingQuantity * unitCost) as costBasis
         FROM Lots
         WHERE userId = @userId AND ticker = @ticker
       `);
