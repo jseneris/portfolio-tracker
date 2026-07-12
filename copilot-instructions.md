@@ -6,8 +6,9 @@ Project Overview
 Frontend Framework: React
 Backend Technology: Node.js with Express
 Database: Microsoft SQL Server
-Coding Standards
+Authentication: OAuth 2.0
 
+Coding Standards
 Use ES6+ syntax for JavaScript.
 Follow Airbnb JavaScript Style Guide for code formatting.
 Use TypeScript for type safety in React components.
@@ -32,5 +33,7 @@ Development Practices
 Write unit tests using vitest and React Testing Library.
 Ensure all API endpoints are documented using Swagger.
 Use Git for version control with a branching strategy (feature branches).
+
+
 
 Unless I explicitly tell you to, only generate code.  Do not build or run tests, and do not provide explanations or comments.  If you need to provide an explanation, ask me first.  Always update the .md files when functionality or schema changes are made.
