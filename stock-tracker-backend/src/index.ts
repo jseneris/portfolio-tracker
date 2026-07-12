@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
-dotenv.config({ path: '.env.local' });
+const envPath = process.env.NODE_ENV === 'test' ? '.env.test' : '.env.local';
+dotenv.config({ path: envPath });
 import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { initializeDatabase, closeDatabase } from './db/connection.js';

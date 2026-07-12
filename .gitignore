@@ -9,6 +9,7 @@ stock-tracker-backend/dist
 # Environment
 .env.local
 .env
+stock-tracker-backend/.env.test
 stock-tracker-backend/.env.local
 stock-tracker-backend/.env
 
