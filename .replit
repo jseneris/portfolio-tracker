@@ -5,3 +5,32 @@ integrations = ["github:1.0.0"]
 
 [nix]
 channel = "stable-25_05"
+
+run = "bash -lc 'npm --prefix stock-tracker-backend install; npm --prefix stock-tracker-frontend install; npm --prefix stock-tracker-backend run dev'"
+
+[deployment]
+run = ["bash", "-lc", "npm --prefix stock-tracker-backend install; npm --prefix stock-tracker-backend run build; npm --prefix stock-tracker-backend run start"]
+
+[[workflows]]
+name = "Backend Dev"
+author = 27160534
+
+	[[workflows.tasks]]
+	task = "shell.exec"
+	args = "npm --prefix stock-tracker-backend install && npm --prefix stock-tracker-backend run dev"
+
+[[workflows]]
+name = "Frontend Dev"
+author = 27160534
+
+	[[workflows.tasks]]
+	task = "shell.exec"
+	args = "npm --prefix stock-tracker-frontend install && npm --prefix stock-tracker-frontend run dev -- --host 0.0.0.0 --port 5173"
+
+[[workflows]]
+name = "Install All"
+author = 27160534
+
+	[[workflows.tasks]]
+	task = "shell.exec"
+	args = "npm --prefix stock-tracker-backend install && npm --prefix stock-tracker-frontend install"
