@@ -24,3 +24,8 @@ Create `.env` or use Replit Secrets:
 - Cash CRUD
 - Stock buy/dividend/sell (with explicit lot allocation)
 - Holdings detail views
+
+## Current Delivery Mode
+
+MVP scope lock is active. Enhancements are frozen until MVP acceptance criteria pass.
+See `MVP_SCOPE_LOCK.md` for in-scope and out-of-scope items.
