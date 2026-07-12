@@ -85,3 +85,14 @@ This file lists the current backend test coverage and expected outcomes.
    - Verifies insert/read/delete operations across all tables:
       `CashTransactions`, `StockTransactions`, `StockSplits`, `Lots`, `LotAllocations`, `SplitAdjustments`.
 
+- P0 database hardening (`db-p0-hardening.test.ts`)
+   - Verifies `SchemaMigrations` exists and contains `2026-07-12-p0-hardening`.
+   - Verifies required indexes exist:
+      `IX_CashTransactions_UserId_TransactionDate`,
+      `IX_StockTransactions_UserId_Ticker_TransactionDate`,
+      `IX_Lots_UserId_Ticker_PurchaseDate`,
+      `IX_Lots_OpenPositions_UserId_Ticker_PurchaseDate`,
+      `UX_StockSplits_Ticker_Ratio_Date`.
+   - Verifies DB-level uniqueness blocks duplicate split inserts for the same ticker/ratio/date.
+   - Verifies positivity constraints reject invalid stock transaction values and invalid split ratio values.
+

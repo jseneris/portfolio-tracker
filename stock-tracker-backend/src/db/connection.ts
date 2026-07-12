@@ -38,6 +38,17 @@ export function getPool(): sql.ConnectionPool {
 
 async function createTablesIfNotExist() {
   const request = getPool().request();
+
+  // Track applied schema hardening/migration steps.
+  await request.batch(`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SchemaMigrations')
+    CREATE TABLE SchemaMigrations (
+      id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+      migrationKey NVARCHAR(200) NOT NULL UNIQUE,
+      appliedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+      notes NVARCHAR(500) NULL
+    );
+  `);
   
   // Create CashTransactions table
   await request.batch(`
@@ -239,6 +250,119 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SplitAdjustments_UserId') CREATE INDEX IX_SplitAdjustments_UserId ON SplitAdjustments(userId);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SplitAdjustments_SplitId') CREATE INDEX IX_SplitAdjustments_SplitId ON SplitAdjustments(splitId);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SplitAdjustments_EntityId') CREATE INDEX IX_SplitAdjustments_EntityId ON SplitAdjustments(entityId);
+  `);
+
+  // P0 hardening indexes aligned to real query shapes.
+  await request.batch(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_UserId_TransactionDate')
+      CREATE INDEX IX_CashTransactions_UserId_TransactionDate ON CashTransactions(userId, transactionDate);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockTransactions_UserId_Ticker_TransactionDate')
+      CREATE INDEX IX_StockTransactions_UserId_Ticker_TransactionDate ON StockTransactions(userId, ticker, transactionDate);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Lots_UserId_Ticker_PurchaseDate')
+      CREATE INDEX IX_Lots_UserId_Ticker_PurchaseDate ON Lots(userId, ticker, purchaseDate);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Lots_OpenPositions_UserId_Ticker_PurchaseDate')
+      CREATE INDEX IX_Lots_OpenPositions_UserId_Ticker_PurchaseDate
+      ON Lots(userId, ticker, purchaseDate)
+      INCLUDE (remainingQuantity, unitCost)
+      WHERE remainingQuantity > 0;
+  `);
+
+  // P0 data integrity checks for transactional positivity.
+  await request.batch(`
+    IF EXISTS (
+      SELECT 1 FROM sys.check_constraints
+      WHERE parent_object_id = OBJECT_ID('StockTransactions')
+        AND name = 'CK_StockTransactions_PositiveValues'
+    )
+      ALTER TABLE StockTransactions DROP CONSTRAINT CK_StockTransactions_PositiveValues;
+
+    ALTER TABLE StockTransactions WITH NOCHECK
+    ADD CONSTRAINT CK_StockTransactions_PositiveValues
+    CHECK (
+      quantity IS NOT NULL AND quantity > 0
+      AND price IS NOT NULL AND price > 0
+      AND amount IS NOT NULL AND amount > 0
+    );
+  `);
+
+  await request.batch(`
+    IF EXISTS (
+      SELECT 1 FROM sys.check_constraints
+      WHERE parent_object_id = OBJECT_ID('StockSplits')
+        AND name = 'CK_StockSplits_PositiveRatio'
+    )
+      ALTER TABLE StockSplits DROP CONSTRAINT CK_StockSplits_PositiveRatio;
+
+    ALTER TABLE StockSplits WITH NOCHECK
+    ADD CONSTRAINT CK_StockSplits_PositiveRatio
+    CHECK (
+      ratioNumerator > 0
+      AND ratioDenominator > 0
+      AND multiplier > 0
+    );
+  `);
+
+  // P0 split idempotency at DB level: collapse duplicate historical rows first,
+  // then enforce uniqueness by ticker + ratio + splitDate.
+  await request.batch(`
+    DECLARE @Dupes TABLE (
+      duplicateId UNIQUEIDENTIFIER PRIMARY KEY,
+      keepId UNIQUEIDENTIFIER NOT NULL
+    );
+
+    INSERT INTO @Dupes (duplicateId, keepId)
+    SELECT id, keepId
+    FROM (
+      SELECT
+        id,
+        FIRST_VALUE(id) OVER (
+          PARTITION BY ticker, ratioNumerator, ratioDenominator, splitDate
+          ORDER BY createdAt ASC, id ASC
+        ) AS keepId,
+        ROW_NUMBER() OVER (
+          PARTITION BY ticker, ratioNumerator, ratioDenominator, splitDate
+          ORDER BY createdAt ASC, id ASC
+        ) AS rn
+      FROM StockSplits
+    ) ranked
+    WHERE ranked.rn > 1;
+
+    UPDATE l
+    SET l.lastSplitId = d.keepId
+    FROM Lots l
+    JOIN @Dupes d ON l.lastSplitId = d.duplicateId;
+
+    UPDATE st
+    SET st.lastSplitId = d.keepId
+    FROM StockTransactions st
+    JOIN @Dupes d ON st.lastSplitId = d.duplicateId;
+
+    UPDATE sa
+    SET sa.splitId = d.keepId
+    FROM SplitAdjustments sa
+    JOIN @Dupes d ON sa.splitId = d.duplicateId;
+
+    DELETE ss
+    FROM StockSplits ss
+    JOIN @Dupes d ON ss.id = d.duplicateId;
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_StockSplits_Ticker_Ratio_Date')
+      CREATE UNIQUE INDEX UX_StockSplits_Ticker_Ratio_Date
+      ON StockSplits(ticker, ratioNumerator, ratioDenominator, splitDate);
+  `);
+
+  await request.batch(`
+    IF NOT EXISTS (
+      SELECT 1 FROM SchemaMigrations WHERE migrationKey = '2026-07-12-p0-hardening'
+    )
+      INSERT INTO SchemaMigrations (migrationKey, notes)
+      VALUES (
+        '2026-07-12-p0-hardening',
+        'Added composite/filtered indexes, stronger checks, split uniqueness, and migration tracking.'
+      );
   `);
 
   console.log('✓ Database tables initialized');
