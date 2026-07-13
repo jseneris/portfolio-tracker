@@ -1,30 +1,31 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import {
   CreateStockInput,
   Lot,
   StockTransaction,
   StockTransactionType,
+  TickerSummary,
   UpdateStockInput,
   createStockTransaction,
   deleteStockTransaction,
   emitPortfolioUpdated,
   getLotsByTicker,
-  getStockTransactions,
+  getStockSummaryByTicker,
+  getStockTransactionsByTicker,
   updateStockTransaction,
 } from '../api'
 
+const ALLOCATION_TOLERANCE = 1e-6
+
 type StockFormState = {
-  ticker: string
   type: StockTransactionType
   quantity: string
   price: string
   transactionDate: string
 }
 
-const ALLOCATION_TOLERANCE = 1e-6
-
 const EMPTY_STOCK_FORM: StockFormState = {
-  ticker: '',
   type: 'buy',
   quantity: '',
   price: '',
@@ -38,7 +39,7 @@ function formatMoney(value: number | null) {
   return `$${Number(value).toFixed(2)}`
 }
 
-function formatNumber(value: number | null, digits = 4) {
+function formatNumber(value: number | null, digits = 6) {
   if (value == null || Number.isNaN(Number(value))) {
     return '--'
   }
@@ -61,59 +62,23 @@ function toInputDate(value: string) {
   return date.toISOString().slice(0, 10)
 }
 
-function toUpperTicker(value: string) {
-  return value.trim().toUpperCase()
-}
-
-function validateStockForm(form: StockFormState): string | null {
-  if (!toUpperTicker(form.ticker)) {
-    return 'Ticker is required.'
-  }
-
-  const quantity = Number(form.quantity)
-  if (!Number.isFinite(quantity) || quantity <= 0) {
-    return 'Quantity must be greater than 0.'
-  }
-
-  const price = Number(form.price)
-  if (!Number.isFinite(price) || price <= 0) {
-    return 'Price must be greater than 0.'
-  }
-
-  if (!form.transactionDate) {
-    return 'Transaction date is required.'
-  }
-
-  const selectedDate = new Date(form.transactionDate)
-  if (Number.isNaN(selectedDate.getTime())) {
-    return 'Transaction date is invalid.'
-  }
-
-  const now = new Date()
-  const selectedUtc = Date.UTC(selectedDate.getUTCFullYear(), selectedDate.getUTCMonth(), selectedDate.getUTCDate())
-  const nowUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-  if (selectedUtc > nowUtc) {
-    return 'Transaction date cannot be in the future.'
-  }
-
-  return null
-}
-
-export default function StocksPage() {
+export default function StockHistoryPage() {
+  const { ticker: tickerParam } = useParams<{ ticker: string }>()
+  const ticker = useMemo(() => decodeURIComponent(tickerParam ?? '').trim().toUpperCase(), [tickerParam])
+  const [summary, setSummary] = useState<TickerSummary | null>(null)
   const [transactions, setTransactions] = useState<StockTransaction[]>([])
   const [form, setForm] = useState<StockFormState>(EMPTY_STOCK_FORM)
   const [showAddTransactionModal, setShowAddTransactionModal] = useState(false)
   const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null)
   const [availableLots, setAvailableLots] = useState<Lot[]>([])
   const [allocations, setAllocations] = useState<Record<string, string>>({})
-  const [loadingTransactions, setLoadingTransactions] = useState(true)
+  const [loading, setLoading] = useState(true)
   const [loadingLots, setLoadingLots] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
   const isSell = form.type === 'sell'
-  const normalizedTicker = useMemo(() => toUpperTicker(form.ticker), [form.ticker])
 
   const allocationTotal = useMemo(() => {
     return Object.values(allocations).reduce((sum, value) => {
@@ -127,24 +92,110 @@ export default function StocksPage() {
     ? Math.abs(allocationTotal - quantityValue) <= ALLOCATION_TOLERANCE
     : false
 
+  function validateStockForm(formState: StockFormState): string | null {
+    const quantity = Number(formState.quantity)
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return 'Shares must be greater than 0.'
+    }
+
+    const price = Number(formState.price)
+    if (!Number.isFinite(price) || price <= 0) {
+      return 'Price must be greater than 0.'
+    }
+
+    if (!formState.transactionDate) {
+      return 'Date is required.'
+    }
+
+    const selectedDate = new Date(formState.transactionDate)
+    if (Number.isNaN(selectedDate.getTime())) {
+      return 'Date is invalid.'
+    }
+
+    const now = new Date()
+    const selectedUtc = Date.UTC(selectedDate.getUTCFullYear(), selectedDate.getUTCMonth(), selectedDate.getUTCDate())
+    const nowUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+    if (selectedUtc > nowUtc) {
+      return 'Date cannot be in the future.'
+    }
+
+    return null
+  }
+
+  function resetForm() {
+    setForm(EMPTY_STOCK_FORM)
+    setEditingTransactionId(null)
+    setAvailableLots([])
+    setAllocations({})
+  }
+
+  function openAddTransactionModal() {
+    setError(null)
+    setSuccess(null)
+    resetForm()
+    setShowAddTransactionModal(true)
+  }
+
+  function closeAddTransactionModal() {
+    setShowAddTransactionModal(false)
+    resetForm()
+  }
+
+  function beginEdit(transaction: StockTransaction) {
+    setError(null)
+    setSuccess(null)
+    setEditingTransactionId(transaction.id)
+    setForm({
+      type: transaction.type,
+      quantity: transaction.quantity == null ? '' : String(transaction.quantity),
+      price: transaction.price == null ? '' : String(transaction.price),
+      transactionDate: toInputDate(transaction.transactionDate),
+    })
+    setShowAddTransactionModal(true)
+  }
+
+  function setAllocation(lotId: string, value: string) {
+    setAllocations((prev) => ({ ...prev, [lotId]: value }))
+  }
+
+  function buildAllocationPayload() {
+    return availableLots
+      .map((lot) => ({
+        lotId: lot.id,
+        quantity: Number(allocations[lot.id] || 0),
+      }))
+      .filter((entry) => Number.isFinite(entry.quantity) && entry.quantity > 0)
+  }
+
   async function loadTransactions() {
-    setLoadingTransactions(true)
+    setLoading(true)
+    setError(null)
     try {
-      const result = await getStockTransactions()
-      setTransactions(result)
+      const [summaryData, txData] = await Promise.all([
+        getStockSummaryByTicker(ticker),
+        getStockTransactionsByTicker(ticker),
+      ])
+      setSummary(summaryData)
+      setTransactions(txData)
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unable to load stock transactions.')
+      setError(err instanceof Error ? err.message : 'Unable to load transaction history.')
     } finally {
-      setLoadingTransactions(false)
+      setLoading(false)
     }
   }
 
   useEffect(() => {
+    if (!ticker) {
+      setLoading(false)
+      setError('Ticker is required.')
+      return
+    }
+
     loadTransactions()
-  }, [])
+  }, [ticker])
 
   useEffect(() => {
-    if (!isSell || !normalizedTicker) {
+    if (!isSell || !showAddTransactionModal || !ticker) {
       setAvailableLots([])
       setAllocations({})
       return
@@ -155,7 +206,7 @@ export default function StocksPage() {
     async function loadLots() {
       setLoadingLots(true)
       try {
-        const lots = await getLotsByTicker(normalizedTicker)
+        const lots = await getLotsByTicker(ticker)
         if (!cancelled) {
           setAvailableLots(lots)
           setAllocations((prev) => {
@@ -183,53 +234,7 @@ export default function StocksPage() {
     return () => {
       cancelled = true
     }
-  }, [isSell, normalizedTicker])
-
-  function resetForm() {
-    setForm(EMPTY_STOCK_FORM)
-    setEditingTransactionId(null)
-    setAvailableLots([])
-    setAllocations({})
-  }
-
-  function openAddTransactionModal() {
-    setError(null)
-    setSuccess(null)
-    resetForm()
-    setShowAddTransactionModal(true)
-  }
-
-  function closeAddTransactionModal() {
-    setShowAddTransactionModal(false)
-    resetForm()
-  }
-
-  function beginEdit(transaction: StockTransaction) {
-    setError(null)
-    setSuccess(null)
-    setEditingTransactionId(transaction.id)
-    setForm({
-      ticker: transaction.ticker,
-      type: transaction.type,
-      quantity: transaction.quantity == null ? '' : String(transaction.quantity),
-      price: transaction.price == null ? '' : String(transaction.price),
-      transactionDate: toInputDate(transaction.transactionDate),
-    })
-    setShowAddTransactionModal(true)
-  }
-
-  function setAllocation(lotId: string, value: string) {
-    setAllocations((prev) => ({ ...prev, [lotId]: value }))
-  }
-
-  function buildAllocationPayload() {
-    return availableLots
-      .map((lot) => ({
-        lotId: lot.id,
-        quantity: Number(allocations[lot.id] || 0),
-      }))
-      .filter((entry) => Number.isFinite(entry.quantity) && entry.quantity > 0)
-  }
+  }, [isSell, showAddTransactionModal, ticker])
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -243,7 +248,7 @@ export default function StocksPage() {
     }
 
     const payload: CreateStockInput = {
-      ticker: normalizedTicker,
+      ticker,
       type: form.type,
       quantity: Number(form.quantity),
       price: Number(form.price),
@@ -259,7 +264,7 @@ export default function StocksPage() {
       const allocationPayload = buildAllocationPayload()
       const allocatedQuantity = allocationPayload.reduce((sum, row) => sum + row.quantity, 0)
       if (Math.abs(allocatedQuantity - Number(form.quantity)) > ALLOCATION_TOLERANCE) {
-        setError(`Allocated quantity (${allocatedQuantity.toFixed(6)}) must equal sell quantity (${Number(form.quantity).toFixed(6)}).`)
+        setError(`Allocated quantity (${allocatedQuantity.toFixed(6)}) must equal sell shares (${Number(form.quantity).toFixed(6)}).`)
         return
       }
 
@@ -277,17 +282,17 @@ export default function StocksPage() {
           transactionDate: payload.transactionDate,
         }
         await updateStockTransaction(editingTransactionId, updatePayload)
-        setSuccess('Stock transaction updated.')
+        setSuccess('Transaction updated.')
       } else {
         await createStockTransaction(payload)
-        setSuccess('Stock transaction created.')
+        setSuccess('Transaction created.')
       }
-      resetForm()
-      setShowAddTransactionModal(false)
-      await loadTransactions()
       emitPortfolioUpdated()
+      setShowAddTransactionModal(false)
+      resetForm()
+      await loadTransactions()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unable to save stock transaction.')
+      setError(err instanceof Error ? err.message : 'Unable to save transaction.')
     } finally {
       setSaving(false)
     }
@@ -301,17 +306,16 @@ export default function StocksPage() {
 
     setError(null)
     setSuccess(null)
-
     try {
       await deleteStockTransaction(id)
-      setSuccess('Stock transaction deleted.')
+      setSuccess('Transaction deleted.')
       if (editingTransactionId === id) {
         closeAddTransactionModal()
       }
       await loadTransactions()
       emitPortfolioUpdated()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unable to delete stock transaction.')
+      setError(err instanceof Error ? err.message : 'Unable to delete transaction.')
     }
   }
 
@@ -319,71 +323,78 @@ export default function StocksPage() {
     <section>
       <div className="panel row-between">
         <div>
-          <h2>Stocks (MVP)</h2>
-          <p>Create buy, dividend, and sell transactions. Sell requires explicit lot allocation.</p>
+          <h2>{ticker || 'Ticker'} Transaction History</h2>
+          <p>All stock transactions recorded for this ticker.</p>
         </div>
-        <button className="button button-primary" type="button" onClick={openAddTransactionModal}>
-          Add Transaction
-        </button>
-      </div>
-
-      {success ? <div className="panel status status-success">{success}</div> : null}
-      {error && !showAddTransactionModal ? <div className="panel status status-error">{error}</div> : null}
-
-      <div className="panel">
-        <div className="row-between">
-          <h3>Stock Transactions</h3>
-          <button className="button" type="button" onClick={loadTransactions} disabled={loadingTransactions}>
-            {loadingTransactions ? 'Refreshing...' : 'Refresh'}
+        <div className="inline-actions">
+          <button className="button button-primary" type="button" onClick={openAddTransactionModal} disabled={!ticker}>
+            Add Transaction
           </button>
+          <Link className="button" to="/">
+            Back to Dashboard
+          </Link>
         </div>
-        {loadingTransactions ? (
-          <p>Loading stock transactions...</p>
-        ) : transactions.length === 0 ? (
-          <p>No stock transactions yet.</p>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Ticker</th>
-                <th>Type</th>
-                <th>Quantity</th>
-                <th>Price</th>
-                <th>Amount</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {transactions.map((transaction) => (
-                <tr key={transaction.id}>
-                  <td>{formatDate(transaction.transactionDate)}</td>
-                  <td>{transaction.ticker}</td>
-                  <td>{transaction.type}</td>
-                  <td>{formatNumber(transaction.quantity, 6)}</td>
-                  <td>{formatMoney(transaction.price)}</td>
-                  <td>{formatMoney(transaction.amount)}</td>
-                  <td>
-                    <div className="inline-actions">
-                      <button className="button" type="button" onClick={() => beginEdit(transaction)}>
-                        Edit
-                      </button>
-                      <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
       </div>
+
+      {error ? <div className="panel status status-error">{error}</div> : null}
+      {success ? <div className="panel status status-success">{success}</div> : null}
+
+      {loading ? <div className="panel">Loading transactions...</div> : null}
+
+      {!loading && !error && summary ? (
+        <div className="panel stat-grid">
+          <div className="stat"><div className="label">Total Shares</div><div className="value">{formatNumber(summary.totalShares, 6)}</div></div>
+          <div className="stat"><div className="label">Open Lots</div><div className="value">{summary.numberOfLots}</div></div>
+          <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatMoney(summary.costBasis)}</div></div>
+        </div>
+      ) : null}
+
+      {!loading && !error ? (
+        <div className="panel">
+          {transactions.length === 0 ? (
+            <p>No transactions found for {ticker}.</p>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th>Quantity</th>
+                  <th>Price</th>
+                  <th>Amount</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transactions.map((transaction) => (
+                  <tr key={transaction.id}>
+                    <td>{formatDate(transaction.transactionDate)}</td>
+                    <td>{transaction.type}</td>
+                    <td>{formatNumber(transaction.quantity)}</td>
+                    <td>{formatMoney(transaction.price)}</td>
+                    <td>{formatMoney(transaction.amount)}</td>
+                    <td>
+                      <div className="inline-actions">
+                        <button className="button" type="button" onClick={() => beginEdit(transaction)}>
+                          Edit
+                        </button>
+                        <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ) : null}
 
       {showAddTransactionModal ? (
-        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="add-transaction-title">
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="add-stock-history-transaction-title">
           <div className="modal-card">
-            <h3 id="add-transaction-title">{editingTransactionId ? 'Edit Transaction' : 'Add Transaction'}</h3>
+            <h3 id="add-stock-history-transaction-title">{editingTransactionId ? 'Edit Transaction' : 'Add Transaction'} ({ticker})</h3>
             <p>Enter date, transaction type, shares, and price.</p>
 
             <form className="form-grid" onSubmit={onSubmit}>
@@ -439,23 +450,8 @@ export default function StocksPage() {
                 />
               </label>
 
-              <label>
-                Ticker
-                <input
-                  type="text"
-                  placeholder="AAPL"
-                  value={form.ticker}
-                  onChange={(event) => setForm((prev) => ({ ...prev, ticker: event.target.value.toUpperCase() }))}
-                  disabled={saving}
-                />
-              </label>
-
               <div className="form-actions">
-                <button
-                  className="button button-primary"
-                  type="submit"
-                  disabled={saving || (isSell && !allocationMatches)}
-                >
+                <button className="button button-primary" type="submit" disabled={saving || (isSell && !allocationMatches)}>
                   {saving ? 'Saving...' : editingTransactionId ? 'Save Changes' : 'Add Transaction'}
                 </button>
                 <button className="button" type="button" onClick={closeAddTransactionModal} disabled={saving}>
@@ -473,10 +469,10 @@ export default function StocksPage() {
                   </span>
                 </div>
 
-                {loadingLots ? <p>Loading lots for {normalizedTicker || 'ticker'}...</p> : null}
+                {loadingLots ? <p>Loading lots for {ticker}...</p> : null}
 
-                {!loadingLots && normalizedTicker && availableLots.length === 0 ? (
-                  <p>No open lots found for {normalizedTicker}. Enter another ticker or create a buy/dividend lot first.</p>
+                {!loadingLots && availableLots.length === 0 ? (
+                  <p>No open lots found for {ticker}. Create a buy/dividend lot first.</p>
                 ) : null}
 
                 {!loadingLots && availableLots.length > 0 ? (

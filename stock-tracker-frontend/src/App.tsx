@@ -3,6 +3,7 @@ import DashboardPage from './pages/DashboardPage'
 import CashPage from './pages/CashPage'
 import StocksPage from './pages/StocksPage'
 import HoldingsPage from './pages/HoldingsPage'
+import StockHistoryPage from './pages/StockHistoryPage'
 
 export default function App() {
   return (
@@ -22,6 +23,7 @@ export default function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/cash" element={<CashPage />} />
           <Route path="/stocks" element={<StocksPage />} />
+          <Route path="/stocks/:ticker" element={<StockHistoryPage />} />
           <Route path="/holdings" element={<HoldingsPage />} />
         </Routes>
       </main>

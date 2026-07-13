@@ -17,12 +17,15 @@ Deliver a usable stock tracker frontend quickly with core portfolio workflows fi
 1. Dashboard
    - Use portfolio summary endpoint as primary data source.
    - Display available cash, cash basis, adjustments, stock cost basis, and holdings table.
+   - Add quick Add Stock modal for buy entry from dashboard.
+   - Make ticker cells navigable to stock-specific history page.
 2. Cash Management
    - Build create, edit, delete, and list flows for cash transactions.
    - Refresh summary after mutations.
 3. Stock Transactions
    - Build buy and dividend transaction forms.
    - Support historical transaction dates.
+   - Add edit/delete actions for stock transaction records.
 4. Sell With Explicit Lot Allocation
    - Fetch available lots by ticker.
    - Require user-selected lot allocations.
@@ -30,6 +33,8 @@ Deliver a usable stock tracker frontend quickly with core portfolio workflows fi
 5. Holdings Detail
    - Per-ticker transaction view and lots view.
    - Show remaining shares and lot-level cost information.
+   - Show per-ticker summary metrics on stock-specific page (Total Shares, Open Lots, Cost Basis).
+   - Keep stock-specific Add Transaction modal tickerless by inferring ticker from route.
 6. MVP Quality Gate
    - Add frontend tests for critical workflows and validations.
    - Run manual acceptance checklist against backend behavior.
@@ -40,6 +45,7 @@ Deliver a usable stock tracker frontend quickly with core portfolio workflows fi
 3. Sell flow enforces explicit lot allocation correctly.
 4. Dashboard reflects backend-calculated summary values.
 5. App is stable for normal and validation-error paths.
+6. Transaction dates render as entered dates without timezone day-shift regressions.
 
 ## Phase 2: Enhancement-Ready Platform
 1. Add feature flags to isolate post-MVP functionality.

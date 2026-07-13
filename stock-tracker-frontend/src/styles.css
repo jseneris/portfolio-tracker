@@ -142,6 +142,16 @@ body {
   background: #eef2f7;
 }
 
+.link-button {
+  color: #1d4ed8;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
 .button:disabled {
   opacity: 0.65;
   cursor: not-allowed;
@@ -269,6 +279,26 @@ body {
   animation: shimmer 1.25s ease-in-out infinite;
 }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 50;
+}
+
+.modal-card {
+  width: min(520px, 100%);
+  background: #ffffff;
+  border: 1px solid #d9e2ec;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  box-shadow: 0 24px 56px rgba(15, 23, 42, 0.2);
+}
+
 @keyframes shimmer {
   0% {
     background-position: 100% 0;
@@ -306,5 +336,9 @@ body {
   .allocation-header {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .modal-card {
+    padding: 0.9rem;
   }
 }

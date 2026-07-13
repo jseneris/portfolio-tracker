@@ -25,6 +25,18 @@ Create `.env` or use Replit Secrets:
 - Stock buy/dividend/sell (with explicit lot allocation)
 - Holdings detail views
 
+## Recent MVP Updates
+
+- Dashboard now includes an Add Stock modal (ticker, shares, price, date) for quick buy-entry workflow.
+- Dashboard holdings ticker values now link to a stock-specific route at /stocks/:ticker.
+- Stock-specific page now includes:
+	- per-ticker summary cards (Total Shares, Open Lots, Cost Basis)
+	- transaction history table
+	- Add Transaction modal without ticker field (ticker inferred from route)
+	- edit and delete actions for transaction records
+- Main Stocks page transaction table now supports edit and delete actions.
+- Date display was standardized to UTC calendar rendering to prevent day-shift issues from local timezone conversion.
+
 ## Current Delivery Mode
 
 MVP scope lock is active. Enhancements are frozen until MVP acceptance criteria pass.

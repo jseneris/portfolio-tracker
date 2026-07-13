@@ -7,9 +7,13 @@ This project is currently operating under MVP scope lock.
 ## In Scope (Phase 1)
 
 - Dashboard summary page wired to portfolio summary endpoint
+- Dashboard Add Stock modal (buy transaction entry)
+- Dashboard ticker navigation to stock-specific history page
 - Cash transaction CRUD (list, create, edit, delete)
 - Stock buy and dividend transaction flows
 - Stock sell flow with explicit lot allocation validation
+- Stock transaction record management (edit/delete) on stocks and stock-specific pages
+- Stock-specific summary cards (Total Shares, Open Lots, Cost Basis)
 - Holdings detail views (per ticker transactions and lots)
 - MVP tests and acceptance checks
 
@@ -31,3 +35,4 @@ Scope lock can be lifted only after:
 2. Manual validation confirms summary and holdings stay consistent after mutations.
 3. Sell allocation validation blocks invalid submissions before API call.
 4. MVP defect backlog is triaged and critical defects are closed.
+5. Transaction dates render as entered calendar dates (no timezone day shift).

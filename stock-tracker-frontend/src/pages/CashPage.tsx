@@ -36,7 +36,7 @@ function formatDate(value: string) {
   if (Number.isNaN(date.getTime())) {
     return value
   }
-  return date.toLocaleDateString()
+  return date.toLocaleDateString(undefined, { timeZone: 'UTC' })
 }
 
 function formatMoney(value: number) {

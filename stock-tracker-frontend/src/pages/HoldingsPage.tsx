@@ -3,10 +3,8 @@ import {
   Lot,
   PortfolioSummary,
   StockTransaction,
-  TickerSummary,
   getLotsByTicker,
   getPortfolioSummary,
-  getStockSummaryByTicker,
   getStockTransactionsByTicker,
 } from '../api'
 
@@ -29,13 +27,12 @@ function formatDate(value: string) {
   if (Number.isNaN(date.getTime())) {
     return value
   }
-  return date.toLocaleDateString()
+  return date.toLocaleDateString(undefined, { timeZone: 'UTC' })
 }
 
 export default function HoldingsPage() {
   const [portfolio, setPortfolio] = useState<PortfolioSummary | null>(null)
   const [selectedTicker, setSelectedTicker] = useState<string>('')
-  const [summary, setSummary] = useState<TickerSummary | null>(null)
   const [lots, setLots] = useState<Lot[]>([])
   const [transactions, setTransactions] = useState<StockTransaction[]>([])
   const [loading, setLoading] = useState(true)
@@ -71,7 +68,6 @@ export default function HoldingsPage() {
 
   useEffect(() => {
     if (!selectedTicker) {
-      setSummary(null)
       setLots([])
       setTransactions([])
       return
@@ -83,13 +79,11 @@ export default function HoldingsPage() {
       setDetailsLoading(true)
       setError(null)
       try {
-        const [summaryResult, lotsResult, txResult] = await Promise.all([
-          getStockSummaryByTicker(selectedTicker),
+        const [lotsResult, txResult] = await Promise.all([
           getLotsByTicker(selectedTicker),
           getStockTransactionsByTicker(selectedTicker),
         ])
         if (!cancelled) {
-          setSummary(summaryResult)
           setLots(lotsResult)
           setTransactions(txResult)
         }
@@ -145,15 +139,6 @@ export default function HoldingsPage() {
               </select>
             </label>
           </div>
-
-          {summary ? (
-            <div className="panel stat-grid">
-              <div className="stat"><div className="label">Ticker</div><div className="value">{summary.ticker}</div></div>
-              <div className="stat"><div className="label">Total Shares</div><div className="value">{formatNumber(summary.totalShares, 6)}</div></div>
-              <div className="stat"><div className="label">Open Lots</div><div className="value">{summary.numberOfLots}</div></div>
-              <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatMoney(summary.costBasis)}</div></div>
-            </div>
-          ) : null}
 
           <div className="panel">
             <h3>Open Lots</h3>
