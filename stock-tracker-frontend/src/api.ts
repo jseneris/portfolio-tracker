@@ -1,5 +1,10 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 const DEV_USER_ID = import.meta.env.VITE_DEV_USER_ID || 'dev-user'
+export const PORTFOLIO_UPDATED_EVENT = 'portfolio:updated'
+
+export function emitPortfolioUpdated() {
+  window.dispatchEvent(new Event(PORTFOLIO_UPDATED_EVENT))
+}
 
 export type CashTransactionType = 'deposit' | 'withdrawal' | 'interest' | 'fee'
 export type StockTransactionType = 'buy' | 'sell' | 'div'

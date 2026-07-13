@@ -5,6 +5,7 @@ import {
   CashTransactionType,
   createCashTransaction,
   deleteCashTransaction,
+  emitPortfolioUpdated,
   getCashSummary,
   getCashTransactions,
   updateCashTransaction,
@@ -148,6 +149,7 @@ export default function CashPage() {
       }
       clearForm()
       await loadCashData()
+      emitPortfolioUpdated()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to save cash transaction.')
     } finally {
@@ -170,6 +172,7 @@ export default function CashPage() {
         clearForm()
       }
       await loadCashData()
+      emitPortfolioUpdated()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to delete cash transaction.')
     }
