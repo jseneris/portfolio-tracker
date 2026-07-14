@@ -10,6 +10,7 @@ import {
   createStockTransaction,
   deleteStockTransaction,
   emitPortfolioUpdated,
+  getLots,
   getLotsByTicker,
   getStockSummaryByTicker,
   getStockTransactionsByTicker,
@@ -17,6 +18,9 @@ import {
 } from '../api'
 
 const ALLOCATION_TOLERANCE = 1e-6
+const LOT_STATE_TOLERANCE = 1e-6
+
+type PositiveTransactionState = 'full' | 'partial' | 'empty'
 
 type StockFormState = {
   type: StockTransactionType
@@ -62,6 +66,31 @@ function toInputDate(value: string) {
   return date.toISOString().slice(0, 10)
 }
 
+function getPositiveTransactionState(lot: Lot): PositiveTransactionState {
+  const original = Number(lot.originalQuantity)
+  const remaining = Number(lot.remainingQuantity)
+  if (!Number.isFinite(original) || original <= 0 || !Number.isFinite(remaining)) {
+    return 'empty'
+  }
+  if (remaining <= LOT_STATE_TOLERANCE) {
+    return 'empty'
+  }
+  if (remaining >= original - LOT_STATE_TOLERANCE) {
+    return 'full'
+  }
+  return 'partial'
+}
+
+function getStatePillClassName(state: PositiveTransactionState) {
+  if (state === 'full') {
+    return 'pill pill-full'
+  }
+  if (state === 'partial') {
+    return 'pill pill-partial'
+  }
+  return 'pill pill-empty'
+}
+
 export default function StockHistoryPage() {
   const { ticker: tickerParam } = useParams<{ ticker: string }>()
   const ticker = useMemo(() => decodeURIComponent(tickerParam ?? '').trim().toUpperCase(), [tickerParam])
@@ -71,6 +100,7 @@ export default function StockHistoryPage() {
   const [showAddTransactionModal, setShowAddTransactionModal] = useState(false)
   const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null)
   const [availableLots, setAvailableLots] = useState<Lot[]>([])
+  const [positiveTransactionStates, setPositiveTransactionStates] = useState<Record<string, PositiveTransactionState>>({})
   const [allocations, setAllocations] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [loadingLots, setLoadingLots] = useState(false)
@@ -91,6 +121,27 @@ export default function StockHistoryPage() {
   const allocationMatches = Number.isFinite(quantityValue)
     ? Math.abs(allocationTotal - quantityValue) <= ALLOCATION_TOLERANCE
     : false
+
+  const hasRequiredValues =
+    Boolean(form.transactionDate) &&
+    form.quantity.trim() !== '' &&
+    form.price.trim() !== ''
+
+  const hasValidNumericValues =
+    Number.isFinite(quantityValue) &&
+    quantityValue > 0 &&
+    Number.isFinite(Number(form.price)) &&
+    Number(form.price) > 0
+
+  const hasSellAllocationInput = availableLots.some((lot) => {
+    const value = Number(allocations[lot.id] || 0)
+    return Number.isFinite(value) && value > 0
+  })
+
+  const canSubmit =
+    hasRequiredValues &&
+    hasValidNumericValues &&
+    (!isSell || (!loadingLots && availableLots.length > 0 && hasSellAllocationInput && allocationMatches))
 
   function validateStockForm(formState: StockFormState): string | null {
     const quantity = Number(formState.quantity)
@@ -171,12 +222,20 @@ export default function StockHistoryPage() {
     setLoading(true)
     setError(null)
     try {
-      const [summaryData, txData] = await Promise.all([
+      const [summaryData, txData, lotsData] = await Promise.all([
         getStockSummaryByTicker(ticker),
         getStockTransactionsByTicker(ticker),
+        getLots(),
       ])
       setSummary(summaryData)
       setTransactions(txData)
+
+      const tickerLots = lotsData.filter((lot) => lot.ticker.toUpperCase() === ticker)
+      const nextStates: Record<string, PositiveTransactionState> = {}
+      for (const lot of tickerLots) {
+        nextStates[lot.transactionId] = getPositiveTransactionState(lot)
+      }
+      setPositiveTransactionStates(nextStates)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to load transaction history.')
     } finally {
@@ -359,6 +418,7 @@ export default function StockHistoryPage() {
                 <tr>
                   <th>Date</th>
                   <th>Type</th>
+                  <th>Lot State</th>
                   <th>Quantity</th>
                   <th>Price</th>
                   <th>Amount</th>
@@ -370,6 +430,19 @@ export default function StockHistoryPage() {
                   <tr key={transaction.id}>
                     <td>{formatDate(transaction.transactionDate)}</td>
                     <td>{transaction.type}</td>
+                    <td>
+                      {transaction.type === 'buy' || transaction.type === 'div' ? (
+                        positiveTransactionStates[transaction.id] ? (
+                          <span className={getStatePillClassName(positiveTransactionStates[transaction.id])}>
+                            {positiveTransactionStates[transaction.id]}
+                          </span>
+                        ) : (
+                          <span className="pill pill-muted">--</span>
+                        )
+                      ) : (
+                        <span className="pill pill-muted">--</span>
+                      )}
+                    </td>
                     <td>{formatNumber(transaction.quantity)}</td>
                     <td>{formatMoney(transaction.price)}</td>
                     <td>{formatMoney(transaction.amount)}</td>
@@ -451,7 +524,7 @@ export default function StockHistoryPage() {
               </label>
 
               <div className="form-actions">
-                <button className="button button-primary" type="submit" disabled={saving || (isSell && !allocationMatches)}>
+                <button className="button button-primary" type="submit" disabled={saving || !canSubmit}>
                   {saving ? 'Saving...' : editingTransactionId ? 'Save Changes' : 'Add Transaction'}
                 </button>
                 <button className="button" type="button" onClick={closeAddTransactionModal} disabled={saving}>
@@ -479,8 +552,6 @@ export default function StockHistoryPage() {
                   <table className="table">
                     <thead>
                       <tr>
-                        <th>Lot Id</th>
-                        <th>Source</th>
                         <th>Purchase Date</th>
                         <th>Remaining</th>
                         <th>Unit Cost</th>
@@ -490,8 +561,6 @@ export default function StockHistoryPage() {
                     <tbody>
                       {availableLots.map((lot) => (
                         <tr key={lot.id}>
-                          <td className="mono">{lot.id.slice(0, 8)}...</td>
-                          <td>{lot.sourceType}</td>
                           <td>{formatDate(lot.purchaseDate)}</td>
                           <td>{formatNumber(lot.remainingQuantity, 6)}</td>
                           <td>{formatMoney(lot.unitCost)}</td>

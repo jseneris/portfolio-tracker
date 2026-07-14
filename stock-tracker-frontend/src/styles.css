@@ -261,6 +261,30 @@ body {
   border-color: #fdba74;
 }
 
+.pill-full {
+  color: #0f3d2e;
+  background: #d1fae5;
+  border-color: #6ee7b7;
+}
+
+.pill-partial {
+  color: #78350f;
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+
+.pill-empty {
+  color: #7f1d1d;
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.pill-muted {
+  color: #334155;
+  background: #e2e8f0;
+  border-color: #cbd5e1;
+}
+
 .mono {
   font-family: Consolas, Monaco, 'Courier New', monospace;
 }
