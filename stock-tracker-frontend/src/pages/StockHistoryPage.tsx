@@ -1,12 +1,15 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
+  CombineLotsResponse,
   CreateStockInput,
   Lot,
+  SplitLotResponse,
   StockTransaction,
   StockTransactionType,
   TickerSummary,
   UpdateStockInput,
+  combineLots,
   createStockTransaction,
   deleteStockTransaction,
   emitPortfolioUpdated,
@@ -14,6 +17,7 @@ import {
   getLotsByTicker,
   getStockSummaryByTicker,
   getStockTransactionsByTicker,
+  splitLot,
   updateStockTransaction,
 } from '../api'
 
@@ -100,11 +104,17 @@ export default function StockHistoryPage() {
   const [showAddTransactionModal, setShowAddTransactionModal] = useState(false)
   const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null)
   const [availableLots, setAvailableLots] = useState<Lot[]>([])
+  const [openLots, setOpenLots] = useState<Lot[]>([])
   const [positiveTransactionStates, setPositiveTransactionStates] = useState<Record<string, PositiveTransactionState>>({})
   const [allocations, setAllocations] = useState<Record<string, string>>({})
+  const [selectedLotIds, setSelectedLotIds] = useState<string[]>([])
+  const [splitLotTarget, setSplitLotTarget] = useState<Lot | null>(null)
+  const [splitQuantitiesInput, setSplitQuantitiesInput] = useState('')
   const [loading, setLoading] = useState(true)
   const [loadingLots, setLoadingLots] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [splitting, setSplitting] = useState(false)
+  const [combining, setCombining] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
@@ -142,6 +152,20 @@ export default function StockHistoryPage() {
     hasRequiredValues &&
     hasValidNumericValues &&
     (!isSell || (!loadingLots && availableLots.length > 0 && hasSellAllocationInput && allocationMatches))
+
+  const openLotSummary = useMemo(() => {
+    if (openLots.length === 0) {
+      return '--'
+    }
+    const quantities = openLots.map((lot) => {
+      const value = Number(lot.remainingQuantity)
+      if (!Number.isFinite(value)) {
+        return '--'
+      }
+      return Number(value.toFixed(6)).toString()
+    })
+    return quantities.join(',')
+  }, [openLots])
 
   function validateStockForm(formState: StockFormState): string | null {
     const quantity = Number(formState.quantity)
@@ -209,6 +233,38 @@ export default function StockHistoryPage() {
     setAllocations((prev) => ({ ...prev, [lotId]: value }))
   }
 
+  function toggleLotSelection(lotId: string) {
+    setSelectedLotIds((prev) => {
+      if (prev.includes(lotId)) {
+        return prev.filter((id) => id !== lotId)
+      }
+      return [...prev, lotId]
+    })
+  }
+
+  function openSplitModal(lot: Lot) {
+    setError(null)
+    setSuccess(null)
+    setSplitLotTarget(lot)
+    setSplitQuantitiesInput('')
+  }
+
+  function closeSplitModal() {
+    if (splitting) {
+      return
+    }
+    setSplitLotTarget(null)
+    setSplitQuantitiesInput('')
+  }
+
+  function parseSplitQuantities(input: string) {
+    return input
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+      .map((value) => Number(value))
+  }
+
   function buildAllocationPayload() {
     return availableLots
       .map((lot) => ({
@@ -222,13 +278,15 @@ export default function StockHistoryPage() {
     setLoading(true)
     setError(null)
     try {
-      const [summaryData, txData, lotsData] = await Promise.all([
+      const [summaryData, txData, lotsData, openLotsData] = await Promise.all([
         getStockSummaryByTicker(ticker),
         getStockTransactionsByTicker(ticker),
         getLots(),
+        getLotsByTicker(ticker),
       ])
       setSummary(summaryData)
       setTransactions(txData)
+      setOpenLots(openLotsData)
 
       const tickerLots = lotsData.filter((lot) => lot.ticker.toUpperCase() === ticker)
       const nextStates: Record<string, PositiveTransactionState> = {}
@@ -236,10 +294,75 @@ export default function StockHistoryPage() {
         nextStates[lot.transactionId] = getPositiveTransactionState(lot)
       }
       setPositiveTransactionStates(nextStates)
+      setSelectedLotIds((prev) => prev.filter((id) => openLotsData.some((lot) => lot.id === id)))
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to load transaction history.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function submitCombineLots() {
+    if (selectedLotIds.length < 2) {
+      setError('Select at least two open lots to combine.')
+      return
+    }
+
+    setError(null)
+    setSuccess(null)
+    setCombining(true)
+    try {
+      const response: CombineLotsResponse = await combineLots(selectedLotIds)
+      setSuccess(`Combined ${response.lotIds.length} lots into one lot of ${formatNumber(response.combinedQuantity)} shares.`)
+      setSelectedLotIds([])
+      await loadTransactions()
+      emitPortfolioUpdated()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to combine lots.')
+    } finally {
+      setCombining(false)
+    }
+  }
+
+  async function submitSplitLot() {
+    if (!splitLotTarget) {
+      return
+    }
+
+    setError(null)
+    setSuccess(null)
+
+    const quantities = parseSplitQuantities(splitQuantitiesInput)
+    if (quantities.length < 2) {
+      setError('Enter at least two comma-separated split quantities.')
+      return
+    }
+
+    if (quantities.some((value) => !Number.isFinite(value) || value <= 0)) {
+      setError('All split quantities must be numeric and greater than 0.')
+      return
+    }
+
+    const requestedTotal = quantities.reduce((sum, value) => sum + value, 0)
+    if (Math.abs(requestedTotal - Number(splitLotTarget.remainingQuantity)) > ALLOCATION_TOLERANCE) {
+      setError(
+        `Split total (${requestedTotal.toFixed(6)}) must equal lot remaining (${Number(splitLotTarget.remainingQuantity).toFixed(6)}).`
+      )
+      return
+    }
+
+    setSplitting(true)
+    try {
+      const response: SplitLotResponse = await splitLot(splitLotTarget.id, quantities)
+      setSuccess(`Split lot into ${response.createdLots.length} lots.`)
+      setSplitLotTarget(null)
+      setSplitQuantitiesInput('')
+      await loadTransactions()
+      emitPortfolioUpdated()
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to split lot.')
+    } finally {
+      setSplitting(false)
     }
   }
 
@@ -403,8 +526,64 @@ export default function StockHistoryPage() {
       {!loading && !error && summary ? (
         <div className="panel stat-grid">
           <div className="stat"><div className="label">Total Shares</div><div className="value">{formatNumber(summary.totalShares, 6)}</div></div>
-          <div className="stat"><div className="label">Open Lots</div><div className="value">{summary.numberOfLots}</div></div>
+          <div className="stat"><div className="label">Open Lots</div><div className="value">{openLotSummary}</div></div>
           <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatMoney(summary.costBasis)}</div></div>
+        </div>
+      ) : null}
+
+      {!loading && !error ? (
+        <div className="panel">
+          <div className="row-between">
+            <h3>Open Lot Tools</h3>
+            <button
+              className="button"
+              type="button"
+              onClick={submitCombineLots}
+              disabled={combining || splitting || selectedLotIds.length < 2}
+            >
+              {combining ? 'Combining...' : `Combine Selected (${selectedLotIds.length})`}
+            </button>
+          </div>
+
+          {openLots.length === 0 ? (
+            <p>No open lots for {ticker}.</p>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Select</th>
+                  <th>Purchase Date</th>
+                  <th>Source</th>
+                  <th>Remaining</th>
+                  <th>Unit Cost</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {openLots.map((lot) => (
+                  <tr key={lot.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        checked={selectedLotIds.includes(lot.id)}
+                        onChange={() => toggleLotSelection(lot.id)}
+                        disabled={combining || splitting}
+                      />
+                    </td>
+                    <td>{formatDate(lot.purchaseDate)}</td>
+                    <td>{lot.sourceType}</td>
+                    <td>{formatNumber(lot.remainingQuantity, 6)}</td>
+                    <td>{formatMoney(lot.unitCost)}</td>
+                    <td>
+                      <button className="button" type="button" onClick={() => openSplitModal(lot)} disabled={combining || splitting}>
+                        Split Lot
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       ) : null}
 
@@ -584,6 +763,39 @@ export default function StockHistoryPage() {
             ) : null}
 
             {error ? <div className="status status-error">{error}</div> : null}
+          </div>
+        </div>
+      ) : null}
+
+      {splitLotTarget ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="split-lot-title">
+          <div className="modal-card">
+            <h3 id="split-lot-title">Split Lot ({ticker})</h3>
+            <p>
+              Remaining shares: {formatNumber(splitLotTarget.remainingQuantity, 6)}. Enter comma-separated split quantities
+              that add up exactly.
+            </p>
+
+            <div className="form-grid">
+              <label>
+                Quantities
+                <input
+                  type="text"
+                  placeholder="Example: 1, 2"
+                  value={splitQuantitiesInput}
+                  onChange={(event) => setSplitQuantitiesInput(event.target.value)}
+                  disabled={splitting}
+                />
+              </label>
+              <div className="form-actions">
+                <button className="button button-primary" type="button" onClick={submitSplitLot} disabled={splitting}>
+                  {splitting ? 'Splitting...' : 'Split Lot'}
+                </button>
+                <button className="button" type="button" onClick={closeSplitModal} disabled={splitting}>
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       ) : null}
