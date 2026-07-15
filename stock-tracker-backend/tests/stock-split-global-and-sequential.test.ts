@@ -78,7 +78,7 @@ describe('Global and Sequential Stock Splits', () => {
     }
 
     await request(server)
-      .post(`${LOTS_API_PATH}/${TICKER}/split`)
+      .post(`${LOTS_API_PATH}/ticker/${TICKER}/split`)
       .set('x-user-id', USER_A)
       .send({ ratioNumerator: 2, ratioDenominator: 1, splitDate: '2026-02-10' })
       .expect(200)
@@ -117,13 +117,13 @@ describe('Global and Sequential Stock Splits', () => {
     }
 
     await request(server)
-      .post(`${LOTS_API_PATH}/${TICKER}/split`)
+      .post(`${LOTS_API_PATH}/ticker/${TICKER}/split`)
       .set('x-user-id', USER_A)
       .send({ ratioNumerator: 2, ratioDenominator: 1, splitDate: '2026-02-10' })
       .expect(200)
 
     await request(server)
-      .post(`${LOTS_API_PATH}/${TICKER}/split`)
+      .post(`${LOTS_API_PATH}/ticker/${TICKER}/split`)
       .set('x-user-id', USER_B)
       .send({ ratioNumerator: 3, ratioDenominator: 2, splitDate: '2026-02-10' })
       .expect(200)

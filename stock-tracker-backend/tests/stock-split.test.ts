@@ -59,7 +59,7 @@ describe('Stock Split Test', () => {
 
     // Split date of 2/10 falls after the 2/1 buy but before the 3/1 buy, so only the 2/1 lot is affected
     await request(server)
-      .post(`${LOTS_API_PATH}/AAPL/split`)
+      .post(`${LOTS_API_PATH}/ticker/AAPL/split`)
       .set('x-user-id', TEST_USER_ID)
       .send({ ratioNumerator: 2, ratioDenominator: 1, splitDate: '2026-02-10' })
       .expect(200)

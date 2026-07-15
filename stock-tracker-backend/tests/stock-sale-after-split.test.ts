@@ -74,7 +74,7 @@ describe('Stock Sale After Split Test', () => {
 
     // Split date of 2/10 falls after the 2/1 buy but before the 3/1 buy
     await request(server)
-      .post(`${LOTS_API_PATH}/AAPL/split`)
+      .post(`${LOTS_API_PATH}/ticker/AAPL/split`)
       .set('x-user-id', TEST_USER_ID)
       .send({ ratioNumerator: 5, ratioDenominator: 3, splitDate: '2026-02-10' })
       .expect(200)
@@ -88,7 +88,9 @@ describe('Stock Sale After Split Test', () => {
     const unsplitLot = lotsAfterSplit.body.find((lot: any) => !Boolean(lot.splitAdjusted))
     expect(splitLot).toBeTruthy()
     expect(unsplitLot).toBeTruthy()
+    expect(Number(splitLot.originalQuantity)).toBeCloseTo(5, 6)
     expect(Number(splitLot.remainingQuantity)).toBeCloseTo(5, 6)
+    expect(Number(unsplitLot.originalQuantity)).toBeCloseTo(2, 6)
     expect(Number(unsplitLot.remainingQuantity)).toBeCloseTo(2, 6)
 
     // Sell 4 shares: 2 shares from each lot
@@ -121,6 +123,21 @@ describe('Stock Sale After Split Test', () => {
 
     expect(lotsAfterSale.body).toHaveLength(1)
     expect(lotsAfterSale.body[0].id).toBe(splitLot.id)
+    expect(Number(lotsAfterSale.body[0].originalQuantity)).toBeCloseTo(5, 6)
     expect(Number(lotsAfterSale.body[0].remainingQuantity)).toBeCloseTo(3, 6)
+
+    const allLotsAfterSale = await request(server)
+      .get('/api/lots')
+      .set('x-user-id', TEST_USER_ID)
+      .expect(200)
+
+    const splitLotAfterSale = allLotsAfterSale.body.find((lot: any) => lot.id === splitLot.id)
+    const unsplitLotAfterSale = allLotsAfterSale.body.find((lot: any) => lot.id === unsplitLot.id)
+    expect(splitLotAfterSale).toBeTruthy()
+    expect(unsplitLotAfterSale).toBeTruthy()
+    expect(Number(splitLotAfterSale.originalQuantity)).toBeCloseTo(5, 6)
+    expect(Number(splitLotAfterSale.remainingQuantity)).toBeCloseTo(3, 6)
+    expect(Number(unsplitLotAfterSale.originalQuantity)).toBeCloseTo(2, 6)
+    expect(Number(unsplitLotAfterSale.remainingQuantity)).toBeCloseTo(0, 6)
   })
 })

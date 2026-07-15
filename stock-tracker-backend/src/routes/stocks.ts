@@ -12,6 +12,42 @@ interface Allocation {
   quantity: number;
 }
 
+interface OpenLot {
+  id: string;
+  transactionId: string;
+  remainingQuantity: number;
+}
+
+interface PurchaseLot {
+  id: string;
+  transactionId: string;
+  remainingQuantity: number;
+}
+
+function buildSmallestFirstConsumption(openLots: OpenLot[], sellQuantity: number): Allocation[] {
+  let remainingToSell = Number(sellQuantity);
+  const consumptionPlan: Allocation[] = [];
+
+  for (const lot of openLots) {
+    if (remainingToSell <= ALLOCATION_TOLERANCE) {
+      break;
+    }
+
+    const lotRemaining = Number(lot.remainingQuantity);
+    if (!Number.isFinite(lotRemaining) || lotRemaining <= ALLOCATION_TOLERANCE) {
+      continue;
+    }
+
+    const quantityToConsume = Math.min(lotRemaining, remainingToSell);
+    if (quantityToConsume > ALLOCATION_TOLERANCE) {
+      consumptionPlan.push({ lotId: lot.id, quantity: quantityToConsume });
+      remainingToSell -= quantityToConsume;
+    }
+  }
+
+  return consumptionPlan;
+}
+
 // GET portfolio summary in one database call (cash summary + stock rollup)
 router.get('/portfolio/summary', async (req: Request, res: Response) => {
   try {
@@ -154,7 +190,7 @@ router.get('/:ticker/summary', async (req: Request, res: Response) => {
           COUNT(*) as numberOfLots,
           SUM(remainingQuantity * unitCost) as costBasis
         FROM Lots
-        WHERE userId = @userId AND ticker = @ticker
+        WHERE userId = @userId AND ticker = @ticker AND remainingQuantity > 0
       `);
     
     const lot = lotsResult.recordset[0] || {};
@@ -199,10 +235,21 @@ router.post('/', async (req: Request, res: Response) => {
       amount = quantity * price;
     }
 
-    // Sell transactions require the user to explicitly choose which lots are consumed
+    let sellConsumptionPlan: Allocation[] = [];
+    let purchaseAttributionPlan: Allocation[] = [];
+
+    // Sell transactions require explicit allocations in the request, but matching is applied
+    // smallest-lot-first to close out full lots whenever possible.
     if (type === 'sell') {
       if (!Array.isArray(allocations) || allocations.length === 0) {
         return res.status(400).json({ error: 'Sell transactions require explicit lot allocations' });
+      }
+
+      for (const allocation of allocations) {
+        const requested = Number(allocation.quantity);
+        if (!allocation?.lotId || !Number.isFinite(requested) || requested <= 0) {
+          return res.status(400).json({ error: 'Each sell allocation must include lotId and quantity > 0' });
+        }
       }
 
       const allocatedTotal = allocations.reduce((sum, a) => sum + Number(a.quantity), 0);
@@ -212,26 +259,118 @@ router.post('/', async (req: Request, res: Response) => {
         });
       }
 
-      // Validate each referenced lot belongs to this user/ticker and has enough remaining shares
-      for (const allocation of allocations) {
-        const lotCheck = await pool.request()
-          .input('lotId', sql.UniqueIdentifier, allocation.lotId)
-          .input('userId', sql.NVarChar, userId)
-          .input('ticker', sql.NVarChar, normalizedTicker)
-          .query(`
-            SELECT id, remainingQuantity FROM Lots
-            WHERE id = @lotId AND userId = @userId AND ticker = @ticker
-          `);
+      purchaseAttributionPlan = allocations.map((allocation) => ({
+        lotId: String(allocation.lotId),
+        quantity: Number(allocation.quantity),
+      }));
 
-        const lotRow = lotCheck.recordset[0];
-        if (!lotRow) {
-          return res.status(400).json({ error: `Lot ${allocation.lotId} not found for ${normalizedTicker}` });
+      const openLotsResult = await pool.request()
+        .input('userId', sql.NVarChar, userId)
+        .input('ticker', sql.NVarChar, normalizedTicker)
+        .query(`
+          SELECT id, transactionId, remainingQuantity
+          FROM Lots
+          WHERE userId = @userId AND ticker = @ticker AND remainingQuantity > 0
+          ORDER BY remainingQuantity ASC, purchaseDate ASC, id ASC
+        `);
+
+      const openLots = (openLotsResult.recordset ?? []).map((lot) => ({
+        id: String(lot.id),
+        transactionId: String(lot.transactionId),
+        remainingQuantity: Number(lot.remainingQuantity),
+      }));
+
+      const totalOpenShares = openLots.reduce((sum, lot) => sum + Number(lot.remainingQuantity), 0);
+      if (totalOpenShares + ALLOCATION_TOLERANCE < Number(quantity)) {
+        return res.status(400).json({
+          error: `Not enough shares to sell ${quantity} from ${normalizedTicker}`
+        });
+      }
+
+      const purchaseLotsResult = await pool.request()
+        .input('userId', sql.NVarChar, userId)
+        .input('ticker', sql.NVarChar, normalizedTicker)
+        .query(`
+        SELECT id, transactionId, remainingQuantity
+        FROM PurchaseLots
+        WHERE userId = @userId
+          AND ticker = @ticker
+      `);
+
+      const purchaseLots = (purchaseLotsResult.recordset ?? []).map((lot) => ({
+        id: String(lot.id),
+        transactionId: String(lot.transactionId),
+        remainingQuantity: Number(lot.remainingQuantity),
+      } as PurchaseLot));
+
+      const openLotsById = new Map(openLots.map((lot) => [lot.id, lot]));
+      const purchaseLotsById = new Map(purchaseLots.map((lot) => [lot.id, lot]));
+      const purchaseLotIdByTransactionId = new Map<string, string>();
+      for (const purchaseLot of purchaseLots) {
+        if (!purchaseLotIdByTransactionId.has(purchaseLot.transactionId)) {
+          purchaseLotIdByTransactionId.set(purchaseLot.transactionId, purchaseLot.id);
         }
-        if (Number(lotRow.remainingQuantity) + ALLOCATION_TOLERANCE < Number(allocation.quantity)) {
+      }
+
+      // Allow allocation lotIds to reference either purchase lots (attribution layer)
+      // or open lots (operational layer). Open-lot IDs are mapped back to the
+      // corresponding purchase lot by transactionId.
+      purchaseAttributionPlan = purchaseAttributionPlan.map((allocation) => {
+        const directPurchaseLot = purchaseLotsById.get(allocation.lotId);
+        if (directPurchaseLot) {
+          return allocation;
+        }
+
+        const openLot = openLotsById.get(allocation.lotId);
+        if (!openLot) {
+          return allocation;
+        }
+
+        const mappedPurchaseLotId = purchaseLotIdByTransactionId.get(openLot.transactionId);
+        if (!mappedPurchaseLotId) {
+          return allocation;
+        }
+
+        return {
+          lotId: mappedPurchaseLotId,
+          quantity: allocation.quantity,
+        };
+      });
+
+      const remainingByPurchaseLotId = new Map<string, number>();
+      for (const purchaseLot of purchaseLots) {
+        remainingByPurchaseLotId.set(purchaseLot.id, Number(purchaseLot.remainingQuantity));
+      }
+
+      const requestedByPurchaseLotId = new Map<string, number>();
+      for (const allocation of purchaseAttributionPlan) {
+        if (!remainingByPurchaseLotId.has(allocation.lotId)) {
+          return res.status(400).json({ error: `Purchase lot ${allocation.lotId} not found for ${normalizedTicker}` });
+        }
+        requestedByPurchaseLotId.set(
+          allocation.lotId,
+          Number(requestedByPurchaseLotId.get(allocation.lotId) ?? 0) + Number(allocation.quantity)
+        );
+      }
+
+      for (const [purchaseLotId, requestedQuantity] of requestedByPurchaseLotId.entries()) {
+        const lotRemaining = remainingByPurchaseLotId.get(purchaseLotId);
+        if (lotRemaining == null) {
+          return res.status(400).json({ error: `Purchase lot ${purchaseLotId} not found for ${normalizedTicker}` });
+        }
+        if (lotRemaining + ALLOCATION_TOLERANCE < Number(requestedQuantity)) {
           return res.status(400).json({
-            error: `Lot ${allocation.lotId} does not have enough remaining shares to allocate ${allocation.quantity}`
+            error: `Purchase lot ${purchaseLotId} has only ${lotRemaining} remaining shares`
           });
         }
+      }
+
+      sellConsumptionPlan = buildSmallestFirstConsumption(openLots, Number(quantity));
+      const consumedTotal = sellConsumptionPlan.reduce((sum, row) => sum + Number(row.quantity), 0);
+      if (Math.abs(consumedTotal - Number(quantity)) > ALLOCATION_TOLERANCE) {
+        return res.status(400).json({
+          error: `Unable to match sell quantity (${quantity}) against open lots`
+        });
       }
     }
     
@@ -268,6 +407,19 @@ router.post('/', async (req: Request, res: Response) => {
           INSERT INTO Lots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
           VALUES (@lotId, @userId, @ticker, @transactionId, 'purchase', @quantity, @quantity, @price, @transactionDate)
         `);
+
+      await pool.request()
+        .input('lotId', sql.UniqueIdentifier, lotId)
+        .input('userId', sql.NVarChar, userId)
+        .input('ticker', sql.NVarChar, normalizedTicker)
+        .input('transactionId', sql.UniqueIdentifier, id)
+        .input('quantity', sql.Decimal(18, 8), quantity)
+        .input('price', sql.Decimal(18, 8), price)
+        .input('transactionDate', sql.DateTime2, new Date(transactionDate))
+        .query(`
+          INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
+          VALUES (@lotId, @userId, @ticker, @transactionId, 'purchase', @quantity, @quantity, @price, @transactionDate)
+        `);
     }
 
 
@@ -286,11 +438,24 @@ router.post('/', async (req: Request, res: Response) => {
           INSERT INTO Lots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
           VALUES (@lotId, @userId, @ticker, @transactionId, 'dividend', @quantity, @quantity, @price, @transactionDate)
         `);
+
+      await pool.request()
+        .input('lotId', sql.UniqueIdentifier, lotId)
+        .input('userId', sql.NVarChar, userId)
+        .input('ticker', sql.NVarChar, normalizedTicker)
+        .input('transactionId', sql.UniqueIdentifier, id)
+        .input('quantity', sql.Decimal(18, 8), quantity)
+        .input('price', sql.Decimal(18, 8), price)
+        .input('transactionDate', sql.DateTime2, new Date(transactionDate))
+        .query(`
+          INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
+          VALUES (@lotId, @userId, @ticker, @transactionId, 'dividend', @quantity, @quantity, @price, @transactionDate)
+        `);
     }
 
-    // Sells consume the lots the user explicitly chose, recording the allocation for auditability
-    if (type === 'sell' && allocations) {
-      for (const allocation of allocations) {
+    // Sells consume lots smallest-first, recording the actual allocation for auditability.
+    if (type === 'sell') {
+      for (const allocation of sellConsumptionPlan) {
         await pool.request()
           .input('lotId', sql.UniqueIdentifier, allocation.lotId)
           .input('userId', sql.NVarChar, userId)
@@ -311,6 +476,30 @@ router.post('/', async (req: Request, res: Response) => {
           .query(`
             INSERT INTO LotAllocations (id, userId, saleTransactionId, lotId, quantityConsumed)
             VALUES (@allocationId, @userId, @saleTransactionId, @lotId, @quantity)
+          `);
+      }
+
+      for (const allocation of purchaseAttributionPlan) {
+        await pool.request()
+          .input('lotId', sql.UniqueIdentifier, allocation.lotId)
+          .input('userId', sql.NVarChar, userId)
+          .input('quantity', sql.Decimal(18, 8), allocation.quantity)
+          .query(`
+            UPDATE PurchaseLots
+            SET remainingQuantity = remainingQuantity - @quantity, updatedAt = GETUTCDATE()
+            WHERE id = @lotId AND userId = @userId
+          `);
+
+        const purchaseAllocationId = uuidv4();
+        await pool.request()
+          .input('allocationId', sql.UniqueIdentifier, purchaseAllocationId)
+          .input('userId', sql.NVarChar, userId)
+          .input('saleTransactionId', sql.UniqueIdentifier, id)
+          .input('purchaseLotId', sql.UniqueIdentifier, allocation.lotId)
+          .input('quantity', sql.Decimal(18, 8), allocation.quantity)
+          .query(`
+            INSERT INTO PurchaseLotAllocations (id, userId, saleTransactionId, purchaseLotId, quantityConsumed)
+            VALUES (@allocationId, @userId, @saleTransactionId, @purchaseLotId, @quantity)
           `);
       }
     }
@@ -362,18 +551,76 @@ router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const userId = req.user?.id!;
-    
-    const request = getPool().request();
-    
-    // Delete associated lots first
-    await request
+
+    const pool = getPool();
+    const transactionLookup = await pool.request()
       .input('id', sql.UniqueIdentifier, id)
-      .query('DELETE FROM Lots WHERE transactionId = @id');
-    
-    // Delete the transaction
-    await request
       .input('userId', sql.NVarChar, userId)
-      .query('DELETE FROM StockTransactions WHERE id = @id AND userId = @userId');
+      .query('SELECT TOP 1 id, type FROM StockTransactions WHERE id = @id AND userId = @userId');
+
+    if (transactionLookup.recordset.length === 0) {
+      return res.status(404).json({ error: 'Stock transaction not found' });
+    }
+
+    const transactionType = String(transactionLookup.recordset[0].type || '').toLowerCase();
+    const tx = new sql.Transaction(pool);
+    await tx.begin();
+
+    try {
+      if (transactionType === 'sell') {
+        const operationalAllocations = await new sql.Request(tx)
+          .input('saleTransactionId', sql.UniqueIdentifier, id)
+          .input('userId', sql.NVarChar, userId)
+          .query(`
+            SELECT lotId, quantityConsumed
+            FROM LotAllocations
+            WHERE saleTransactionId = @saleTransactionId AND userId = @userId
+          `);
+
+        for (const allocation of operationalAllocations.recordset) {
+          await new sql.Request(tx)
+            .input('lotId', sql.UniqueIdentifier, allocation.lotId)
+            .input('userId', sql.NVarChar, userId)
+            .input('quantity', sql.Decimal(18, 8), allocation.quantityConsumed)
+            .query(`
+              UPDATE Lots
+              SET remainingQuantity = remainingQuantity + @quantity, updatedAt = GETUTCDATE()
+              WHERE id = @lotId AND userId = @userId
+            `);
+        }
+
+        const purchaseAllocations = await new sql.Request(tx)
+          .input('saleTransactionId', sql.UniqueIdentifier, id)
+          .input('userId', sql.NVarChar, userId)
+          .query(`
+            SELECT purchaseLotId, quantityConsumed
+            FROM PurchaseLotAllocations
+            WHERE saleTransactionId = @saleTransactionId AND userId = @userId
+          `);
+
+        for (const allocation of purchaseAllocations.recordset) {
+          await new sql.Request(tx)
+            .input('purchaseLotId', sql.UniqueIdentifier, allocation.purchaseLotId)
+            .input('userId', sql.NVarChar, userId)
+            .input('quantity', sql.Decimal(18, 8), allocation.quantityConsumed)
+            .query(`
+              UPDATE PurchaseLots
+              SET remainingQuantity = remainingQuantity + @quantity, updatedAt = GETUTCDATE()
+              WHERE id = @purchaseLotId AND userId = @userId
+            `);
+        }
+      }
+
+      await new sql.Request(tx)
+        .input('id', sql.UniqueIdentifier, id)
+        .input('userId', sql.NVarChar, userId)
+        .query('DELETE FROM StockTransactions WHERE id = @id AND userId = @userId');
+
+      await tx.commit();
+    } catch (innerError) {
+      await tx.rollback();
+      throw innerError;
+    }
     
     res.status(204).send();
   } catch (error) {

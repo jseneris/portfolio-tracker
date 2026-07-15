@@ -4,8 +4,13 @@ import { getPool } from '../db/connection.js';
 import sql from 'mssql';
 
 const router = Router();
+const SPLIT_TOLERANCE = 1e-6;
 
-// GET all lots for user
+interface CombineLotsRequestBody {
+  lotIds?: string[];
+}
+
+// GET all purchase-lot attribution rows for user
 router.get('/', async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id!;
@@ -13,7 +18,7 @@ router.get('/', async (req: Request, res: Response) => {
     
     const result = await request
       .input('userId', sql.NVarChar, userId)
-      .query('SELECT * FROM Lots WHERE userId = @userId ORDER BY purchaseDate ASC');
+      .query('SELECT * FROM PurchaseLots WHERE userId = @userId ORDER BY purchaseDate ASC');
     
     res.json(result.recordset);
   } catch (error) {
@@ -78,12 +83,271 @@ router.put('/:id', async (req: Request, res: Response) => {
   }
 });
 
+// COMBINE multiple open lots into a single open lot for the same ticker.
+// Preserves cost basis by using weighted average unit cost of remaining shares.
+router.post('/combine', async (req: Request, res: Response) => {
+  const pool = getPool();
+  const transaction = new sql.Transaction(pool);
+  let began = false;
+  try {
+    const { lotIds } = req.body as CombineLotsRequestBody;
+    const userId = req.user?.id!;
+
+    if (!Array.isArray(lotIds) || lotIds.length < 2) {
+      return res.status(400).json({ error: 'Lot combine requires at least two lot IDs' });
+    }
+
+    const normalizedLotIds = lotIds
+      .map((id) => String(id || '').trim())
+      .filter((id) => id.length > 0);
+    const uniqueLotIds = Array.from(new Set(normalizedLotIds));
+    if (uniqueLotIds.length < 2) {
+      return res.status(400).json({ error: 'Lot combine requires at least two unique lot IDs' });
+    }
+
+    await transaction.begin();
+    began = true;
+
+    const selectRequest = new sql.Request(transaction)
+      .input('userId', sql.NVarChar, userId);
+
+    const lotIdParameters: string[] = [];
+    for (let i = 0; i < uniqueLotIds.length; i += 1) {
+      const paramName = `lotId${i}`;
+      lotIdParameters.push(`@${paramName}`);
+      selectRequest.input(paramName, sql.UniqueIdentifier, uniqueLotIds[i]);
+    }
+
+    const lotsResult = await selectRequest.query(`
+      SELECT id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate
+      FROM Lots
+      WHERE userId = @userId AND id IN (${lotIdParameters.join(', ')})
+    `);
+
+    const selectedLots = lotsResult.recordset ?? [];
+    if (selectedLots.length !== uniqueLotIds.length) {
+      await transaction.rollback();
+      began = false;
+      return res.status(404).json({ error: 'One or more lots were not found for this user' });
+    }
+
+    const ticker = String(selectedLots[0].ticker || '').toUpperCase();
+    if (selectedLots.some((lot) => String(lot.ticker || '').toUpperCase() !== ticker)) {
+      await transaction.rollback();
+      began = false;
+      return res.status(400).json({ error: 'All lots must belong to the same ticker' });
+    }
+
+    const openRemaining = selectedLots.map((lot) => Number(lot.remainingQuantity));
+    if (openRemaining.some((remaining) => !Number.isFinite(remaining) || remaining <= SPLIT_TOLERANCE)) {
+      await transaction.rollback();
+      began = false;
+      return res.status(400).json({ error: 'All lots to combine must be open lots with remaining shares' });
+    }
+
+    const combinedRemainingQuantity = openRemaining.reduce((sum, value) => sum + value, 0);
+    const combinedCostBasis = selectedLots.reduce((sum, lot) => {
+      return sum + Number(lot.remainingQuantity) * Number(lot.unitCost);
+    }, 0);
+    const combinedUnitCost = combinedCostBasis / combinedRemainingQuantity;
+
+    const combinedPurchaseDate = selectedLots
+      .map((lot) => new Date(lot.purchaseDate))
+      .sort((a, b) => a.getTime() - b.getTime())[0];
+
+    const firstLot = selectedLots[0];
+
+    for (const lot of selectedLots) {
+      const originalQuantity = Number(lot.originalQuantity);
+      const remainingQuantity = Number(lot.remainingQuantity);
+      const consumedQuantity = Math.max(0, originalQuantity - remainingQuantity);
+
+      if (consumedQuantity <= SPLIT_TOLERANCE) {
+        await new sql.Request(transaction)
+          .input('id', sql.UniqueIdentifier, lot.id)
+          .input('userId', sql.NVarChar, userId)
+          .query(`
+            DELETE FROM Lots
+            WHERE id = @id AND userId = @userId
+          `);
+      } else {
+        await new sql.Request(transaction)
+          .input('id', sql.UniqueIdentifier, lot.id)
+          .input('userId', sql.NVarChar, userId)
+          .input('consumedQuantity', sql.Decimal(18, 8), consumedQuantity)
+          .query(`
+            UPDATE Lots
+            SET originalQuantity = @consumedQuantity,
+                remainingQuantity = 0,
+                updatedAt = GETUTCDATE()
+            WHERE id = @id AND userId = @userId
+          `);
+      }
+    }
+
+    const combinedLotId = uuidv4();
+    await new sql.Request(transaction)
+      .input('id', sql.UniqueIdentifier, combinedLotId)
+      .input('userId', sql.NVarChar, userId)
+      .input('ticker', sql.NVarChar, ticker)
+      .input('transactionId', sql.UniqueIdentifier, firstLot.transactionId)
+      .input('sourceType', sql.NVarChar, firstLot.sourceType)
+      .input('quantity', sql.Decimal(18, 8), combinedRemainingQuantity)
+      .input('unitCost', sql.Decimal(18, 8), combinedUnitCost)
+      .input('purchaseDate', sql.DateTime2, combinedPurchaseDate)
+      .query(`
+        INSERT INTO Lots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
+        VALUES (@id, @userId, @ticker, @transactionId, @sourceType, @quantity, @quantity, @unitCost, @purchaseDate)
+      `);
+
+    await transaction.commit();
+    began = false;
+
+    res.status(201).json({
+      lotIds: uniqueLotIds,
+      combinedLotId,
+      ticker,
+      combinedQuantity: combinedRemainingQuantity,
+      combinedUnitCost,
+    });
+  } catch (error) {
+    if (began) {
+      try {
+        await transaction.rollback();
+      } catch {
+        // ignore rollback failures after original error
+      }
+    }
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// SPLIT lot into multiple child lots that sum to current remainingQuantity.
+// Explicit '/lot/:id/split' path avoids collisions with ticker split routes.
+router.post('/lot/:id/split', async (req: Request, res: Response) => {
+  const pool = getPool();
+  const transaction = new sql.Transaction(pool);
+  let began = false;
+  try {
+    const { id } = req.params;
+    const { quantities } = req.body as { quantities?: number[] };
+    const userId = req.user?.id!;
+
+    if (!Array.isArray(quantities) || quantities.length < 2) {
+      return res.status(400).json({ error: 'Lot split requires at least two quantities' });
+    }
+
+    const parsedQuantities = quantities.map((value) => Number(value));
+    if (parsedQuantities.some((value) => !Number.isFinite(value) || value <= 0)) {
+      return res.status(400).json({ error: 'All split quantities must be numeric and greater than 0' });
+    }
+
+    await transaction.begin();
+    began = true;
+
+    const lotResult = await new sql.Request(transaction)
+      .input('id', sql.UniqueIdentifier, id)
+      .input('userId', sql.NVarChar, userId)
+      .query(`
+        SELECT TOP 1 id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate
+        FROM Lots
+        WHERE id = @id AND userId = @userId
+      `);
+
+    if (lotResult.recordset.length === 0) {
+      await transaction.rollback();
+      began = false;
+      return res.status(404).json({ error: 'Lot not found' });
+    }
+
+    const lot = lotResult.recordset[0];
+    const remainingQuantity = Number(lot.remainingQuantity);
+    const originalQuantity = Number(lot.originalQuantity);
+    if (!Number.isFinite(remainingQuantity) || remainingQuantity <= SPLIT_TOLERANCE) {
+      await transaction.rollback();
+      began = false;
+      return res.status(400).json({ error: 'Only open lots can be split' });
+    }
+
+    const requestedTotal = parsedQuantities.reduce((sum, value) => sum + value, 0);
+    if (Math.abs(requestedTotal - remainingQuantity) > SPLIT_TOLERANCE) {
+      await transaction.rollback();
+      began = false;
+      return res.status(400).json({
+        error: `Split quantities total (${requestedTotal}) must equal lot remaining quantity (${remainingQuantity})`
+      });
+    }
+
+    const consumedQuantity = Math.max(0, originalQuantity - remainingQuantity);
+
+    if (consumedQuantity <= SPLIT_TOLERANCE) {
+      await new sql.Request(transaction)
+        .input('id', sql.UniqueIdentifier, id)
+        .input('userId', sql.NVarChar, userId)
+        .query(`
+          DELETE FROM Lots
+          WHERE id = @id AND userId = @userId
+        `);
+    } else {
+      await new sql.Request(transaction)
+        .input('id', sql.UniqueIdentifier, id)
+        .input('userId', sql.NVarChar, userId)
+        .input('consumedQuantity', sql.Decimal(18, 8), consumedQuantity)
+        .query(`
+          UPDATE Lots
+          SET originalQuantity = @consumedQuantity,
+              remainingQuantity = 0,
+              updatedAt = GETUTCDATE()
+          WHERE id = @id AND userId = @userId
+        `);
+    }
+
+    const createdLots: Array<{ id: string; quantity: number }> = [];
+    for (const quantity of parsedQuantities) {
+      const newLotId = uuidv4();
+      await new sql.Request(transaction)
+        .input('id', sql.UniqueIdentifier, newLotId)
+        .input('userId', sql.NVarChar, userId)
+        .input('ticker', sql.NVarChar, lot.ticker)
+        .input('transactionId', sql.UniqueIdentifier, lot.transactionId)
+        .input('sourceType', sql.NVarChar, lot.sourceType)
+        .input('quantity', sql.Decimal(18, 8), quantity)
+        .input('unitCost', sql.Decimal(18, 8), lot.unitCost)
+        .input('purchaseDate', sql.DateTime2, lot.purchaseDate)
+        .query(`
+          INSERT INTO Lots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
+          VALUES (@id, @userId, @ticker, @transactionId, @sourceType, @quantity, @quantity, @unitCost, @purchaseDate)
+        `);
+      createdLots.push({ id: newLotId, quantity });
+    }
+
+    await transaction.commit();
+    began = false;
+
+    res.status(201).json({
+      parentLotId: id,
+      ticker: lot.ticker,
+      quantities: parsedQuantities,
+      createdLots,
+    });
+  } catch (error) {
+    if (began) {
+      try {
+        await transaction.rollback();
+      } catch {
+        // ignore rollback failures after original error
+      }
+    }
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 // APPLY stock split (multiplies all quantities for a ticker retroactively, preserving cost basis)
 // Runs as a single DB transaction across all four writes (StockSplits, Lots, StockTransactions,
 // LotAllocations) so a mid-way failure can never leave the ticker half-adjusted. Every lot,
 // transaction, and lot-allocation touched is also logged to SplitAdjustments so the full split
 // history survives multiple sequential splits on the same ticker (not just the most recent one).
-router.post('/:ticker/split', async (req: Request, res: Response) => {
+router.post('/ticker/:ticker/split', async (req: Request, res: Response) => {
   const pool = getPool();
   const transaction = new sql.Transaction(pool);
   let began = false;
@@ -150,6 +414,22 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
       .query(`
         SELECT id, userId
         FROM Lots
+        WHERE ticker = @ticker AND purchaseDate <= @splitDate
+      `);
+
+    await new sql.Request(transaction)
+      .input('ticker', sql.NVarChar, normalizedTicker)
+      .input('multiplier', sql.Decimal(18, 8), multiplier)
+      .input('splitDate', sql.DateTime2, parsedSplitDate)
+      .input('splitId', sql.UniqueIdentifier, splitId)
+      .query(`
+        UPDATE PurchaseLots
+        SET originalQuantity = originalQuantity * @multiplier,
+            remainingQuantity = remainingQuantity * @multiplier,
+            unitCost = unitCost / @multiplier,
+            splitAdjusted = 1,
+            lastSplitId = @splitId,
+            updatedAt = GETUTCDATE()
         WHERE ticker = @ticker AND purchaseDate <= @splitDate
       `);
 
@@ -234,6 +514,19 @@ router.post('/:ticker/split', async (req: Request, res: Response) => {
         SELECT la.id, la.userId
         FROM LotAllocations la
         JOIN StockTransactions st ON la.saleTransactionId = st.id
+        WHERE st.ticker = @ticker AND st.transactionDate <= @splitDate
+      `);
+
+    await new sql.Request(transaction)
+      .input('ticker', sql.NVarChar, normalizedTicker)
+      .input('multiplier', sql.Decimal(18, 8), multiplier)
+      .input('splitDate', sql.DateTime2, parsedSplitDate)
+      .query(`
+        UPDATE pla
+        SET pla.quantityConsumed = pla.quantityConsumed * @multiplier,
+            pla.updatedAt = GETUTCDATE()
+        FROM PurchaseLotAllocations pla
+        JOIN StockTransactions st ON pla.saleTransactionId = st.id
         WHERE st.ticker = @ticker AND st.transactionDate <= @splitDate
       `);
 

@@ -90,6 +90,24 @@ export type Lot = {
   updatedAt?: string
 }
 
+export type SplitLotResponse = {
+  parentLotId: string
+  ticker: string
+  quantities: number[]
+  createdLots: Array<{
+    id: string
+    quantity: number
+  }>
+}
+
+export type CombineLotsResponse = {
+  lotIds: string[]
+  combinedLotId: string
+  ticker: string
+  combinedQuantity: number
+  combinedUnitCost: number
+}
+
 export type CreateCashInput = {
   type: CashTransactionType
   amount: number
@@ -230,5 +248,19 @@ export async function updateLotRemainingQuantity(id: string, remainingQuantity: 
   return requestApi<{ id: string; remainingQuantity: number }>(`/api/lots/${id}`, {
     method: 'PUT',
     body: { remainingQuantity },
+  })
+}
+
+export async function splitLot(id: string, quantities: number[]): Promise<SplitLotResponse> {
+  return requestApi<SplitLotResponse>(`/api/lots/lot/${id}/split`, {
+    method: 'POST',
+    body: { quantities },
+  })
+}
+
+export async function combineLots(lotIds: string[]): Promise<CombineLotsResponse> {
+  return requestApi<CombineLotsResponse>('/api/lots/combine', {
+    method: 'POST',
+    body: { lotIds },
   })
 }

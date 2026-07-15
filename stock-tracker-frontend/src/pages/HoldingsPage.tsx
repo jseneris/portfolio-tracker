@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  combineLots,
   Lot,
   PortfolioSummary,
   StockTransaction,
   getLotsByTicker,
   getPortfolioSummary,
   getStockTransactionsByTicker,
+  splitLot,
 } from '../api'
+
+const SPLIT_TOLERANCE = 1e-6
 
 function formatMoney(value: number | null) {
   if (value == null || Number.isNaN(Number(value))) {
@@ -37,7 +41,13 @@ export default function HoldingsPage() {
   const [transactions, setTransactions] = useState<StockTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [detailsLoading, setDetailsLoading] = useState(false)
+  const [splitting, setSplitting] = useState(false)
+  const [combining, setCombining] = useState(false)
+  const [selectedLotIds, setSelectedLotIds] = useState<string[]>([])
+  const [splitLotTarget, setSplitLotTarget] = useState<Lot | null>(null)
+  const [splitQuantitiesInput, setSplitQuantitiesInput] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState<string | null>(null)
 
   const tickers = useMemo(() => {
     return (portfolio?.stocks ?? []).map((stock) => stock.ticker)
@@ -62,6 +72,23 @@ export default function HoldingsPage() {
     }
   }
 
+  async function loadTickerDetails(ticker: string) {
+    setDetailsLoading(true)
+    setError(null)
+    try {
+      const [lotsResult, txResult] = await Promise.all([
+        getLotsByTicker(ticker),
+        getStockTransactionsByTicker(ticker),
+      ])
+      setLots(lotsResult)
+      setTransactions(txResult)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to load ticker details.')
+    } finally {
+      setDetailsLoading(false)
+    }
+  }
+
   useEffect(() => {
     loadPortfolio()
   }, [])
@@ -70,6 +97,7 @@ export default function HoldingsPage() {
     if (!selectedTicker) {
       setLots([])
       setTransactions([])
+      setSelectedLotIds([])
       return
     }
 
@@ -86,6 +114,7 @@ export default function HoldingsPage() {
         if (!cancelled) {
           setLots(lotsResult)
           setTransactions(txResult)
+          setSelectedLotIds([])
         }
       } catch (err: unknown) {
         if (!cancelled) {
@@ -105,6 +134,104 @@ export default function HoldingsPage() {
     }
   }, [selectedTicker])
 
+  function openSplitModal(lot: Lot) {
+    setError(null)
+    setSuccess(null)
+    setSplitLotTarget(lot)
+    setSplitQuantitiesInput('')
+  }
+
+  function toggleLotSelection(lotId: string) {
+    setSelectedLotIds((prev) => {
+      if (prev.includes(lotId)) {
+        return prev.filter((id) => id !== lotId)
+      }
+      return [...prev, lotId]
+    })
+  }
+
+  async function submitCombineLots() {
+    if (selectedLotIds.length < 2 || !selectedTicker) {
+      setError('Select at least two lots to combine.')
+      return
+    }
+
+    setError(null)
+    setSuccess(null)
+    setCombining(true)
+    try {
+      const response = await combineLots(selectedLotIds)
+      setSuccess(`Combined ${response.lotIds.length} lots into one lot of ${formatNumber(response.combinedQuantity)} shares.`)
+      setSelectedLotIds([])
+      await Promise.all([
+        loadTickerDetails(selectedTicker),
+        loadPortfolio(),
+      ])
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to combine lots.')
+    } finally {
+      setCombining(false)
+    }
+  }
+
+  function closeSplitModal() {
+    if (splitting) {
+      return
+    }
+    setSplitLotTarget(null)
+    setSplitQuantitiesInput('')
+  }
+
+  function parseSplitQuantities(input: string) {
+    return input
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+      .map((value) => Number(value))
+  }
+
+  async function submitSplitLot() {
+    if (!splitLotTarget) {
+      return
+    }
+
+    setError(null)
+    setSuccess(null)
+
+    const quantities = parseSplitQuantities(splitQuantitiesInput)
+    if (quantities.length < 2) {
+      setError('Enter at least two comma-separated quantities.')
+      return
+    }
+
+    if (quantities.some((value) => !Number.isFinite(value) || value <= 0)) {
+      setError('Each split quantity must be greater than 0.')
+      return
+    }
+
+    const total = quantities.reduce((sum, value) => sum + value, 0)
+    if (Math.abs(total - Number(splitLotTarget.remainingQuantity)) > SPLIT_TOLERANCE) {
+      setError(`Split total (${total.toFixed(6)}) must equal lot remaining (${Number(splitLotTarget.remainingQuantity).toFixed(6)}).`)
+      return
+    }
+
+    setSplitting(true)
+    try {
+      await splitLot(splitLotTarget.id, quantities)
+      setSuccess(`Lot split into ${quantities.length} lots.`)
+      setSplitLotTarget(null)
+      setSplitQuantitiesInput('')
+      await Promise.all([
+        loadTickerDetails(selectedTicker),
+        loadPortfolio(),
+      ])
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to split lot.')
+    } finally {
+      setSplitting(false)
+    }
+  }
+
   return (
     <section>
       <div className="panel row-between">
@@ -118,6 +245,7 @@ export default function HoldingsPage() {
       </div>
 
       {error ? <div className="panel status status-error">{error}</div> : null}
+      {success ? <div className="panel status status-success">{success}</div> : null}
 
       {loading ? <div className="panel">Loading holdings...</div> : null}
 
@@ -141,7 +269,17 @@ export default function HoldingsPage() {
           </div>
 
           <div className="panel">
-            <h3>Open Lots</h3>
+            <div className="row-between">
+              <h3>Open Lots</h3>
+              <button
+                className="button"
+                type="button"
+                onClick={submitCombineLots}
+                disabled={combining || detailsLoading || selectedLotIds.length < 2 || splitting}
+              >
+                {combining ? 'Combining...' : `Combine Selected (${selectedLotIds.length})`}
+              </button>
+            </div>
             {detailsLoading ? (
               <p>Loading lots...</p>
             ) : lots.length === 0 ? (
@@ -150,23 +288,38 @@ export default function HoldingsPage() {
               <table className="table">
                 <thead>
                   <tr>
+                    <th>Select</th>
                     <th>Lot Id</th>
                     <th>Source</th>
                     <th>Purchase Date</th>
                     <th>Original</th>
                     <th>Remaining</th>
                     <th>Unit Cost</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {lots.map((lot) => (
                     <tr key={lot.id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selectedLotIds.includes(lot.id)}
+                          onChange={() => toggleLotSelection(lot.id)}
+                          disabled={combining || splitting}
+                        />
+                      </td>
                       <td className="mono">{lot.id.slice(0, 8)}...</td>
                       <td>{lot.sourceType}</td>
                       <td>{formatDate(lot.purchaseDate)}</td>
                       <td>{formatNumber(lot.originalQuantity)}</td>
                       <td>{formatNumber(lot.remainingQuantity)}</td>
                       <td>{formatMoney(lot.unitCost)}</td>
+                      <td>
+                        <button className="button" type="button" onClick={() => openSplitModal(lot)} disabled={splitting || combining}>
+                          Split Lot
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -206,6 +359,37 @@ export default function HoldingsPage() {
             )}
           </div>
         </>
+      ) : null}
+
+      {splitLotTarget ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="split-lot-title">
+          <div className="modal-card">
+            <h3 id="split-lot-title">Split Lot</h3>
+            <p>
+              Remaining shares: {formatNumber(splitLotTarget.remainingQuantity)}. Enter comma-separated quantities (example: 2,1).
+            </p>
+
+            <label className="stacked-label">
+              Split Quantities
+              <input
+                type="text"
+                placeholder="2,1"
+                value={splitQuantitiesInput}
+                onChange={(event) => setSplitQuantitiesInput(event.target.value)}
+                disabled={splitting}
+              />
+            </label>
+
+            <div className="form-actions">
+              <button className="button button-primary" type="button" onClick={submitSplitLot} disabled={splitting}>
+                {splitting ? 'Splitting...' : 'Split Lot'}
+              </button>
+              <button className="button" type="button" onClick={closeSplitModal} disabled={splitting}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </section>
   )
