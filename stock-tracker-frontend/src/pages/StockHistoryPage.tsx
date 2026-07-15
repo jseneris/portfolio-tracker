@@ -47,6 +47,13 @@ function formatMoney(value: number | null) {
   return `$${Number(value).toFixed(2)}`
 }
 
+function formatMoney4(value: number | null) {
+  if (value == null || Number.isNaN(Number(value))) {
+    return '--'
+  }
+  return `$${Number(value).toFixed(4)}`
+}
+
 function formatNumber(value: number | null, digits = 6) {
   if (value == null || Number.isNaN(Number(value))) {
     return '--'
@@ -157,14 +164,12 @@ export default function StockHistoryPage() {
     if (openLots.length === 0) {
       return '--'
     }
-    const quantities = openLots.map((lot) => {
-      const value = Number(lot.remainingQuantity)
-      if (!Number.isFinite(value)) {
-        return '--'
-      }
-      return Number(value.toFixed(6)).toString()
-    })
-    return quantities.join(',')
+    const quantities = openLots
+      .map((lot) => Number(lot.remainingQuantity))
+      .filter((value) => Number.isFinite(value))
+      .sort((left, right) => left - right)
+      .map((value) => Number(value.toFixed(6)).toString())
+    return quantities.length > 0 ? quantities.join(',') : '--'
   }, [openLots])
 
   function validateStockForm(formState: StockFormState): string | null {
@@ -533,6 +538,62 @@ export default function StockHistoryPage() {
 
       {!loading && !error ? (
         <div className="panel">
+          {transactions.length === 0 ? (
+            <p>No transactions found for {ticker}.</p>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th>Lot State</th>
+                  <th>Quantity</th>
+                  <th>Price</th>
+                  <th>Amount</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transactions.map((transaction) => (
+                  <tr key={transaction.id}>
+                    <td>{formatDate(transaction.transactionDate)}</td>
+                    <td>{transaction.type}</td>
+                    <td>
+                      {transaction.type === 'buy' || transaction.type === 'div' ? (
+                        positiveTransactionStates[transaction.id] ? (
+                          <span className={getStatePillClassName(positiveTransactionStates[transaction.id])}>
+                            {positiveTransactionStates[transaction.id]}
+                          </span>
+                        ) : (
+                          <span className="pill pill-muted">--</span>
+                        )
+                      ) : (
+                        <span className="pill pill-muted">--</span>
+                      )}
+                    </td>
+                    <td>{formatNumber(transaction.quantity)}</td>
+                    <td>{formatMoney4(transaction.price)}</td>
+                    <td>{formatMoney(transaction.amount)}</td>
+                    <td>
+                      <div className="inline-actions">
+                        <button className="button" type="button" onClick={() => beginEdit(transaction)}>
+                          Edit
+                        </button>
+                        <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      ) : null}
+
+      {!loading && !error ? (
+        <div className="panel">
           <div className="row-between">
             <h3>Open Lot Tools</h3>
             <button
@@ -578,62 +639,6 @@ export default function StockHistoryPage() {
                       <button className="button" type="button" onClick={() => openSplitModal(lot)} disabled={combining || splitting}>
                         Split Lot
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      ) : null}
-
-      {!loading && !error ? (
-        <div className="panel">
-          {transactions.length === 0 ? (
-            <p>No transactions found for {ticker}.</p>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Type</th>
-                  <th>Lot State</th>
-                  <th>Quantity</th>
-                  <th>Price</th>
-                  <th>Amount</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {transactions.map((transaction) => (
-                  <tr key={transaction.id}>
-                    <td>{formatDate(transaction.transactionDate)}</td>
-                    <td>{transaction.type}</td>
-                    <td>
-                      {transaction.type === 'buy' || transaction.type === 'div' ? (
-                        positiveTransactionStates[transaction.id] ? (
-                          <span className={getStatePillClassName(positiveTransactionStates[transaction.id])}>
-                            {positiveTransactionStates[transaction.id]}
-                          </span>
-                        ) : (
-                          <span className="pill pill-muted">--</span>
-                        )
-                      ) : (
-                        <span className="pill pill-muted">--</span>
-                      )}
-                    </td>
-                    <td>{formatNumber(transaction.quantity)}</td>
-                    <td>{formatMoney(transaction.price)}</td>
-                    <td>{formatMoney(transaction.amount)}</td>
-                    <td>
-                      <div className="inline-actions">
-                        <button className="button" type="button" onClick={() => beginEdit(transaction)}>
-                          Edit
-                        </button>
-                        <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
-                          Delete
-                        </button>
-                      </div>
                     </td>
                   </tr>
                 ))}

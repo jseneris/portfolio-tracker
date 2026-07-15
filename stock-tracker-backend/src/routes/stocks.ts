@@ -102,7 +102,7 @@ router.get('/portfolio/summary', async (req: Request, res: Response) => {
           ticker,
           SUM(remainingQuantity) AS totalShares,
           SUM(remainingQuantity * unitCost) AS costBasis,
-          COUNT(*) AS lotCount
+          SUM(CASE WHEN sourceType = 'purchase' THEN 1 ELSE 0 END) AS lotCount
         FROM Lots
         WHERE userId = @userId AND remainingQuantity > 0
         GROUP BY ticker
