@@ -67,7 +67,8 @@ describe('Stock Sale with Dividend Test', () => {
     expect(febLot).toBeTruthy()
     expect(marLot).toBeTruthy()
 
-    // Sell 4 shares: fully consume the 3/1 lot (2 shares) and partially consume the 2/1 lot (2 of 3 shares)
+    // Sell 4 shares across the purchase lots only: fully consume the 2-share lot and reduce the 3-share lot to 1 share.
+    // The dividend lot remains open, but it is excluded from the official lot count.
     await request(server)
       .post(STOCKS_API_PATH)
       .set('x-user-id', TEST_USER_ID)
@@ -96,7 +97,7 @@ describe('Stock Sale with Dividend Test', () => {
       .expect(200)
 
     expect(purchaseLotsAfterSale.body).toHaveLength(1)
-    expect(purchaseLotsAfterSale.body[0]).toMatchObject({ originalQuantity: 3, remainingQuantity: 1 })
+    expect(purchaseLotsAfterSale.body[0]).toMatchObject({ originalQuantity: 3, remainingQuantity: 1.1 })
 
     const tickerSummary = await request(server)
       .get(`${STOCKS_API_PATH}/AAPL/summary`)
