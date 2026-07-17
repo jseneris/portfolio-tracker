@@ -208,8 +208,8 @@ router.post('/:id/combine', async (req: Request, res: Response) => {
     const pool = getPool();
     const tx = new sql.Transaction(pool);
 
-    if (!Array.isArray(displayLotIds) || displayLotIds.length < 2) {
-      return res.status(400).json({ error: 'Combine requires at least two display lot IDs' });
+    if (!Array.isArray(displayLotIds) || displayLotIds.length === 0) {
+      return res.status(400).json({ error: 'Combine requires at least one other display lot ID' });
     }
 
     // Include the source display lot in the list to combine
@@ -219,12 +219,15 @@ router.post('/:id/combine', async (req: Request, res: Response) => {
 
     try {
       // Verify all display lots exist and belong to user
-      const verifyResult = await new sql.Request(tx)
-        .input('userId', sql.NVarChar, userId)
-        .query(`
-          SELECT id, ticker, totalQuantity FROM DisplayLots
-          WHERE userId = @userId AND id IN (${allLotsToMerge.map(() => '?').join(',')})
-        `, allLotsToMerge);
+      const placeholders = allLotsToMerge.map((_, i) => `@id${i}`).join(',');
+      let request = new sql.Request(tx).input('userId', sql.NVarChar, userId);
+      allLotsToMerge.forEach((lotId, i) => {
+        request = request.input(`id${i}`, sql.UniqueIdentifier, lotId);
+      });
+      const verifyResult = await request.query(`
+        SELECT id, ticker, totalQuantity FROM DisplayLots
+        WHERE userId = @userId AND id IN (${placeholders})
+      `);
 
       if (verifyResult.recordset.length !== allLotsToMerge.length) {
         await tx.rollback();

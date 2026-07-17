@@ -1,51 +1,29 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+import { v4 as uuidv4 } from 'uuid';
 import sql from 'mssql';
 import { getPool } from '../src/db/connection';
+import { startServer } from '../src/index.js';
+import { closeDatabase } from '../src/db/connection.js';
 
 const userId = 'test-display-lots-user';
-const pool = getPool();
+let pool: any;
+let server: any;
 
-async function execQuery(query: string, inputs?: Record<string, any>) {
-  const request = pool.request();
-  if (inputs) {
-    for (const [key, value] of Object.entries(inputs)) {
-      if (typeof value === 'number') {
-        if (Number.isInteger(value)) {
-          request.input(key, sql.Int, value);
-        } else {
-          request.input(key, sql.Decimal(18, 8), value);
-        }
-      } else if (typeof value === 'string') {
-        request.input(key, sql.NVarChar, value);
-      } else {
-        request.input(key, sql.UniqueIdentifier, value);
-      }
-    }
+beforeAll(async () => {
+  process.env.NODE_ENV = 'test';
+  server = await startServer();
+  pool = getPool();
+});
+
+afterAll(async () => {
+  if (server && server.close) {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
-  return await request.query(query);
-}
-
-async function cleanupTestData() {
-  await pool.request().query(`DELETE FROM DisplayLotAllocations WHERE userId = @userId`, 
-    { userId });
-  await pool.request().query(`DELETE FROM DisplayLots WHERE userId = @userId`, 
-    { userId });
-  await pool.request().query(`DELETE FROM PurchaseLotAllocations WHERE userId = @userId`, 
-    { userId });
-  await pool.request().query(`DELETE FROM LotAllocations WHERE userId = @userId`, 
-    { userId });
-  await pool.request().query(`DELETE FROM Lots WHERE userId = @userId`, 
-    { userId });
-  await pool.request().query(`DELETE FROM PurchaseLots WHERE userId = @userId`, 
-    { userId });
-  await pool.request().query(`DELETE FROM StockTransactions WHERE userId = @userId`, 
-    { userId });
-  await pool.request().query(`DELETE FROM CashTransactions WHERE userId = @userId`, 
-    { userId });
-}
+  await closeDatabase();
+});
 
 async function createBuyTransaction(ticker: string, quantity: number, price: number) {
-  const txId = require('uuid').v4();
+  const txId = uuidv4();
   const date = new Date().toISOString();
   await pool.request()
     .input('id', sql.UniqueIdentifier, txId)
@@ -62,7 +40,7 @@ async function createBuyTransaction(ticker: string, quantity: number, price: num
     `);
 
   // Create associated Lot
-  const lotId = require('uuid').v4();
+  const lotId = uuidv4();
   await pool.request()
     .input('id', sql.UniqueIdentifier, lotId)
     .input('userId', sql.NVarChar, userId)
@@ -120,6 +98,17 @@ async function getDisplayLotComposition(displayLotId: string) {
   return result.recordset;
 }
 
+async function cleanupTestData() {
+  await pool.request().input('userId', sql.NVarChar, userId).query(`DELETE FROM DisplayLotAllocations WHERE userId = @userId`);
+  await pool.request().input('userId', sql.NVarChar, userId).query(`DELETE FROM DisplayLots WHERE userId = @userId`);
+  await pool.request().input('userId', sql.NVarChar, userId).query(`DELETE FROM PurchaseLotAllocations WHERE userId = @userId`);
+  await pool.request().input('userId', sql.NVarChar, userId).query(`DELETE FROM LotAllocations WHERE userId = @userId`);
+  await pool.request().input('userId', sql.NVarChar, userId).query(`DELETE FROM Lots WHERE userId = @userId`);
+  await pool.request().input('userId', sql.NVarChar, userId).query(`DELETE FROM PurchaseLots WHERE userId = @userId`);
+  await pool.request().input('userId', sql.NVarChar, userId).query(`DELETE FROM StockTransactions WHERE userId = @userId`);
+  await pool.request().input('userId', sql.NVarChar, userId).query(`DELETE FROM CashTransactions WHERE userId = @userId`);
+}
+
 describe('Display Lots - Core Operations', () => {
   beforeEach(async () => {
     await cleanupTestData();
@@ -133,7 +122,7 @@ describe('Display Lots - Core Operations', () => {
     const { lotId } = await createBuyTransaction('AAPL', 100, 150);
 
     // Create display lot
-    const displayLotId = require('uuid').v4();
+    const displayLotId = uuidv4();
     await pool.request()
       .input('id', sql.UniqueIdentifier, displayLotId)
       .input('userId', sql.NVarChar, userId)
@@ -146,7 +135,7 @@ describe('Display Lots - Core Operations', () => {
 
     // Create composition
     await pool.request()
-      .input('id', sql.UniqueIdentifier, require('uuid').v4())
+      .input('id', sql.UniqueIdentifier, uuidv4())
       .input('displayLotId', sql.UniqueIdentifier, displayLotId)
       .input('purchaseLotId', sql.UniqueIdentifier, lotId)
       .input('quantityAllocated', sql.Decimal(18, 8), 100)
@@ -169,7 +158,7 @@ describe('Display Lots - Core Operations', () => {
     const { lotId: lot2 } = await createBuyTransaction('AAPL', 50, 155);
 
     // Create display lot spanning both
-    const displayLotId = require('uuid').v4();
+    const displayLotId = uuidv4();
     await pool.request()
       .input('id', sql.UniqueIdentifier, displayLotId)
       .input('userId', sql.NVarChar, userId)
@@ -183,7 +172,7 @@ describe('Display Lots - Core Operations', () => {
     // Add both lots to composition
     for (const [idx, lotId] of [lot1, lot2].entries()) {
       await pool.request()
-        .input('id', sql.UniqueIdentifier, require('uuid').v4())
+        .input('id', sql.UniqueIdentifier, uuidv4())
         .input('displayLotId', sql.UniqueIdentifier, displayLotId)
         .input('purchaseLotId', sql.UniqueIdentifier, lotId)
         .input('quantityAllocated', sql.Decimal(18, 8), 50)
@@ -202,7 +191,7 @@ describe('Display Lots - Core Operations', () => {
     const { lotId } = await createBuyTransaction('AAPL', 100, 150);
 
     // Create display lot
-    const displayLotId = require('uuid').v4();
+    const displayLotId = uuidv4();
     await pool.request()
       .input('id', sql.UniqueIdentifier, displayLotId)
       .input('userId', sql.NVarChar, userId)
@@ -214,7 +203,7 @@ describe('Display Lots - Core Operations', () => {
       `);
 
     await pool.request()
-      .input('id', sql.UniqueIdentifier, require('uuid').v4())
+      .input('id', sql.UniqueIdentifier, uuidv4())
       .input('displayLotId', sql.UniqueIdentifier, displayLotId)
       .input('purchaseLotId', sql.UniqueIdentifier, lotId)
       .input('quantityAllocated', sql.Decimal(18, 8), 100)
@@ -258,7 +247,7 @@ describe('Display Lots - Reversibility on Sale Deletion', () => {
     const { lotId, txId: buyTxId } = await createBuyTransaction('AAPL', 100, 150);
 
     // Create display lot
-    const displayLotId = require('uuid').v4();
+    const displayLotId = uuidv4();
     await pool.request()
       .input('id', sql.UniqueIdentifier, displayLotId)
       .input('userId', sql.NVarChar, userId)
@@ -270,7 +259,7 @@ describe('Display Lots - Reversibility on Sale Deletion', () => {
       `);
 
     await pool.request()
-      .input('id', sql.UniqueIdentifier, require('uuid').v4())
+      .input('id', sql.UniqueIdentifier, uuidv4())
       .input('displayLotId', sql.UniqueIdentifier, displayLotId)
       .input('purchaseLotId', sql.UniqueIdentifier, lotId)
       .input('quantityAllocated', sql.Decimal(18, 8), 100)
@@ -280,7 +269,7 @@ describe('Display Lots - Reversibility on Sale Deletion', () => {
       `);
 
     // Create a sell transaction
-    const sellTxId = require('uuid').v4();
+    const sellTxId = uuidv4();
     const sellDate = new Date().toISOString();
     await pool.request()
       .input('id', sql.UniqueIdentifier, sellTxId)
@@ -298,7 +287,7 @@ describe('Display Lots - Reversibility on Sale Deletion', () => {
 
     // Create allocation records (purchase, lot, and display)
     await pool.request()
-      .input('id', sql.UniqueIdentifier, require('uuid').v4())
+      .input('id', sql.UniqueIdentifier, uuidv4())
       .input('userId', sql.NVarChar, userId)
       .input('saleTransactionId', sql.UniqueIdentifier, sellTxId)
       .input('purchaseLotId', sql.UniqueIdentifier, lotId)
@@ -309,7 +298,7 @@ describe('Display Lots - Reversibility on Sale Deletion', () => {
       `);
 
     await pool.request()
-      .input('id', sql.UniqueIdentifier, require('uuid').v4())
+      .input('id', sql.UniqueIdentifier, uuidv4())
       .input('userId', sql.NVarChar, userId)
       .input('saleTransactionId', sql.UniqueIdentifier, sellTxId)
       .input('lotId', sql.UniqueIdentifier, lotId)
@@ -320,7 +309,7 @@ describe('Display Lots - Reversibility on Sale Deletion', () => {
       `);
 
     await pool.request()
-      .input('id', sql.UniqueIdentifier, require('uuid').v4())
+      .input('id', sql.UniqueIdentifier, uuidv4())
       .input('userId', sql.NVarChar, userId)
       .input('saleTransactionId', sql.UniqueIdentifier, sellTxId)
       .input('displayLotId', sql.UniqueIdentifier, displayLotId)
@@ -381,7 +370,7 @@ describe('Display Lots - Reversibility on Sale Deletion', () => {
 
   it('ensures allocation records are deleted by cascade when transaction is deleted', async () => {
     const { lotId, txId: buyTxId } = await createBuyTransaction('AAPL', 100, 150);
-    const displayLotId = require('uuid').v4();
+    const displayLotId = uuidv4();
 
     await pool.request()
       .input('id', sql.UniqueIdentifier, displayLotId)
@@ -390,7 +379,7 @@ describe('Display Lots - Reversibility on Sale Deletion', () => {
       .input('totalQuantity', sql.Decimal(18, 8), 100)
       .query(`INSERT INTO DisplayLots (id, userId, ticker, totalQuantity) VALUES (@id, @userId, @ticker, @totalQuantity)`);
 
-    const sellTxId = require('uuid').v4();
+    const sellTxId = uuidv4();
     const sellDate = new Date().toISOString();
     await pool.request()
       .input('id', sql.UniqueIdentifier, sellTxId)
@@ -403,7 +392,7 @@ describe('Display Lots - Reversibility on Sale Deletion', () => {
       .input('transactionDate', sql.DateTime2, sellDate)
       .query(`INSERT INTO StockTransactions (id, userId, ticker, type, quantity, price, amount, transactionDate) VALUES (@id, @userId, @ticker, @type, @quantity, @price, @amount, @transactionDate)`);
 
-    const allocId = require('uuid').v4();
+    const allocId = uuidv4();
     await pool.request()
       .input('id', sql.UniqueIdentifier, allocId)
       .input('userId', sql.NVarChar, userId)
@@ -444,7 +433,7 @@ describe('Display Lots - Invariant Verification', () => {
     const { lotId: lot1 } = await createBuyTransaction('AAPL', 30, 150);
     const { lotId: lot2 } = await createBuyTransaction('AAPL', 70, 155);
 
-    const displayLotId = require('uuid').v4();
+    const displayLotId = uuidv4();
     await pool.request()
       .input('id', sql.UniqueIdentifier, displayLotId)
       .input('userId', sql.NVarChar, userId)
@@ -454,7 +443,7 @@ describe('Display Lots - Invariant Verification', () => {
 
     for (const [lotId, qty] of [[lot1, 30], [lot2, 70]]) {
       await pool.request()
-        .input('id', sql.UniqueIdentifier, require('uuid').v4())
+        .input('id', sql.UniqueIdentifier, uuidv4())
         .input('displayLotId', sql.UniqueIdentifier, displayLotId)
         .input('purchaseLotId', sql.UniqueIdentifier, lotId)
         .input('quantityAllocated', sql.Decimal(18, 8), qty)

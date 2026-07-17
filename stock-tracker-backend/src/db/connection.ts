@@ -400,6 +400,8 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
   `);
 
   // P0 data integrity checks for transactional positivity.
+  // For buy/sell transactions, all values must be positive and NOT NULL.
+  // For dividend transactions, only amount is required to be positive.
   await request.batch(`
     IF EXISTS (
       SELECT 1 FROM sys.check_constraints
@@ -411,9 +413,8 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     ALTER TABLE StockTransactions WITH NOCHECK
     ADD CONSTRAINT CK_StockTransactions_PositiveValues
     CHECK (
-      quantity IS NOT NULL AND quantity > 0
-      AND price IS NOT NULL AND price > 0
-      AND amount IS NOT NULL AND amount > 0
+      (type IN ('buy', 'sell') AND quantity IS NOT NULL AND quantity > 0 AND price IS NOT NULL AND price > 0 AND amount IS NOT NULL AND amount > 0)
+      OR (type = 'div' AND amount IS NOT NULL AND amount > 0)
     );
   `);
 

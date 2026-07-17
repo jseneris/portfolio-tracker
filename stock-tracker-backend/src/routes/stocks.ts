@@ -228,6 +228,9 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Calculate amount based on transaction type
     let amount: number | null = null;
+    let finalQuantity = quantity;
+    let finalPrice = price;
+    
     if (type === 'buy' || type === 'sell' || type === 'div') {
       if (quantity == null || price == null) {
         return res.status(400).json({ error: `${type} transactions require quantity and price` });
@@ -381,8 +384,8 @@ router.post('/', async (req: Request, res: Response) => {
       .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, normalizedTicker)
       .input('type', sql.NVarChar, type)
-      .input('quantity', sql.Decimal(18, 8), quantity ?? null)
-      .input('price', sql.Decimal(18, 8), price ?? null)
+      .input('quantity', sql.Decimal(18, 8), finalQuantity ?? null)
+      .input('price', sql.Decimal(18, 8), finalPrice ?? null)
       .input('amount', sql.Decimal(18, 4), amount)
       .input('transactionDate', sql.DateTime2, new Date(transactionDate))
       .query(`
