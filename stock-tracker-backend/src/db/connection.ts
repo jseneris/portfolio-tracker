@@ -483,6 +483,56 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
       ON StockSplits(ticker, ratioNumerator, ratioDenominator, splitDate);
   `);
 
+  // Create DisplayLots table (user-created groupings, not transaction-tied)
+  await request.batch(`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'DisplayLots')
+    CREATE TABLE DisplayLots (
+      id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+      userId NVARCHAR(255) NOT NULL,
+      ticker NVARCHAR(10) NOT NULL,
+      totalQuantity DECIMAL(18, 8) NOT NULL CHECK (totalQuantity >= 0),
+      createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+      updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+    );
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLots_UserId') CREATE INDEX IX_DisplayLots_UserId ON DisplayLots(userId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLots_Ticker') CREATE INDEX IX_DisplayLots_Ticker ON DisplayLots(ticker);
+  `);
+
+  // Create DisplayLotComposition table (maps display lots to underlying purchase lots)
+  await request.batch(`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'DisplayLotComposition')
+    CREATE TABLE DisplayLotComposition (
+      id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+      displayLotId UNIQUEIDENTIFIER NOT NULL,
+      purchaseLotId UNIQUEIDENTIFIER NOT NULL,
+      quantityAllocated DECIMAL(18, 8) NOT NULL CHECK (quantityAllocated > 0),
+      createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+      updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+      FOREIGN KEY (displayLotId) REFERENCES DisplayLots(id) ON DELETE CASCADE,
+      FOREIGN KEY (purchaseLotId) REFERENCES PurchaseLots(id)
+    );
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotComposition_DisplayLotId') CREATE INDEX IX_DisplayLotComposition_DisplayLotId ON DisplayLotComposition(displayLotId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotComposition_PurchaseLotId') CREATE INDEX IX_DisplayLotComposition_PurchaseLotId ON DisplayLotComposition(purchaseLotId);
+  `);
+
+  // Create DisplayLotAllocations table (tracks which display lots consumed in a sale - reversible)
+  await request.batch(`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'DisplayLotAllocations')
+    CREATE TABLE DisplayLotAllocations (
+      id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+      userId NVARCHAR(255) NOT NULL,
+      saleTransactionId UNIQUEIDENTIFIER NOT NULL,
+      displayLotId UNIQUEIDENTIFIER NOT NULL,
+      quantityConsumed DECIMAL(18, 8) NOT NULL CHECK (quantityConsumed > 0),
+      createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+      FOREIGN KEY (saleTransactionId) REFERENCES StockTransactions(id) ON DELETE CASCADE,
+      FOREIGN KEY (displayLotId) REFERENCES DisplayLots(id)
+    );
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotAllocations_UserId') CREATE INDEX IX_DisplayLotAllocations_UserId ON DisplayLotAllocations(userId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotAllocations_SaleTransactionId') CREATE INDEX IX_DisplayLotAllocations_SaleTransactionId ON DisplayLotAllocations(saleTransactionId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotAllocations_DisplayLotId') CREATE INDEX IX_DisplayLotAllocations_DisplayLotId ON DisplayLotAllocations(displayLotId);
+  `);
+
   await request.batch(`
     IF NOT EXISTS (
       SELECT 1 FROM SchemaMigrations WHERE migrationKey = '2026-07-12-p0-hardening'

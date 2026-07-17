@@ -7,6 +7,7 @@ import { initializeDatabase, closeDatabase } from './db/connection.js';
 import cashRoutes from './routes/cash.js';
 import stockRoutes from './routes/stocks.js';
 import lotsRoutes from './routes/lots.js';
+import displayLotsRoutes from './routes/display-lots.js';
 
 
 const app: Express = express();
@@ -50,6 +51,7 @@ declare global {
 app.use('/api/cash', cashRoutes);
 app.use('/api/stocks', stockRoutes);
 app.use('/api/lots', lotsRoutes);
+app.use('/api/display-lots', displayLotsRoutes);
 
 // Health check
 app.get('/api/health', (req: Request, res: Response) => {

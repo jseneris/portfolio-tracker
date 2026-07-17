@@ -609,6 +609,28 @@ router.delete('/:id', async (req: Request, res: Response) => {
               WHERE id = @purchaseLotId AND userId = @userId
             `);
         }
+
+        // Restore DisplayLots quantities (reversible display lot allocations)
+        const displayAllocations = await new sql.Request(tx)
+          .input('saleTransactionId', sql.UniqueIdentifier, id)
+          .input('userId', sql.NVarChar, userId)
+          .query(`
+            SELECT displayLotId, quantityConsumed
+            FROM DisplayLotAllocations
+            WHERE saleTransactionId = @saleTransactionId AND userId = @userId
+          `);
+
+        for (const allocation of displayAllocations.recordset) {
+          await new sql.Request(tx)
+            .input('displayLotId', sql.UniqueIdentifier, allocation.displayLotId)
+            .input('userId', sql.NVarChar, userId)
+            .input('quantity', sql.Decimal(18, 8), allocation.quantityConsumed)
+            .query(`
+              UPDATE DisplayLots
+              SET totalQuantity = totalQuantity + @quantity, updatedAt = GETUTCDATE()
+              WHERE id = @displayLotId AND userId = @userId
+            `);
+        }
       }
 
       await new sql.Request(tx)
