@@ -39,7 +39,7 @@ router.get('/:ticker', async (req: Request, res: Response) => {
       .input('ticker', sql.NVarChar, ticker.toUpperCase());
 
     let query = `
-      SELECT * FROM Lots 
+      SELECT * FROM PurchaseLots 
       WHERE userId = @userId AND ticker = @ticker AND remainingQuantity > 0
     `;
 
@@ -72,7 +72,7 @@ router.put('/:id', async (req: Request, res: Response) => {
       .input('userId', sql.NVarChar, userId)
       .input('remainingQuantity', sql.Decimal(18, 8), remainingQuantity)
       .query(`
-        UPDATE Lots 
+        UPDATE PurchaseLots 
         SET remainingQuantity = @remainingQuantity, updatedAt = GETUTCDATE()
         WHERE id = @id AND userId = @userId
       `);
@@ -160,7 +160,7 @@ router.post('/ticker/:ticker/split', async (req: Request, res: Response) => {
       .input('splitDate', sql.DateTime2, parsedSplitDate)
       .query(`
         SELECT id, userId
-        FROM Lots
+        FROM PurchaseLots
         WHERE ticker = @ticker AND purchaseDate <= @splitDate
       `);
 
@@ -180,13 +180,7 @@ router.post('/ticker/:ticker/split', async (req: Request, res: Response) => {
         WHERE ticker = @ticker AND purchaseDate <= @splitDate
       `);
 
-    // Rescale Display Lots that contain purchase lots affected by this split.
-    // Display lots automatically scale proportionally with their underlying purchase lots.
-    // TODO: Implement automatic rescaling of display lots when purchase lots are split
-    // This will require updating DisplayLots.totalQuantity based on the composition
-    // For now, display lots will need manual adjustment or will be rescaled on next query
-
-    // Update all lots for this ticker with purchaseDate <= splitDate.
+    // Update all purchase lots affected by this split.
     // Quantities multiply and unitCost divides by the same factor so cost basis (qty * unitCost) is unchanged.
     // Every affected lot is also logged into SplitAdjustments to preserve full multi-split history.
     await new sql.Request(transaction)
@@ -195,7 +189,7 @@ router.post('/ticker/:ticker/split', async (req: Request, res: Response) => {
       .input('splitDate', sql.DateTime2, parsedSplitDate)
       .input('splitId', sql.UniqueIdentifier, splitId)
       .query(`
-        UPDATE Lots
+        UPDATE PurchaseLots
         SET originalQuantity = originalQuantity * @multiplier,
             remainingQuantity = remainingQuantity * @multiplier,
             unitCost = unitCost / @multiplier,
@@ -264,9 +258,9 @@ router.post('/ticker/:ticker/split', async (req: Request, res: Response) => {
       .input('ticker', sql.NVarChar, normalizedTicker)
       .input('splitDate', sql.DateTime2, parsedSplitDate)
       .query(`
-        SELECT la.id, la.userId
-        FROM LotAllocations la
-        JOIN StockTransactions st ON la.saleTransactionId = st.id
+        SELECT pla.id, pla.userId
+        FROM PurchaseLotAllocations pla
+        JOIN StockTransactions st ON pla.saleTransactionId = st.id
         WHERE st.ticker = @ticker AND st.transactionDate <= @splitDate
       `);
 
@@ -283,20 +277,21 @@ router.post('/ticker/:ticker/split', async (req: Request, res: Response) => {
         WHERE st.ticker = @ticker AND st.transactionDate <= @splitDate
       `);
 
-    // Rescale historical LotAllocations rows for sales that happened on or before the split date.
+    // Rescale historical PurchaseLotAllocations rows for sales that happened on or before the split date.
     // Those rows recorded "shares consumed" in pre-split terms; without rescaling them they'd
-    // permanently drift out of sync with the now-split-adjusted Lots.remainingQuantity.
+    // permanently drift out of sync with the now-split-adjusted PurchaseLots.remainingQuantity.
+    // Note: LotAllocations table is deprecated and no longer used.
     await new sql.Request(transaction)
       .input('ticker', sql.NVarChar, normalizedTicker)
       .input('multiplier', sql.Decimal(18, 8), multiplier)
       .input('splitDate', sql.DateTime2, parsedSplitDate)
       .input('splitId', sql.UniqueIdentifier, splitId)
       .query(`
-        UPDATE la
-        SET la.quantityConsumed = la.quantityConsumed * @multiplier,
-            la.updatedAt = GETUTCDATE()
-        FROM LotAllocations la
-        JOIN StockTransactions st ON la.saleTransactionId = st.id
+        UPDATE pla
+        SET pla.quantityConsumed = pla.quantityConsumed * @multiplier,
+            pla.updatedAt = GETUTCDATE()
+        FROM PurchaseLotAllocations pla
+        JOIN StockTransactions st ON pla.saleTransactionId = st.id
         WHERE st.ticker = @ticker AND st.transactionDate <= @splitDate
       `);
 

@@ -39,17 +39,6 @@ export function getPool(): sql.ConnectionPool {
 async function createTablesIfNotExist() {
   const request = getPool().request();
 
-  // Track applied schema hardening/migration steps.
-  await request.batch(`
-    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SchemaMigrations')
-    CREATE TABLE SchemaMigrations (
-      id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-      migrationKey NVARCHAR(200) NOT NULL UNIQUE,
-      appliedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
-      notes NVARCHAR(500) NULL
-    );
-  `);
-  
   // Create CashTransactions table
   await request.batch(`
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'CashTransactions')
@@ -150,35 +139,9 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     ALTER TABLE StockSplits ALTER COLUMN ratioDenominator DECIMAL(18, 8) NOT NULL;
   `);
 
-  // Create Lots table (individual purchase/dividend batches)
-  await request.batch(`
-    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Lots')
-    CREATE TABLE Lots (
-      id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-      userId NVARCHAR(255) NOT NULL,
-      ticker NVARCHAR(10) NOT NULL,
-      transactionId UNIQUEIDENTIFIER NOT NULL,
-      sourceType NVARCHAR(20) NOT NULL DEFAULT 'purchase' CHECK (sourceType IN ('purchase', 'dividend')),
-      originalQuantity DECIMAL(18, 8) NOT NULL,
-      remainingQuantity DECIMAL(18, 8) NOT NULL,
-      unitCost DECIMAL(18, 4) NOT NULL,
-      purchaseDate DATETIME2 NOT NULL,
-      splitAdjusted BIT NOT NULL DEFAULT 0,
-      lastSplitId UNIQUEIDENTIFIER NULL,
-      createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
-      updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
-      FOREIGN KEY (transactionId) REFERENCES StockTransactions(id) ON DELETE CASCADE,
-      FOREIGN KEY (lastSplitId) REFERENCES StockSplits(id)
-    );
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Lots_UserId') CREATE INDEX IX_Lots_UserId ON Lots(userId);
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Lots_Ticker') CREATE INDEX IX_Lots_Ticker ON Lots(ticker);
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Lots_Date')   CREATE INDEX IX_Lots_Date ON Lots(purchaseDate);
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Lots_SourceType') CREATE INDEX IX_Lots_SourceType ON Lots(sourceType);
-  `);
 
-  // Create PurchaseLots table (immutable purchase/dividend attribution ledger with mutable remaining quantity).
-  // This is intentionally separate from Lots so open-lot consolidation/smallest-first matching can evolve
-  // independently from user-directed purchase attribution for tax-lot style reporting.
+
+  // Create PurchaseLots table (purchase/dividend attribution ledger with mutable remaining quantity).
   await request.batch(`
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PurchaseLots')
     CREATE TABLE PurchaseLots (
@@ -198,57 +161,10 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
       FOREIGN KEY (transactionId) REFERENCES StockTransactions(id) ON DELETE CASCADE,
       FOREIGN KEY (lastSplitId) REFERENCES StockSplits(id)
     );
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_UserId' AND object_id = OBJECT_ID('PurchaseLots'))
-    BEGIN TRY
-      CREATE INDEX IX_PurchaseLots_UserId ON PurchaseLots(userId);
-    END TRY
-    BEGIN CATCH
-      IF ERROR_NUMBER() <> 1913 THROW;
-    END CATCH;
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_Ticker' AND object_id = OBJECT_ID('PurchaseLots'))
-    BEGIN TRY
-      CREATE INDEX IX_PurchaseLots_Ticker ON PurchaseLots(ticker);
-    END TRY
-    BEGIN CATCH
-      IF ERROR_NUMBER() <> 1913 THROW;
-    END CATCH;
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_Date' AND object_id = OBJECT_ID('PurchaseLots'))
-    BEGIN TRY
-      CREATE INDEX IX_PurchaseLots_Date ON PurchaseLots(purchaseDate);
-    END TRY
-    BEGIN CATCH
-      IF ERROR_NUMBER() <> 1913 THROW;
-    END CATCH;
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_SourceType' AND object_id = OBJECT_ID('PurchaseLots'))
-    BEGIN TRY
-      CREATE INDEX IX_PurchaseLots_SourceType ON PurchaseLots(sourceType);
-    END TRY
-    BEGIN CATCH
-      IF ERROR_NUMBER() <> 1913 THROW;
-    END CATCH;
-  `);
-
-  // Backfill PurchaseLots from existing Lots rows for pre-option-2 databases.
-  // We keep IDs aligned where possible so legacy lot references remain valid.
-  await request.batch(`
-    INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate, splitAdjusted, lastSplitId, createdAt, updatedAt)
-    SELECT
-      l.id,
-      l.userId,
-      l.ticker,
-      l.transactionId,
-      l.sourceType,
-      l.originalQuantity,
-      l.remainingQuantity,
-      l.unitCost,
-      l.purchaseDate,
-      l.splitAdjusted,
-      l.lastSplitId,
-      l.createdAt,
-      l.updatedAt
-    FROM Lots l
-    LEFT JOIN PurchaseLots pl ON pl.id = l.id
-    WHERE pl.id IS NULL;
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_UserId') CREATE INDEX IX_PurchaseLots_UserId ON PurchaseLots(userId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_Ticker') CREATE INDEX IX_PurchaseLots_Ticker ON PurchaseLots(ticker);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_Date') CREATE INDEX IX_PurchaseLots_Date ON PurchaseLots(purchaseDate);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_SourceType') CREATE INDEX IX_PurchaseLots_SourceType ON PurchaseLots(sourceType);
   `);
 
   // Add splitAdjusted / lastSplitId to StockTransactions so affected transactions can be flagged too
@@ -268,24 +184,7 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
       ADD CONSTRAINT FK_StockTransactions_LastSplit FOREIGN KEY (lastSplitId) REFERENCES StockSplits(id);
   `);
 
-  // Create LotAllocations table (records which lot(s) a sale/consuming transaction drew from,
-  // and how much of each lot was consumed - required for explicit user-chosen lot allocation on sells)
-  await request.batch(`
-    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'LotAllocations')
-    CREATE TABLE LotAllocations (
-      id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-      userId NVARCHAR(255) NOT NULL,
-      saleTransactionId UNIQUEIDENTIFIER NOT NULL,
-      lotId UNIQUEIDENTIFIER NOT NULL,
-      quantityConsumed DECIMAL(18, 8) NOT NULL CHECK (quantityConsumed > 0),
-      createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
-      FOREIGN KEY (saleTransactionId) REFERENCES StockTransactions(id) ON DELETE CASCADE,
-      FOREIGN KEY (lotId) REFERENCES Lots(id)
-    );
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LotAllocations_UserId') CREATE INDEX IX_LotAllocations_UserId ON LotAllocations(userId);
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LotAllocations_SaleTransactionId') CREATE INDEX IX_LotAllocations_SaleTransactionId ON LotAllocations(saleTransactionId);
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_LotAllocations_LotId') CREATE INDEX IX_LotAllocations_LotId ON LotAllocations(lotId);
-  `);
+
 
   // Create PurchaseLotAllocations table (explicit user-directed attribution against PurchaseLots).
   await request.batch(`
@@ -301,52 +200,9 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
       FOREIGN KEY (saleTransactionId) REFERENCES StockTransactions(id) ON DELETE CASCADE,
       FOREIGN KEY (purchaseLotId) REFERENCES PurchaseLots(id)
     );
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLotAllocations_UserId' AND object_id = OBJECT_ID('PurchaseLotAllocations'))
-    BEGIN TRY
-      CREATE INDEX IX_PurchaseLotAllocations_UserId ON PurchaseLotAllocations(userId);
-    END TRY
-    BEGIN CATCH
-      IF ERROR_NUMBER() <> 1913 THROW;
-    END CATCH;
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLotAllocations_SaleTransactionId' AND object_id = OBJECT_ID('PurchaseLotAllocations'))
-    BEGIN TRY
-      CREATE INDEX IX_PurchaseLotAllocations_SaleTransactionId ON PurchaseLotAllocations(saleTransactionId);
-    END TRY
-    BEGIN CATCH
-      IF ERROR_NUMBER() <> 1913 THROW;
-    END CATCH;
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLotAllocations_PurchaseLotId' AND object_id = OBJECT_ID('PurchaseLotAllocations'))
-    BEGIN TRY
-      CREATE INDEX IX_PurchaseLotAllocations_PurchaseLotId ON PurchaseLotAllocations(purchaseLotId);
-    END TRY
-    BEGIN CATCH
-      IF ERROR_NUMBER() <> 1913 THROW;
-    END CATCH;
-  `);
-
-  // Backfill PurchaseLotAllocations from legacy LotAllocations when IDs align.
-  await request.batch(`
-    INSERT INTO PurchaseLotAllocations (id, userId, saleTransactionId, purchaseLotId, quantityConsumed, createdAt, updatedAt)
-    SELECT
-      la.id,
-      la.userId,
-      la.saleTransactionId,
-      la.lotId,
-      la.quantityConsumed,
-      la.createdAt,
-      COALESCE(la.updatedAt, la.createdAt)
-    FROM LotAllocations la
-    INNER JOIN PurchaseLots pl ON pl.id = la.lotId
-    LEFT JOIN PurchaseLotAllocations pla ON pla.id = la.id
-    WHERE pla.id IS NULL;
-  `);
-
-  // LotAllocations needs updatedAt so we can retroactively rescale quantityConsumed when a
-  // split occurs after the sale it audits (a sale recorded before a split reflects pre-split
-  // share counts that must be rescaled to stay consistent with the now-split-adjusted lot).
-  await request.batch(`
-    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('LotAllocations') AND name = 'updatedAt')
-      ALTER TABLE LotAllocations ADD updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE();
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLotAllocations_UserId') CREATE INDEX IX_PurchaseLotAllocations_UserId ON PurchaseLotAllocations(userId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLotAllocations_SaleTransactionId') CREATE INDEX IX_PurchaseLotAllocations_SaleTransactionId ON PurchaseLotAllocations(saleTransactionId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLotAllocations_PurchaseLotId') CREATE INDEX IX_PurchaseLotAllocations_PurchaseLotId ON PurchaseLotAllocations(purchaseLotId);
   `);
 
   // Widen price/unitCost precision so repeated stock splits don't compound rounding error.
@@ -356,14 +212,11 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
   await request.batch(`
     ALTER TABLE StockTransactions ALTER COLUMN price DECIMAL(18, 8);
   `);
-  await request.batch(`
-    ALTER TABLE Lots ALTER COLUMN unitCost DECIMAL(18, 8) NOT NULL;
-  `);
 
   // Create SplitAdjustments table: records every split that touched every individual lot,
   // transaction, or lot allocation - unlike the single lastSplitId/splitAdjusted columns (which
   // only remember the most recent split), this preserves full history when a ticker splits
-  // more than once, mirroring the LotAllocations audit-table pattern.
+  // more than once, enabling multi-split audit trails.
   await request.batch(`
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SplitAdjustments')
     CREATE TABLE SplitAdjustments (
@@ -389,12 +242,12 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockTransactions_UserId_Ticker_TransactionDate')
       CREATE INDEX IX_StockTransactions_UserId_Ticker_TransactionDate ON StockTransactions(userId, ticker, transactionDate);
 
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Lots_UserId_Ticker_PurchaseDate')
-      CREATE INDEX IX_Lots_UserId_Ticker_PurchaseDate ON Lots(userId, ticker, purchaseDate);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_UserId_Ticker_PurchaseDate')
+      CREATE INDEX IX_PurchaseLots_UserId_Ticker_PurchaseDate ON PurchaseLots(userId, ticker, purchaseDate);
 
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Lots_OpenPositions_UserId_Ticker_PurchaseDate')
-      CREATE INDEX IX_Lots_OpenPositions_UserId_Ticker_PurchaseDate
-      ON Lots(userId, ticker, purchaseDate)
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_OpenPositions_UserId_Ticker_PurchaseDate')
+      CREATE INDEX IX_PurchaseLots_OpenPositions_UserId_Ticker_PurchaseDate
+      ON PurchaseLots(userId, ticker, purchaseDate)
       INCLUDE (remainingQuantity, unitCost)
       WHERE remainingQuantity > 0;
   `);
@@ -460,10 +313,10 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     ) ranked
     WHERE ranked.rn > 1;
 
-    UPDATE l
-    SET l.lastSplitId = d.keepId
-    FROM Lots l
-    JOIN @Dupes d ON l.lastSplitId = d.duplicateId;
+    UPDATE pl
+    SET pl.lastSplitId = d.keepId
+    FROM PurchaseLots pl
+    JOIN @Dupes d ON pl.lastSplitId = d.duplicateId;
 
     UPDATE st
     SET st.lastSplitId = d.keepId
@@ -532,17 +385,6 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotAllocations_UserId') CREATE INDEX IX_DisplayLotAllocations_UserId ON DisplayLotAllocations(userId);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotAllocations_SaleTransactionId') CREATE INDEX IX_DisplayLotAllocations_SaleTransactionId ON DisplayLotAllocations(saleTransactionId);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotAllocations_DisplayLotId') CREATE INDEX IX_DisplayLotAllocations_DisplayLotId ON DisplayLotAllocations(displayLotId);
-  `);
-
-  await request.batch(`
-    IF NOT EXISTS (
-      SELECT 1 FROM SchemaMigrations WHERE migrationKey = '2026-07-12-p0-hardening'
-    )
-      INSERT INTO SchemaMigrations (migrationKey, notes)
-      VALUES (
-        '2026-07-12-p0-hardening',
-        'Added composite/filtered indexes, stronger checks, split uniqueness, and migration tracking.'
-      );
   `);
 
   console.log('✓ Database tables initialized');

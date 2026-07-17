@@ -75,7 +75,7 @@ router.get('/portfolio/summary', async (req: Request, res: Response) => {
           SELECT
             SUM(remainingQuantity * unitCost) AS totalStockCostBasis,
             COUNT(DISTINCT ticker) AS stockCount
-          FROM Lots
+          FROM PurchaseLots
           WHERE userId = @userId AND remainingQuantity > 0
         )
         SELECT
@@ -103,7 +103,7 @@ router.get('/portfolio/summary', async (req: Request, res: Response) => {
           SUM(remainingQuantity) AS totalShares,
           SUM(remainingQuantity * unitCost) AS costBasis,
           SUM(CASE WHEN sourceType = 'purchase' THEN 1 ELSE 0 END) AS lotCount
-        FROM Lots
+        FROM PurchaseLots
         WHERE userId = @userId AND remainingQuantity > 0
         GROUP BY ticker
         ORDER BY ticker ASC;
@@ -189,7 +189,7 @@ router.get('/:ticker/summary', async (req: Request, res: Response) => {
           SUM(remainingQuantity) as totalShares,
           COUNT(*) as numberOfLots,
           SUM(remainingQuantity * unitCost) as costBasis
-        FROM Lots
+        FROM PurchaseLots
         WHERE userId = @userId AND ticker = @ticker AND remainingQuantity > 0
       `);
     
@@ -272,7 +272,7 @@ router.post('/', async (req: Request, res: Response) => {
         .input('ticker', sql.NVarChar, normalizedTicker)
         .query(`
           SELECT id, transactionId, remainingQuantity
-          FROM Lots
+          FROM PurchaseLots
           WHERE userId = @userId AND ticker = @ticker AND remainingQuantity > 0
           ORDER BY remainingQuantity ASC, purchaseDate ASC, id ASC
         `);
