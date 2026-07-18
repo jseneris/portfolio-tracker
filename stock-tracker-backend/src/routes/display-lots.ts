@@ -21,7 +21,7 @@ router.get('/', async (req: Request, res: Response) => {
         SELECT id, userId, ticker, totalQuantity, createdAt, updatedAt
         FROM DisplayLots
         WHERE userId = @userId
-        ORDER BY ticker ASC, createdAt ASC
+        ORDER BY ticker ASC, totalQuantity ASC
       `);
     
     res.json(result.recordset.map((row: any) => ({
@@ -49,7 +49,7 @@ router.get('/ticker/:ticker', async (req: Request, res: Response) => {
         SELECT id, userId, ticker, totalQuantity, createdAt, updatedAt
         FROM DisplayLots
         WHERE userId = @userId AND ticker = @ticker
-        ORDER BY createdAt ASC
+        ORDER BY totalQuantity ASC, createdAt ASC
       `);
     
     res.json(result.recordset.map((row: any) => ({

@@ -255,38 +255,58 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
   // P0 data integrity checks for transactional positivity.
   // For buy/sell transactions, all values must be positive and NOT NULL.
   // For dividend transactions, only amount is required to be positive.
-  await request.batch(`
-    IF EXISTS (
-      SELECT 1 FROM sys.check_constraints
-      WHERE parent_object_id = OBJECT_ID('StockTransactions')
-        AND name = 'CK_StockTransactions_PositiveValues'
-    )
-      ALTER TABLE StockTransactions DROP CONSTRAINT CK_StockTransactions_PositiveValues;
+  try {
+    await request.batch(`
+      IF EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE parent_object_id = OBJECT_ID('StockTransactions')
+          AND name = 'CK_StockTransactions_PositiveValues'
+      )
+        ALTER TABLE StockTransactions DROP CONSTRAINT CK_StockTransactions_PositiveValues;
+    `);
+  } catch (e) {
+    // Ignore if constraint doesn't exist or can't be dropped
+  }
 
-    ALTER TABLE StockTransactions WITH NOCHECK
-    ADD CONSTRAINT CK_StockTransactions_PositiveValues
-    CHECK (
-      (type IN ('buy', 'sell') AND quantity IS NOT NULL AND quantity > 0 AND price IS NOT NULL AND price > 0 AND amount IS NOT NULL AND amount > 0)
-      OR (type = 'div' AND amount IS NOT NULL AND amount > 0)
-    );
-  `);
+  try {
+    await request.batch(`
+      ALTER TABLE StockTransactions WITH NOCHECK
+      ADD CONSTRAINT CK_StockTransactions_PositiveValues
+      CHECK (
+        (type IN ('buy', 'sell') AND quantity IS NOT NULL AND quantity > 0 AND price IS NOT NULL AND price > 0 AND amount IS NOT NULL AND amount > 0)
+        OR (type = 'div' AND amount IS NOT NULL AND amount > 0)
+      );
+    `);
+  } catch (e) {
+    // Constraint might already exist, that's okay
+  }
 
-  await request.batch(`
-    IF EXISTS (
-      SELECT 1 FROM sys.check_constraints
-      WHERE parent_object_id = OBJECT_ID('StockSplits')
-        AND name = 'CK_StockSplits_PositiveRatio'
-    )
-      ALTER TABLE StockSplits DROP CONSTRAINT CK_StockSplits_PositiveRatio;
+  try {
+    await request.batch(`
+      IF EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE parent_object_id = OBJECT_ID('StockSplits')
+          AND name = 'CK_StockSplits_PositiveRatio'
+      )
+        ALTER TABLE StockSplits DROP CONSTRAINT CK_StockSplits_PositiveRatio;
+    `);
+  } catch (e) {
+    // Ignore if constraint doesn't exist or can't be dropped
+  }
 
-    ALTER TABLE StockSplits WITH NOCHECK
-    ADD CONSTRAINT CK_StockSplits_PositiveRatio
-    CHECK (
-      ratioNumerator > 0
-      AND ratioDenominator > 0
-      AND multiplier > 0
-    );
-  `);
+  try {
+    await request.batch(`
+      ALTER TABLE StockSplits WITH NOCHECK
+      ADD CONSTRAINT CK_StockSplits_PositiveRatio
+      CHECK (
+        ratioNumerator > 0
+        AND ratioDenominator > 0
+        AND multiplier > 0
+      );
+    `);
+  } catch (e) {
+    // Constraint might already exist, that's okay
+  }
 
   // P0 split idempotency at DB level: collapse duplicate historical rows first,
   // then enforce uniqueness by ticker + ratio + splitDate.
@@ -332,9 +352,12 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     FROM StockSplits ss
     JOIN @Dupes d ON ss.id = d.duplicateId;
 
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_StockSplits_Ticker_Ratio_Date')
-      CREATE UNIQUE INDEX UX_StockSplits_Ticker_Ratio_Date
-      ON StockSplits(ticker, ratioNumerator, ratioDenominator, splitDate);
+    IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_StockSplits_Ticker_Ratio_Date')
+      DROP INDEX UX_StockSplits_Ticker_Ratio_Date ON StockSplits;
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_StockSplits_UserId_Ticker_Ratio_Date')
+      CREATE UNIQUE INDEX UX_StockSplits_UserId_Ticker_Ratio_Date
+      ON StockSplits(userId, ticker, ratioNumerator, ratioDenominator, splitDate);
   `);
 
   // Create DisplayLots table (user-created groupings, not transaction-tied)

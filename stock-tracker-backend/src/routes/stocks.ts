@@ -407,19 +407,6 @@ router.post('/', async (req: Request, res: Response) => {
         .input('price', sql.Decimal(18, 8), price)
         .input('transactionDate', sql.DateTime2, new Date(transactionDate))
         .query(`
-          INSERT INTO Lots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
-          VALUES (@lotId, @userId, @ticker, @transactionId, 'purchase', @quantity, @quantity, @price, @transactionDate)
-        `);
-
-      await pool.request()
-        .input('lotId', sql.UniqueIdentifier, lotId)
-        .input('userId', sql.NVarChar, userId)
-        .input('ticker', sql.NVarChar, normalizedTicker)
-        .input('transactionId', sql.UniqueIdentifier, id)
-        .input('quantity', sql.Decimal(18, 8), quantity)
-        .input('price', sql.Decimal(18, 8), price)
-        .input('transactionDate', sql.DateTime2, new Date(transactionDate))
-        .query(`
           INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
           VALUES (@lotId, @userId, @ticker, @transactionId, 'purchase', @quantity, @quantity, @price, @transactionDate)
         `);
@@ -438,19 +425,6 @@ router.post('/', async (req: Request, res: Response) => {
         .input('price', sql.Decimal(18, 8), price)
         .input('transactionDate', sql.DateTime2, new Date(transactionDate))
         .query(`
-          INSERT INTO Lots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
-          VALUES (@lotId, @userId, @ticker, @transactionId, 'dividend', @quantity, @quantity, @price, @transactionDate)
-        `);
-
-      await pool.request()
-        .input('lotId', sql.UniqueIdentifier, lotId)
-        .input('userId', sql.NVarChar, userId)
-        .input('ticker', sql.NVarChar, normalizedTicker)
-        .input('transactionId', sql.UniqueIdentifier, id)
-        .input('quantity', sql.Decimal(18, 8), quantity)
-        .input('price', sql.Decimal(18, 8), price)
-        .input('transactionDate', sql.DateTime2, new Date(transactionDate))
-        .query(`
           INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
           VALUES (@lotId, @userId, @ticker, @transactionId, 'dividend', @quantity, @quantity, @price, @transactionDate)
         `);
@@ -458,29 +432,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Sells consume lots smallest-first, recording the actual allocation for auditability.
     if (type === 'sell') {
-      for (const allocation of sellConsumptionPlan) {
-        await pool.request()
-          .input('lotId', sql.UniqueIdentifier, allocation.lotId)
-          .input('userId', sql.NVarChar, userId)
-          .input('quantity', sql.Decimal(18, 8), allocation.quantity)
-          .query(`
-            UPDATE Lots
-            SET remainingQuantity = remainingQuantity - @quantity, updatedAt = GETUTCDATE()
-            WHERE id = @lotId AND userId = @userId
-          `);
-
-        const allocationId = uuidv4();
-        await pool.request()
-          .input('allocationId', sql.UniqueIdentifier, allocationId)
-          .input('userId', sql.NVarChar, userId)
-          .input('saleTransactionId', sql.UniqueIdentifier, id)
-          .input('lotId', sql.UniqueIdentifier, allocation.lotId)
-          .input('quantity', sql.Decimal(18, 8), allocation.quantity)
-          .query(`
-            INSERT INTO LotAllocations (id, userId, saleTransactionId, lotId, quantityConsumed)
-            VALUES (@allocationId, @userId, @saleTransactionId, @lotId, @quantity)
-          `);
-      }
+      // Allocations recorded in PurchaseLotAllocations below
 
       for (const allocation of purchaseAttributionPlan) {
         await pool.request()
@@ -571,26 +523,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
     try {
       if (transactionType === 'sell') {
-        const operationalAllocations = await new sql.Request(tx)
-          .input('saleTransactionId', sql.UniqueIdentifier, id)
-          .input('userId', sql.NVarChar, userId)
-          .query(`
-            SELECT lotId, quantityConsumed
-            FROM LotAllocations
-            WHERE saleTransactionId = @saleTransactionId AND userId = @userId
-          `);
-
-        for (const allocation of operationalAllocations.recordset) {
-          await new sql.Request(tx)
-            .input('lotId', sql.UniqueIdentifier, allocation.lotId)
-            .input('userId', sql.NVarChar, userId)
-            .input('quantity', sql.Decimal(18, 8), allocation.quantityConsumed)
-            .query(`
-              UPDATE Lots
-              SET remainingQuantity = remainingQuantity + @quantity, updatedAt = GETUTCDATE()
-              WHERE id = @lotId AND userId = @userId
-            `);
-        }
+        // All allocations handled via PurchaseLotAllocations below
 
         const purchaseAllocations = await new sql.Request(tx)
           .input('saleTransactionId', sql.UniqueIdentifier, id)

@@ -4,7 +4,7 @@ import {
   clearUserData, depositCash, buyStock, 
   createDisplayLot, getDisplayLots, getPurchaseLots, TOLERANCE 
 } from './setup.js';
-import { request } from 'supertest';
+import request from 'supertest';
 import app from '../src/index.js';
 
 describe('10. Display Lots - Combine Operations', () => {

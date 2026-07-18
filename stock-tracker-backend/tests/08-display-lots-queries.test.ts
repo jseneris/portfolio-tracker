@@ -49,8 +49,17 @@ describe('08. Display Lots - Queries & Composition', () => {
 
     const composition = await getDisplayLotComposition(displayLotId);
     expect(composition).toHaveLength(2);
-    expect(composition[0].purchaseLotId).toBe(purchaseLots[0].id);
-    expect(composition[1].purchaseLotId).toBe(purchaseLots[1].id);
+
+    // Create a map for order-independent verification
+    const compositionMap = Object.fromEntries(
+      composition.map(c => [c.purchaseLotId, c.quantityAllocated])
+    );
+
+    // Verify both purchase lots are in the composition with correct allocations
+    expect(Object.keys(compositionMap)).toContain(purchaseLots[0].id);
+    expect(Object.keys(compositionMap)).toContain(purchaseLots[1].id);
+    expect(Number(compositionMap[purchaseLots[0].id])).toBeCloseTo(10, 3);
+    expect(Number(compositionMap[purchaseLots[1].id])).toBeCloseTo(15, 3);
   });
 
   it('composition shows Source Lot IDs and quantities', async () => {
@@ -70,11 +79,16 @@ describe('08. Display Lots - Queries & Composition', () => {
     const composition = await getDisplayLotComposition(displayLotId);
 
     expect(composition).toHaveLength(3);
-    expect(composition[0]).toHaveProperty('purchaseLotId');
-    expect(composition[0]).toHaveProperty('quantityAllocated');
-    expect(Number(composition[0].quantityAllocated)).toBeCloseTo(5, 3);
-    expect(Number(composition[1].quantityAllocated)).toBeCloseTo(8, 3);
-    expect(Number(composition[2].quantityAllocated)).toBeCloseTo(12, 3);
+    
+    // Create a map of purchaseLotId -> quantityAllocated for easier verification
+    const compositionMap = Object.fromEntries(
+      composition.map(c => [c.purchaseLotId, c.quantityAllocated])
+    );
+
+    // Verify each purchase lot has the correct allocation
+    expect(Number(compositionMap[purchaseLots[0].id])).toBeCloseTo(5, 3);
+    expect(Number(compositionMap[purchaseLots[1].id])).toBeCloseTo(8, 3);
+    expect(Number(compositionMap[purchaseLots[2].id])).toBeCloseTo(12, 3);
   });
 
   it('response includes Display Lot total quantity', async () => {

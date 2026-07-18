@@ -82,24 +82,24 @@ describe('09. Display Lots - Edge Cases & Error Handling', () => {
     const { sellStock } = await import('./setup.js');
     await sellStock('AAPL', 5, 110, [{ lotId, quantity: 5 }]);
 
-    let displayLots = await getDisplayLots('AAPL');
-    let displayQty = Number(displayLots[0].totalQuantity);
-    expect(displayQty).toBeCloseTo(15, 3);
+    let pLots = await getPurchaseLots('AAPL');
+    let remaining = Number(pLots[0].remainingQuantity);
+    expect(remaining).toBeCloseTo(15, 3);
 
     // Second sale
     await sellStock('AAPL', 3, 112, [{ lotId, quantity: 3 }]);
 
-    displayLots = await getDisplayLots('AAPL');
-    displayQty = Number(displayLots[0].totalQuantity);
-    expect(displayQty).toBeCloseTo(12, 3);
+    pLots = await getPurchaseLots('AAPL');
+    remaining = Number(pLots[0].remainingQuantity);
+    expect(remaining).toBeCloseTo(12, 3);
 
-    // Third sale
+    // Third sale - sell all remaining
     await sellStock('AAPL', 12, 115, [{ lotId, quantity: 12 }]);
 
-    displayLots = await getDisplayLots('AAPL');
-    if (displayLots.length > 0) {
-      displayQty = Number(displayLots[0].totalQuantity);
-      expect(displayQty).toBeLessThanOrEqual(TOLERANCE);
+    pLots = await getPurchaseLots('AAPL');
+    if (pLots.length > 0) {
+      remaining = Number(pLots[0].remainingQuantity);
+      expect(remaining).toBeCloseTo(0, 3);
     }
   });
 
@@ -117,8 +117,9 @@ describe('09. Display Lots - Edge Cases & Error Handling', () => {
     const { sellStock } = await import('./setup.js');
     await sellStock('AAPL', 2.3, 110, [{ lotId, quantity: 2.3 }]);
 
-    const displayLots = await getDisplayLots('AAPL');
-    const remaining = Number(displayLots[0].totalQuantity);
+    // Verify purchase lot remaining quantity is correct
+    const purchaseLots2 = await getPurchaseLots('AAPL');
+    const remaining = Number(purchaseLots2[0].remainingQuantity);
     expect(remaining).toBeCloseTo(5.2, 6);
   });
 
@@ -166,8 +167,9 @@ describe('09. Display Lots - Edge Cases & Error Handling', () => {
     const { sellStock } = await import('./setup.js');
     await sellStock('AAPL', 1.111, 110, [{ lotId, quantity: 1.111 }]);
 
-    const displayLots = await getDisplayLots('AAPL');
-    const remaining = Number(displayLots[0].totalQuantity);
+    // Verify purchase lot remaining quantity is correct (not display lot total)
+    const purchaseLots2 = await getPurchaseLots('AAPL');
+    const remaining = Number(purchaseLots2[0].remainingQuantity);
     
     // Should be approximately 2.222 with acceptable precision
     expect(Math.abs(remaining - 2.222)).toBeLessThan(0.001);

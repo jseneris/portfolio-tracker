@@ -22,6 +22,7 @@ export async function clearUserData(): Promise<void> {
   await request.query('DELETE FROM SplitAdjustments WHERE userId = @userId');
   await request.query('DELETE FROM PurchaseLots WHERE userId = @userId');
   await request.query('DELETE FROM StockTransactions WHERE userId = @userId');
+  await request.query('DELETE FROM StockSplits WHERE userId = @userId');
   await request.query('DELETE FROM CashTransactions WHERE userId = @userId');
 }
 
@@ -53,6 +54,7 @@ export async function depositCash(amount: number, date?: Date): Promise<string> 
 export async function buyStock(ticker: string, quantity: number, price: number, date?: Date): Promise<string> {
   const pool = getPool();
   const txId = uuidv4();
+  const lotId = uuidv4();
   const txDate = date || new Date();
   const amount = quantity * price;
 
@@ -68,6 +70,20 @@ export async function buyStock(ticker: string, quantity: number, price: number, 
     .query(`
       INSERT INTO StockTransactions (id, userId, ticker, type, quantity, price, amount, transactionDate)
       VALUES (@id, @userId, @ticker, @type, @quantity, @price, @amount, @transactionDate)
+    `);
+
+  // Also create the corresponding PurchaseLot
+  await pool.request()
+    .input('lotId', sql.UniqueIdentifier, lotId)
+    .input('userId', sql.NVarChar, TEST_USER_ID)
+    .input('ticker', sql.NVarChar, ticker.toUpperCase())
+    .input('transactionId', sql.UniqueIdentifier, txId)
+    .input('quantity', sql.Decimal(18, 8), quantity)
+    .input('price', sql.Decimal(18, 8), price)
+    .input('transactionDate', sql.DateTime2, txDate)
+    .query(`
+      INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
+      VALUES (@lotId, @userId, @ticker, @transactionId, 'purchase', @quantity, @quantity, @price, @transactionDate)
     `);
 
   return txId;
@@ -107,7 +123,7 @@ export async function sellStock(
         VALUES (@id, @userId, @ticker, @type, @quantity, @price, @amount, @transactionDate)
       `);
 
-    // Insert allocations
+    // Insert allocations and update lots
     for (const alloc of allocations) {
       await new sql.Request(transaction)
         .input('id', sql.UniqueIdentifier, uuidv4())
@@ -121,7 +137,7 @@ export async function sellStock(
         `);
 
       // Update purchase lot remaining quantity
-      await new sql.Request(transaction)
+      const updateResult = await new sql.Request(transaction)
         .input('lotId', sql.UniqueIdentifier, alloc.lotId)
         .input('quantityConsumed', sql.Decimal(18, 8), alloc.quantity)
         .query(`
@@ -129,11 +145,21 @@ export async function sellStock(
           SET remainingQuantity = remainingQuantity - @quantityConsumed
           WHERE id = @lotId
         `);
+      
+      if (updateResult.rowsAffected[0] !== 1) {
+        throw new Error(`Failed to update lot ${alloc.lotId}: no rows affected`);
+      }
     }
 
     await transaction.commit();
   } catch (error) {
-    await transaction.rollback();
+    try {
+      if (transaction.state === sql.ConnectionState.LoggedIn) {
+        await transaction.rollback();
+      }
+    } catch (rollbackError) {
+      // Transaction might already be rolled back, ignore
+    }
     throw error;
   }
 
@@ -146,7 +172,9 @@ export async function sellStock(
 export async function payDividend(ticker: string, quantity: number, amount: number, date?: Date): Promise<string> {
   const pool = getPool();
   const txId = uuidv4();
+  const lotId = uuidv4();
   const txDate = date || new Date();
+  const unitCost = amount / quantity; // Price per share
 
   await pool.request()
     .input('id', sql.UniqueIdentifier, txId)
@@ -159,6 +187,20 @@ export async function payDividend(ticker: string, quantity: number, amount: numb
     .query(`
       INSERT INTO StockTransactions (id, userId, ticker, type, quantity, amount, transactionDate)
       VALUES (@id, @userId, @ticker, @type, @quantity, @amount, @transactionDate)
+    `);
+
+  // Also create the corresponding Dividend Lot
+  await pool.request()
+    .input('lotId', sql.UniqueIdentifier, lotId)
+    .input('userId', sql.NVarChar, TEST_USER_ID)
+    .input('ticker', sql.NVarChar, ticker.toUpperCase())
+    .input('transactionId', sql.UniqueIdentifier, txId)
+    .input('quantity', sql.Decimal(18, 8), quantity)
+    .input('unitCost', sql.Decimal(18, 8), unitCost)
+    .input('transactionDate', sql.DateTime2, txDate)
+    .query(`
+      INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
+      VALUES (@lotId, @userId, @ticker, @transactionId, 'dividend', @quantity, @quantity, @unitCost, @transactionDate)
     `);
 
   return txId;
@@ -242,7 +284,7 @@ export async function getDisplayLots(ticker: string): Promise<any[]> {
       SELECT id, totalQuantity, createdAt
       FROM DisplayLots
       WHERE userId = @userId AND ticker = @ticker
-      ORDER BY createdAt ASC
+      ORDER BY totalQuantity ASC, createdAt ASC
     `);
 
   return result.recordset;
@@ -259,7 +301,7 @@ export async function getDisplayLotComposition(displayLotId: string): Promise<an
       SELECT purchaseLotId, quantityAllocated
       FROM DisplayLotComposition
       WHERE displayLotId = @displayLotId
-      ORDER BY purchaseLotId ASC
+      ORDER BY id ASC
     `);
 
   return result.recordset;
@@ -276,7 +318,9 @@ export async function getCashBalance(): Promise<number> {
       WITH CashAgg AS (
         SELECT
           SUM(CASE WHEN type = 'deposit' THEN amount ELSE 0 END) AS deposits,
-          SUM(CASE WHEN type = 'withdrawal' THEN amount ELSE 0 END) AS withdrawals
+          SUM(CASE WHEN type = 'withdrawal' THEN amount ELSE 0 END) AS withdrawals,
+          SUM(CASE WHEN type = 'interest' THEN amount ELSE 0 END) AS interest,
+          SUM(CASE WHEN type = 'fee' THEN amount ELSE 0 END) AS fees
         FROM CashTransactions
         WHERE userId = @userId
       ),
@@ -288,7 +332,7 @@ export async function getCashBalance(): Promise<number> {
         WHERE userId = @userId
       )
       SELECT
-        COALESCE(c.deposits, 0) - COALESCE(c.withdrawals, 0) - COALESCE(s.buys, 0) + COALESCE(s.sells, 0) AS balance
+        COALESCE(c.deposits, 0) + COALESCE(c.interest, 0) - COALESCE(c.withdrawals, 0) - COALESCE(c.fees, 0) - COALESCE(s.buys, 0) + COALESCE(s.sells, 0) AS balance
       FROM CashAgg c
       CROSS JOIN StockAgg s
     `);
@@ -301,9 +345,29 @@ export async function getCashBalance(): Promise<number> {
  */
 export async function applySplit(ticker: string, numerator: number, denominator: number, date?: Date): Promise<string> {
   const pool = getPool();
-  const splitId = uuidv4();
   const splitDate = date || new Date();
   const multiplier = numerator / denominator;
+
+  // Check if this split already exists (idempotency)
+  const existingResult = await pool.request()
+    .input('ticker', sql.NVarChar, ticker.toUpperCase())
+    .input('userId', sql.NVarChar, TEST_USER_ID)
+    .input('numerator', sql.Decimal(18, 8), numerator)
+    .input('denominator', sql.Decimal(18, 8), denominator)
+    .input('splitDate', sql.DateTime2, splitDate)
+    .query(`
+      SELECT id FROM StockSplits
+      WHERE ticker = @ticker AND userId = @userId
+        AND ratioNumerator = @numerator
+        AND ratioDenominator = @denominator
+        AND splitDate = @splitDate
+    `);
+
+  if (existingResult.recordset.length > 0) {
+    return existingResult.recordset[0].id;
+  }
+
+  const splitId = uuidv4();
 
   const transaction = new sql.Transaction(pool);
   await transaction.begin();
@@ -326,6 +390,7 @@ export async function applySplit(ticker: string, numerator: number, denominator:
     // Update purchase lots
     await new sql.Request(transaction)
       .input('ticker', sql.NVarChar, ticker.toUpperCase())
+      .input('userId', sql.NVarChar, TEST_USER_ID)
       .input('multiplier', sql.Decimal(18, 8), multiplier)
       .input('splitDate', sql.DateTime2, splitDate)
       .input('splitId', sql.UniqueIdentifier, splitId)
@@ -335,12 +400,13 @@ export async function applySplit(ticker: string, numerator: number, denominator:
             remainingQuantity = remainingQuantity * @multiplier,
             unitCost = unitCost / @multiplier,
             lastSplitId = @splitId
-        WHERE ticker = @ticker AND purchaseDate <= @splitDate
+        WHERE userId = @userId AND ticker = @ticker AND purchaseDate <= @splitDate
       `);
 
     // Update stock transactions
     await new sql.Request(transaction)
       .input('ticker', sql.NVarChar, ticker.toUpperCase())
+      .input('userId', sql.NVarChar, TEST_USER_ID)
       .input('multiplier', sql.Decimal(18, 8), multiplier)
       .input('splitDate', sql.DateTime2, splitDate)
       .input('splitId', sql.UniqueIdentifier, splitId)
@@ -349,12 +415,13 @@ export async function applySplit(ticker: string, numerator: number, denominator:
         SET quantity = CASE WHEN quantity IS NOT NULL THEN quantity * @multiplier ELSE NULL END,
             price = CASE WHEN price IS NOT NULL THEN price / @multiplier ELSE NULL END,
             lastSplitId = @splitId
-        WHERE ticker = @ticker AND transactionDate <= @splitDate AND type IN ('buy', 'sell', 'div')
+        WHERE userId = @userId AND ticker = @ticker AND transactionDate <= @splitDate AND type IN ('buy', 'sell', 'div')
       `);
 
     // Update allocations
     await new sql.Request(transaction)
       .input('ticker', sql.NVarChar, ticker.toUpperCase())
+      .input('userId', sql.NVarChar, TEST_USER_ID)
       .input('multiplier', sql.Decimal(18, 8), multiplier)
       .input('splitDate', sql.DateTime2, splitDate)
       .query(`
@@ -362,12 +429,18 @@ export async function applySplit(ticker: string, numerator: number, denominator:
         SET pla.quantityConsumed = pla.quantityConsumed * @multiplier
         FROM PurchaseLotAllocations pla
         JOIN StockTransactions st ON pla.saleTransactionId = st.id
-        WHERE st.ticker = @ticker AND st.transactionDate <= @splitDate
+        WHERE pla.userId = @userId AND st.ticker = @ticker AND st.transactionDate <= @splitDate
       `);
 
     await transaction.commit();
   } catch (error) {
-    await transaction.rollback();
+    try {
+      if (transaction.state === sql.ConnectionState.LoggedIn) {
+        await transaction.rollback();
+      }
+    } catch (rollbackError) {
+      // Transaction might already be rolled back, ignore
+    }
     throw error;
   }
 
