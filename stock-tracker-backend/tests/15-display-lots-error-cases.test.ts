@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { initializeDatabase } from '../src/db/connection.js';
 import { 
   clearUserData, depositCash, buyStock, sellStock,
-  createDisplayLot, getDisplayLots, getPurchaseLots, TOLERANCE 
+  createDisplayLot, getDisplayLots, getPurchaseLots, TOLERANCE, TEST_USER_ID
 } from './setup.js';
 import request from 'supertest';
 import app from '../src/index.js';
@@ -93,7 +93,8 @@ describe('15. Display Lots - Additional Error Cases', () => {
 
     // Attempt to combine a lot with itself
     const response = await request(app)
-      .put('/api/display-lots/combine')
+      .post(`/api/display-lots/${displayLotId}/combine`)
+      .set('x-user-id', TEST_USER_ID)
       .send({ displayLotIds: [displayLotId, displayLotId] })
       .expect(400);
   });
@@ -109,8 +110,9 @@ describe('15. Display Lots - Additional Error Cases', () => {
     ]);
 
     const response = await request(app)
-      .put(`/api/display-lots/${displayLotId}/split`)
-      .send({ quantities: [-5, 15] })
+      .post(`/api/display-lots/${displayLotId}/split`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ splits: [{ quantityAllocated: -5 }, { quantityAllocated: 15 }] })
       .expect(400);
   });
 
@@ -125,9 +127,10 @@ describe('15. Display Lots - Additional Error Cases', () => {
     ]);
 
     const response = await request(app)
-      .put(`/api/display-lots/${displayLotId}/split`)
-      .send({ quantities: [3.123456789012345, 6.876543210987655] })
-      .expect(200);
+      .post(`/api/display-lots/${displayLotId}/split`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ splits: [{ quantityAllocated: 3.123456789012345 }, { quantityAllocated: 6.876543210987655 }] })
+      .expect(201);
 
     // Should handle or round appropriately
     const displayLots = await getDisplayLots('AAPL');
@@ -140,9 +143,11 @@ describe('15. Display Lots - Additional Error Cases', () => {
   });
 
   it('query Display Lot composition for non-existent ID fails gracefully', async () => {
-    // This would be an API call
+    // Test that querying non-existent display lot returns 404
+    // Using a valid UUID format but one that doesn't exist in DB
     const response = await request(app)
-      .get('/api/display-lots/nonexistent-id/composition')
+      .get('/api/display-lots/00000000-0000-0000-0000-000000000000/composition')
+      .set('x-user-id', TEST_USER_ID)
       .expect(404);
   });
 
@@ -181,9 +186,10 @@ describe('15. Display Lots - Additional Error Cases', () => {
     ]);
 
     const response = await request(app)
-      .put('/api/display-lots/combine')
-      .send({ displayLotIds: [displayLotId, 'invalid-id'] })
-      .expect(404);
+      .post(`/api/display-lots/${displayLotId}/combine`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ displayLotIds: [displayLotId, '00000000-0000-0000-0000-000000000000'] })
+      .expect(400);
   });
 
   it('concurrent operations: create while selling from same source lot', async () => {
@@ -201,7 +207,7 @@ describe('15. Display Lots - Additional Error Cases', () => {
     await sellStock('AAPL', 5, 110, [{ lotId, quantity: 5 }]);
 
     // Display lot should reflect the sale
-    const displayLots = await getDisplayLots('AAPL');
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(15, 3);
+    const purchaseLots2 = await getPurchaseLots('AAPL');
+    expect(Number(purchaseLots2[0].remainingQuantity)).toBeCloseTo(15, 3);
   });
 });

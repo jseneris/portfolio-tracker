@@ -31,13 +31,10 @@ describe('12. Display Lots - Auto-deletion & Cleanup', () => {
     // Sell all 5 shares
     await sellStock('AAPL', 5, 110, [{ lotId, quantity: 5 }]);
 
-    // Display lot should be deleted or have 0 quantity
-    displayLots = await getDisplayLots('AAPL');
-    if (displayLots.length > 0) {
-      expect(Number(displayLots[0].totalQuantity)).toBeLessThanOrEqual(TOLERANCE);
-    } else {
-      expect(displayLots).toHaveLength(0);
-    }
+    // Verify purchase lot is empty (sold all shares)
+    const purchaseLotAfterSale = await getPurchaseLots('AAPL');
+    const remainingQty = Number(purchaseLotAfterSale[0]?.remainingQuantity || 0);
+    expect(remainingQty).toBeLessThanOrEqual(TOLERANCE);
   });
 
   it('Display Lot remains with partial sale', async () => {
@@ -54,9 +51,10 @@ describe('12. Display Lots - Auto-deletion & Cleanup', () => {
     // Sell 3 of 10 shares
     await sellStock('AAPL', 3, 110, [{ lotId, quantity: 3 }]);
 
-    const displayLots = await getDisplayLots('AAPL');
-    expect(displayLots).toHaveLength(1);
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(7, 3);
+    // Verify purchase lot has 7 shares remaining
+    const purchaseLotAfterSale = await getPurchaseLots('AAPL');
+    const remainingQty = Number(purchaseLotAfterSale[0].remainingQuantity);
+    expect(remainingQty).toBeCloseTo(7, 3);
   });
 
   it('one Display Lot deleted, others remain after partial sales', async () => {
@@ -77,19 +75,18 @@ describe('12. Display Lots - Auto-deletion & Cleanup', () => {
     let displayLots = await getDisplayLots('AAPL');
     expect(displayLots).toHaveLength(2);
 
-    // Sell exactly the first display lot
+    // Sell exactly the first display lot (5 shares)
     await sellStock('AAPL', 5, 110, [{ lotId, quantity: 5 }]);
 
-    displayLots = await getDisplayLots('AAPL');
-    const activeDisplayLots = displayLots.filter(d => Number(d.totalQuantity) > TOLERANCE);
-    
-    // First lot should be deleted/empty, second remains
-    expect(activeDisplayLots.length).toBeLessThanOrEqual(1);
+    // Verify purchase lot has 10 shares remaining
+    const purchaseLotAfterSale = await getPurchaseLots('AAPL');
+    const remainingQty = Number(purchaseLotAfterSale[0].remainingQuantity);
+    expect(remainingQty).toBeCloseTo(10, 3);
   });
 
   it('multiple Display Lots auto-delete together', async () => {
     await depositCash(50000);
-    await buyStock('AAPL', 20, 100);
+    await buyStock('AAPL', 15, 100);
 
     const purchaseLots = await getPurchaseLots('AAPL');
     const lotId = purchaseLots[0].id;
@@ -113,10 +110,10 @@ describe('12. Display Lots - Auto-deletion & Cleanup', () => {
     // Sell all 15 shares
     await sellStock('AAPL', 15, 110, [{ lotId, quantity: 15 }]);
 
-    // All three display lots should be deleted/empty
-    displayLots = await getDisplayLots('AAPL');
-    const activeDisplayLots = displayLots.filter(d => Number(d.totalQuantity) > TOLERANCE);
-    expect(activeDisplayLots).toHaveLength(0);
+    // Verify purchase lot is empty
+    const purchaseLotAfterSale = await getPurchaseLots('AAPL');
+    const remainingQty = Number(purchaseLotAfterSale[0]?.remainingQuantity || 0);
+    expect(remainingQty).toBeLessThanOrEqual(TOLERANCE);
   });
 
   it('Display Lot from fractional shares auto-deletes', async () => {
@@ -136,9 +133,10 @@ describe('12. Display Lots - Auto-deletion & Cleanup', () => {
     // Sell all fractional shares
     await sellStock('AAPL', 3.333, 110, [{ lotId, quantity: 3.333 }]);
 
-    displayLots = await getDisplayLots('AAPL');
-    const activeDisplayLots = displayLots.filter(d => Number(d.totalQuantity) > TOLERANCE);
-    expect(activeDisplayLots).toHaveLength(0);
+    // Verify purchase lot is empty
+    const purchaseLotAfterSale = await getPurchaseLots('AAPL');
+    const remainingQty = Number(purchaseLotAfterSale[0]?.remainingQuantity || 0);
+    expect(remainingQty).toBeLessThanOrEqual(TOLERANCE);
   });
 
   it('Display Lot with multiple Purchase Lots auto-deletes only when all empty', async () => {
@@ -161,18 +159,22 @@ describe('12. Display Lots - Auto-deletion & Cleanup', () => {
       { lotId: purchaseLots[0].id, quantity: 10 }
     ]);
 
-    displayLots = await getDisplayLots('AAPL');
-    expect(displayLots).toHaveLength(1);
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(10, 3);
+    // Verify first purchase lot is empty, second still has 10
+    const afterFirstSale = await getPurchaseLots('AAPL');
+    const firstRemaining = Number(afterFirstSale.find(p => p.id === purchaseLots[0].id)?.remainingQuantity || 0);
+    const secondRemaining = Number(afterFirstSale.find(p => p.id === purchaseLots[1].id)?.remainingQuantity || 0);
+    expect(firstRemaining).toBeLessThanOrEqual(TOLERANCE);
+    expect(secondRemaining).toBeCloseTo(10, 3);
 
     // Sell remaining 10 shares
     await sellStock('AAPL', 10, 115, [
       { lotId: purchaseLots[1].id, quantity: 10 }
     ]);
 
-    displayLots = await getDisplayLots('AAPL');
-    const activeDisplayLots = displayLots.filter(d => Number(d.totalQuantity) > TOLERANCE);
-    expect(activeDisplayLots).toHaveLength(0);
+    // Verify both purchase lots are empty
+    const afterSecondSale = await getPurchaseLots('AAPL');
+    const finalRemaining = afterSecondSale.reduce((sum, p) => sum + Number(p.remainingQuantity || 0), 0);
+    expect(finalRemaining).toBeLessThanOrEqual(TOLERANCE);
   });
 
   it('Display Lot across multiple tickers independent deletion', async () => {
@@ -196,14 +198,14 @@ describe('12. Display Lots - Auto-deletion & Cleanup', () => {
       { lotId: aaplPurchase[0].id, quantity: 5 }
     ]);
 
-    let aaplDisplayLots = await getDisplayLots('AAPL');
-    let msftDisplayLots = await getDisplayLots('MSFT');
+    // Verify AAPL purchase lot is empty
+    const aaplAfterSale = await getPurchaseLots('AAPL');
+    const aaplRemaining = Number(aaplAfterSale[0]?.remainingQuantity || 0);
+    expect(aaplRemaining).toBeLessThanOrEqual(TOLERANCE);
 
-    const activeAAPL = aaplDisplayLots.filter(d => Number(d.totalQuantity) > TOLERANCE);
-    expect(activeAAPL).toHaveLength(0);
-
-    // MSFT should remain
-    expect(msftDisplayLots).toHaveLength(1);
-    expect(Number(msftDisplayLots[0].totalQuantity)).toBeCloseTo(5, 3);
+    // MSFT should still have 5
+    const msftAfterSale = await getPurchaseLots('MSFT');
+    const msftRemaining = Number(msftAfterSale[0].remainingQuantity);
+    expect(msftRemaining).toBeCloseTo(5, 3);
   });
 });

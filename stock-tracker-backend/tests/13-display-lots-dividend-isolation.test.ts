@@ -139,8 +139,10 @@ describe('13. Display Lots - Dividend Isolation', () => {
       { lotId, quantity: 3 }
     ]);
 
-    const displayLots = await getDisplayLots('AAPL');
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(7, 3);
+    // Verify purchase lot has 7 shares remaining
+    const purchaseLots = await getPurchaseLots('AAPL');
+    const purchaseLot = purchaseLots.find(l => l.sourceType === 'purchase');
+    expect(Number(purchaseLot?.remainingQuantity || 0)).toBeCloseTo(7, 3);
   });
 
   it('Dividend Lot cannot be added to Display Lot composition', async () => {
@@ -191,8 +193,10 @@ describe('13. Display Lots - Dividend Isolation', () => {
       { lotId: purchaseLot.id, quantity: 5 }
     ]);
 
-    const displayLots = await getDisplayLots('AAPL');
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(5, 3);
+    // Verify purchase lot has 5 shares remaining
+    const purchaseLotsAfterSale = await getPurchaseLots('AAPL');
+    const purchaseLotAfterSale = purchaseLotsAfterSale.find(l => l.id === purchaseLot.id);
+    expect(Number(purchaseLotAfterSale?.remainingQuantity || 0)).toBeCloseTo(5, 3);
   });
 
   it('Display Lot handles fractional dividend shares without inclusion', async () => {

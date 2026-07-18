@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { initializeDatabase } from '../src/db/connection.js';
 import { 
   clearUserData, depositCash, buyStock, 
-  createDisplayLot, getDisplayLots, getPurchaseLots, TOLERANCE 
+  createDisplayLot, getDisplayLots, getPurchaseLots, TOLERANCE, TEST_USER_ID 
 } from './setup.js';
 import request from 'supertest';
 import app from '../src/index.js';
@@ -36,9 +36,10 @@ describe('10. Display Lots - Combine Operations', () => {
 
     // Combine display1 and display2
     const response = await request(app)
-      .put('/api/display-lots/combine')
-      .send({ displayLotIds: [display1, display2] })
-      .expect(200);
+      .post(`/api/display-lots/${display1}/combine`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ displayLotIds: [display2] })
+      .expect(201);
 
     displayLots = await getDisplayLots('AAPL');
     expect(displayLots).toHaveLength(1);
@@ -65,9 +66,10 @@ describe('10. Display Lots - Combine Operations', () => {
     ]);
 
     const response = await request(app)
-      .put('/api/display-lots/combine')
-      .send({ displayLotIds: [display1, display2, display3] })
-      .expect(200);
+      .post(`/api/display-lots/${display1}/combine`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ displayLotIds: [display2, display3] })
+      .expect(201);
 
     const displayLots = await getDisplayLots('AAPL');
     expect(displayLots).toHaveLength(1);
@@ -90,9 +92,10 @@ describe('10. Display Lots - Combine Operations', () => {
     ]);
 
     const response = await request(app)
-      .put('/api/display-lots/combine')
-      .send({ displayLotIds: [display1, display2] })
-      .expect(200);
+      .post(`/api/display-lots/${display1}/combine`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ displayLotIds: [display2] })
+      .expect(201);
 
     const displayLots = await getDisplayLots('AAPL');
     expect(displayLots).toHaveLength(1);
@@ -109,11 +112,12 @@ describe('10. Display Lots - Combine Operations', () => {
       { purchaseLotId: purchaseLots[0].id, quantityAllocated: 10 }
     ]);
 
-    // Combining one lot should succeed but be a no-op
+    // Combining one lot with empty array should fail (requires at least one other lot)
     const response = await request(app)
-      .put('/api/display-lots/combine')
-      .send({ displayLotIds: [display1] })
-      .expect(200);
+      .post(`/api/display-lots/${display1}/combine`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ displayLotIds: [] })
+      .expect(400);
 
     const displayLots = await getDisplayLots('AAPL');
     expect(displayLots).toHaveLength(1);
@@ -138,8 +142,9 @@ describe('10. Display Lots - Combine Operations', () => {
 
     // Attempt to combine different tickers should fail
     const response = await request(app)
-      .put('/api/display-lots/combine')
-      .send({ displayLotIds: [aaplDisplay, msftDisplay] })
+      .post(`/api/display-lots/${aaplDisplay}/combine`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ displayLotIds: [msftDisplay] })
       .expect(400);
   });
 
@@ -153,17 +158,21 @@ describe('10. Display Lots - Combine Operations', () => {
       { purchaseLotId: purchaseLots[0].id, quantityAllocated: 10 }
     ]);
 
-    const fakeId = 'nonexistent-id';
+    // Use a valid UUID format that doesn't exist in the database
+    const fakeId = '00000000-0000-0000-0000-000000000000';
 
     const response = await request(app)
-      .put('/api/display-lots/combine')
-      .send({ displayLotIds: [display1, fakeId] })
-      .expect(404);
+      .post(`/api/display-lots/${display1}/combine`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ displayLotIds: [fakeId] })
+      .expect(400);
   });
 
   it('combine fails with empty list', async () => {
+    // Cannot combine with empty displayLotIds array (requires at least one other lot)
     const response = await request(app)
-      .put('/api/display-lots/combine')
+      .post('/api/display-lots/nonexistent/combine')
+      .set('x-user-id', TEST_USER_ID)
       .send({ displayLotIds: [] })
       .expect(400);
   });
@@ -188,9 +197,10 @@ describe('10. Display Lots - Combine Operations', () => {
     ]);
 
     const response = await request(app)
-      .put('/api/display-lots/combine')
-      .send({ displayLotIds: [display1, display2, display3] })
-      .expect(200);
+      .post(`/api/display-lots/${display1}/combine`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ displayLotIds: [display2, display3] })
+      .expect(201);
 
     const displayLots = await getDisplayLots('AAPL');
     expect(displayLots).toHaveLength(1);

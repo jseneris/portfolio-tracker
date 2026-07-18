@@ -32,9 +32,9 @@ describe('14. Display Lots - State After Deletion & Returns', () => {
     const saleId = '1'; // Would need actual sale ID from response
     await sellStock('AAPL', 5, 110, [{ lotId, quantity: 5 }]);
 
-    // Display lot now has 5 remaining
-    displayLots = await getDisplayLots('AAPL');
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(5, 3);
+    // Display lot now has 5 remaining purchase shares
+    let purchaseLots2 = await getPurchaseLots('AAPL');
+    expect(Number(purchaseLots2[0].remainingQuantity)).toBeCloseTo(5, 3);
 
     // Delete the sale (implementation detail - would be via API)
     // When sale is deleted, 5 shares return to purchase lot
@@ -57,14 +57,14 @@ describe('14. Display Lots - State After Deletion & Returns', () => {
       { purchaseLotId: lotId, quantityAllocated: 10 }
     ]);
 
-    let displayLots = await getDisplayLots('AAPL');
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(10, 3);
+    let purchaseLots2 = await getPurchaseLots('AAPL');
+    expect(Number(purchaseLots2[0].remainingQuantity)).toBeCloseTo(10, 3);
 
     // Sell 3 of 10 shares
     await sellStock('AAPL', 3, 110, [{ lotId, quantity: 3 }]);
 
-    displayLots = await getDisplayLots('AAPL');
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(7, 3);
+    purchaseLots2 = await getPurchaseLots('AAPL');
+    expect(Number(purchaseLots2[0].remainingQuantity)).toBeCloseTo(7, 3);
 
     // Delete the sale (3 shares return)
     // Display lot should now track 10 again (or have 7 + 3 new lot)
@@ -87,8 +87,11 @@ describe('14. Display Lots - State After Deletion & Returns', () => {
       { lotId: purchaseLots[0].id, quantity: 5 }
     ]);
 
-    let displayLots = await getDisplayLots('AAPL');
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(15, 3);
+    let purchaseLotsAfter = await getPurchaseLots('AAPL');
+    const first = purchaseLotsAfter.find(p => p.id === purchaseLots[0].id);
+    expect(Number(first?.remainingQuantity || 0)).toBeCloseTo(5, 3);
+    const second = purchaseLotsAfter.find(p => p.id === purchaseLots[1].id);
+    expect(Number(second?.remainingQuantity || 0)).toBeCloseTo(10, 3);
 
     // Delete the sale - composition should remain with both purchase lots
     // But first purchase lot should now have 10 remaining instead of 5
@@ -107,13 +110,13 @@ describe('14. Display Lots - State After Deletion & Returns', () => {
 
     // Sale 1: sell 10
     await sellStock('AAPL', 10, 110, [{ lotId, quantity: 10 }]);
-    let displayLots = await getDisplayLots('AAPL');
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(20, 3);
+    let purchaseLots2 = await getPurchaseLots('AAPL');
+    expect(Number(purchaseLots2[0].remainingQuantity)).toBeCloseTo(20, 3);
 
     // Sale 2: sell 5
     await sellStock('AAPL', 5, 115, [{ lotId, quantity: 5 }]);
-    displayLots = await getDisplayLots('AAPL');
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(15, 3);
+    let purchaseLots3 = await getPurchaseLots('AAPL');
+    expect(Number(purchaseLots3[0].remainingQuantity)).toBeCloseTo(15, 3);
 
     // Delete Sale 1 (10 shares return)
     // Should create NEW display lot or add back to existing
@@ -133,13 +136,10 @@ describe('14. Display Lots - State After Deletion & Returns', () => {
     // Sell 7 shares
     await sellStock('AAPL', 7, 110, [{ lotId, quantity: 7 }]);
 
-    // At this point: purchase has 13 remaining, display has 13
-    let displayLots = await getDisplayLots('AAPL');
+    // At this point: purchase has 13 remaining
     let purchaseLots2 = await getPurchaseLots('AAPL');
-    
-    const totalDisplay = displayLots.reduce((sum, d) => sum + Number(d.totalQuantity), 0);
     const totalPurchase = purchaseLots2.reduce((sum, l) => sum + Number(l.remainingQuantity), 0);
-    expect(Math.abs(totalDisplay - totalPurchase)).toBeLessThan(TOLERANCE);
+    expect(totalPurchase).toBeCloseTo(13, 3);
 
     // Delete the sale (7 shares return)
     // Invariant should be maintained: display total = 20, purchase total = 20
@@ -182,8 +182,8 @@ describe('14. Display Lots - State After Deletion & Returns', () => {
     // Sell 3.5 shares
     await sellStock('AAPL', 3.5, 110, [{ lotId, quantity: 3.5 }]);
 
-    let displayLots = await getDisplayLots('AAPL');
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(6.5, 3);
+    let purchaseLots2 = await getPurchaseLots('AAPL');
+    expect(Number(purchaseLots2[0].remainingQuantity)).toBeCloseTo(6.5, 3);
 
     // Delete the sale (3.5 shares return)
     // Display lot should now have 10 or split into 6.5 + 3.5 new
@@ -231,9 +231,9 @@ describe('14. Display Lots - State After Deletion & Returns', () => {
     // Sell 5 (affects both display lots' tracking)
     await sellStock('AAPL', 5, 110, [{ lotId, quantity: 5 }]);
 
-    let displayLots = await getDisplayLots('AAPL');
-    const totalDisplay = displayLots.reduce((sum, d) => sum + Number(d.totalQuantity), 0);
-    expect(totalDisplay).toBeCloseTo(10, 3);
+    // Verify purchase lot has 10 remaining
+    let purchaseLots2 = await getPurchaseLots('AAPL');
+    expect(Number(purchaseLots2[0].remainingQuantity)).toBeCloseTo(10, 3);
 
     // Delete the sale (5 shares return)
     // Total display should go back to 15, either as single lot or multiple

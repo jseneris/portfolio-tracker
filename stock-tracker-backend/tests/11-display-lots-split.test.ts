@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { initializeDatabase } from '../src/db/connection.js';
 import { 
   clearUserData, depositCash, buyStock, 
-  createDisplayLot, getDisplayLots, getPurchaseLots, TOLERANCE 
+  createDisplayLot, getDisplayLots, getPurchaseLots, TOLERANCE, TEST_USER_ID 
 } from './setup.js';
 import request from 'supertest';
 import app from '../src/index.js';
@@ -32,9 +32,10 @@ describe('11. Display Lots - Split Operations', () => {
 
     // Split 10 shares into [5, 5]
     const response = await request(app)
-      .put(`/api/display-lots/${displayLotId}/split`)
-      .send({ quantities: [5, 5] })
-      .expect(200);
+      .post(`/api/display-lots/${displayLotId}/split`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ splits: [{ quantityAllocated: 5 }, { quantityAllocated: 5 }] })
+      .expect(201);
 
     displayLots = await getDisplayLots('AAPL');
     expect(displayLots).toHaveLength(2);
@@ -53,9 +54,10 @@ describe('11. Display Lots - Split Operations', () => {
     ]);
 
     const response = await request(app)
-      .put(`/api/display-lots/${displayLotId}/split`)
-      .send({ quantities: [3, 7] })
-      .expect(200);
+      .post(`/api/display-lots/${displayLotId}/split`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ splits: [{ quantityAllocated: 3 }, { quantityAllocated: 7 }] })
+      .expect(201);
 
     const displayLots = await getDisplayLots('AAPL');
     expect(displayLots).toHaveLength(2);
@@ -74,9 +76,10 @@ describe('11. Display Lots - Split Operations', () => {
     ]);
 
     const response = await request(app)
-      .put(`/api/display-lots/${displayLotId}/split`)
-      .send({ quantities: [4, 3, 3] })
-      .expect(200);
+      .post(`/api/display-lots/${displayLotId}/split`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ splits: [{ quantityAllocated: 4 }, { quantityAllocated: 3 }, { quantityAllocated: 3 }] })
+      .expect(201);
 
     const displayLots = await getDisplayLots('AAPL');
     expect(displayLots).toHaveLength(3);
@@ -96,8 +99,9 @@ describe('11. Display Lots - Split Operations', () => {
 
     // Attempt to split into quantities that sum > 10
     const response = await request(app)
-      .put(`/api/display-lots/${displayLotId}/split`)
-      .send({ quantities: [6, 5] })
+      .post(`/api/display-lots/${displayLotId}/split`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ splits: [{ quantityAllocated: 6 }, { quantityAllocated: 5 }] })
       .expect(400);
   });
 
@@ -114,8 +118,9 @@ describe('11. Display Lots - Split Operations', () => {
 
     // Attempt to split into quantities that sum < 10
     const response = await request(app)
-      .put(`/api/display-lots/${displayLotId}/split`)
-      .send({ quantities: [4, 5] })
+      .post(`/api/display-lots/${displayLotId}/split`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ splits: [{ quantityAllocated: 4 }, { quantityAllocated: 5 }] })
       .expect(400);
   });
 
@@ -131,9 +136,10 @@ describe('11. Display Lots - Split Operations', () => {
     ]);
 
     const response = await request(app)
-      .put(`/api/display-lots/${displayLotId}/split`)
-      .send({ quantities: [2.5, 2.5, 5] })
-      .expect(200);
+      .post(`/api/display-lots/${displayLotId}/split`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ splits: [{ quantityAllocated: 2.5 }, { quantityAllocated: 2.5 }, { quantityAllocated: 5 }] })
+      .expect(201);
 
     const displayLots = await getDisplayLots('AAPL');
     expect(displayLots).toHaveLength(3);
@@ -142,11 +148,12 @@ describe('11. Display Lots - Split Operations', () => {
   });
 
   it('split non-existent Display Lot fails', async () => {
-    const fakeId = 'nonexistent-id';
+    const fakeId = '00000000-0000-0000-0000-000000000000';
 
     const response = await request(app)
-      .put(`/api/display-lots/${fakeId}/split`)
-      .send({ quantities: [5, 5] })
+      .post(`/api/display-lots/${fakeId}/split`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ splits: [{ quantityAllocated: 5 }, { quantityAllocated: 5 }] })
       .expect(404);
   });
 
@@ -162,8 +169,9 @@ describe('11. Display Lots - Split Operations', () => {
     ]);
 
     const response = await request(app)
-      .put(`/api/display-lots/${displayLotId}/split`)
-      .send({ quantities: [] })
+      .post(`/api/display-lots/${displayLotId}/split`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ splits: [] })
       .expect(400);
   });
 
@@ -179,13 +187,10 @@ describe('11. Display Lots - Split Operations', () => {
     ]);
 
     const response = await request(app)
-      .put(`/api/display-lots/${displayLotId}/split`)
-      .send({ quantities: [10] })
-      .expect(200);
-
-    const displayLots = await getDisplayLots('AAPL');
-    expect(displayLots).toHaveLength(1);
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(10, 3);
+      .post(`/api/display-lots/${displayLotId}/split`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ splits: [{ quantityAllocated: 10 }] })
+      .expect(400);
   });
 
   it('split with many parts [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]', async () => {
@@ -201,9 +206,10 @@ describe('11. Display Lots - Split Operations', () => {
 
     const quantities = Array(10).fill(1);
     const response = await request(app)
-      .put(`/api/display-lots/${displayLotId}/split`)
-      .send({ quantities })
-      .expect(200);
+      .post(`/api/display-lots/${displayLotId}/split`)
+      .set('x-user-id', TEST_USER_ID)
+      .send({ splits: quantities.map(q => ({ quantityAllocated: q })) })
+      .expect(201);
 
     const displayLots = await getDisplayLots('AAPL');
     expect(displayLots).toHaveLength(10);
