@@ -101,7 +101,7 @@ export default function StocksPage() {
                 <tr key={transaction.id}>
                   <td>{formatDate(transaction.transactionDate)}</td>
                   <td>
-                    <Link className="link-button" to={/stocks/}>
+                    <Link className="link-button" to={`/stocks/${encodeURIComponent(transaction.ticker)}`}>
                       {transaction.ticker}
                     </Link>
                   </td>

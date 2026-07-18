@@ -98,6 +98,7 @@ export type SaleAllocation = {
   lotId: string
   quantity: number
   ticker: string
+  sourceType: 'purchase' | 'dividend'
   purchaseDate: string
   unitCost: number
 }

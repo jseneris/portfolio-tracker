@@ -253,7 +253,30 @@ export default function StockHistoryPage() {
         getDisplayLotsByTicker(ticker),
       ])
       setSummary(summaryData)
-      setTransactions(txData)
+
+      const openBuyTransactionIds = new Set(
+        tickerLots
+          .filter((lot) => lot.sourceType === 'purchase')
+          .map((lot) => lot.transactionId)
+      )
+
+      const openDividendTransactionIds = new Set(
+        tickerLots
+          .filter((lot) => lot.sourceType === 'dividend')
+          .map((lot) => lot.transactionId)
+      )
+
+      const visibleTransactions = txData.filter((transaction) => {
+        if (transaction.type === 'buy') {
+          return openBuyTransactionIds.has(transaction.id)
+        }
+        if (transaction.type === 'div') {
+          return openDividendTransactionIds.has(transaction.id)
+        }
+        return true
+      })
+
+      setTransactions(visibleTransactions)
       setOpenLots(openLotsData)
       setDisplayLots(displayLotsData)
 
@@ -300,8 +323,13 @@ export default function StockHistoryPage() {
       try {
         const lots = await getPurchaseLotsByTicker(ticker)
         if (!cancelled) {
+          const selectedDate = form.transactionDate ? new Date(form.transactionDate) : null
+          const dateFilteredLots = selectedDate && !Number.isNaN(selectedDate.getTime())
+            ? lots.filter((lot) => new Date(lot.purchaseDate) <= selectedDate)
+            : lots
+
           // Sort: purchases first (newest first), then dividends (newest first)
-          const sorted = [...lots].sort((a, b) => {
+          const sorted = [...dateFilteredLots].sort((a, b) => {
             // First, sort by sourceType: 'purchase' comes before 'dividend'
             if (a.sourceType !== b.sourceType) {
               return a.sourceType === 'purchase' ? -1 : 1
@@ -335,7 +363,7 @@ export default function StockHistoryPage() {
     return () => {
       cancelled = true
     }
-  }, [isSell, showAddTransactionModal, ticker])
+  }, [isSell, showAddTransactionModal, ticker, form.transactionDate])
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -602,6 +630,7 @@ export default function StockHistoryPage() {
                               <table style={{ width: '100%', fontSize: '0.9em', borderCollapse: 'collapse' }}>
                                 <thead>
                                   <tr style={{ borderBottom: '1px solid #ddd' }}>
+                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Original Type</th>
                                     <th style={{ textAlign: 'left', padding: '0.5rem' }}>Purchase Date</th>
                                     <th style={{ textAlign: 'left', padding: '0.5rem' }}>Unit Cost</th>
                                     <th style={{ textAlign: 'left', padding: '0.5rem' }}>Quantity Consumed</th>
@@ -611,6 +640,7 @@ export default function StockHistoryPage() {
                                 <tbody>
                                   {saleAllocations[transaction.id].map((alloc, index) => (
                                     <tr key={index} style={{ borderBottom: '1px solid #eee' }}>
+                                      <td style={{ padding: '0.5rem' }}>{alloc.sourceType === 'purchase' ? 'buy' : 'div'}</td>
                                       <td style={{ padding: '0.5rem' }}>{formatDate(alloc.purchaseDate)}</td>
                                       <td style={{ padding: '0.5rem' }}>{formatMoney4(alloc.unitCost)}</td>
                                       <td style={{ padding: '0.5rem' }}>{formatNumber(alloc.quantity)}</td>

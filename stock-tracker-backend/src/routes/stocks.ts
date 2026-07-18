@@ -22,6 +22,7 @@ interface PurchaseLot {
   id: string;
   transactionId: string;
   remainingQuantity: number;
+  sourceType?: string;
 }
 
 function buildSmallestFirstConsumption(openLots: OpenLot[], sellQuantity: number): Allocation[] {
@@ -220,6 +221,7 @@ router.get('/:transactionId/allocations', async (req: Request, res: Response) =>
           pla.purchaseLotId as lotId,
           pla.quantityConsumed as quantity,
           pl.ticker,
+          pl.sourceType,
           pl.purchaseDate,
           pl.unitCost
         FROM PurchaseLotAllocations pla
@@ -232,6 +234,7 @@ router.get('/:transactionId/allocations', async (req: Request, res: Response) =>
       lotId: row.lotId,
       quantity: Number(row.quantity || 0),
       ticker: row.ticker,
+      sourceType: row.sourceType,
       purchaseDate: row.purchaseDate,
       unitCost: Number(row.unitCost || 0)
     })));
@@ -274,6 +277,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     let sellConsumptionPlan: Allocation[] = [];
     let purchaseAttributionPlan: Allocation[] = [];
+    let sellPurchaseLots: Array<PurchaseLot & { purchaseDate: Date }> = [];
 
     // Sell transactions require explicit allocations in the request, but matching is applied
     // smallest-lot-first to close out full lots whenever possible.
@@ -328,7 +332,7 @@ router.post('/', async (req: Request, res: Response) => {
         .input('userId', sql.NVarChar, userId)
         .input('ticker', sql.NVarChar, normalizedTicker)
         .query(`
-        SELECT id, transactionId, remainingQuantity, purchaseDate
+        SELECT id, transactionId, remainingQuantity, purchaseDate, sourceType
         FROM PurchaseLots
         WHERE userId = @userId
           AND ticker = @ticker
@@ -339,7 +343,9 @@ router.post('/', async (req: Request, res: Response) => {
         transactionId: String(lot.transactionId),
         remainingQuantity: Number(lot.remainingQuantity),
         purchaseDate: new Date(lot.purchaseDate),
+        sourceType: String(lot.sourceType || ''),
       } as PurchaseLot & { purchaseDate: Date }));
+      sellPurchaseLots = purchaseLots;
 
       // Validate that all allocated purchase lots have a purchase date on or before the sale date
       const saleDate = new Date(transactionDate);
@@ -486,7 +492,7 @@ router.post('/', async (req: Request, res: Response) => {
           `);
       }
 
-      // Dividends create a purchase lot (sourceType=dividend) and a matching display lot
+      // Dividends create only a purchase lot (sourceType=dividend).
       if (type === 'div') {
         const lotId = uuidv4();
         await new sql.Request(tx)
@@ -500,27 +506,6 @@ router.post('/', async (req: Request, res: Response) => {
           .query(`
             INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
             VALUES (@lotId, @userId, @ticker, @transactionId, 'dividend', @quantity, @quantity, @price, @transactionDate)
-          `);
-
-        const displayLotId = uuidv4();
-        await new sql.Request(tx)
-          .input('displayLotId', sql.UniqueIdentifier, displayLotId)
-          .input('userId', sql.NVarChar, userId)
-          .input('ticker', sql.NVarChar, normalizedTicker)
-          .input('totalQuantity', sql.Decimal(18, 8), quantity)
-          .query(`
-            INSERT INTO DisplayLots (id, userId, ticker, totalQuantity)
-            VALUES (@displayLotId, @userId, @ticker, @totalQuantity)
-          `);
-
-        await new sql.Request(tx)
-          .input('compositionId', sql.UniqueIdentifier, uuidv4())
-          .input('displayLotId', sql.UniqueIdentifier, displayLotId)
-          .input('purchaseLotId', sql.UniqueIdentifier, lotId)
-          .input('quantityAllocated', sql.Decimal(18, 8), quantity)
-          .query(`
-            INSERT INTO DisplayLotComposition (id, displayLotId, purchaseLotId, quantityAllocated)
-            VALUES (@compositionId, @displayLotId, @purchaseLotId, @quantityAllocated)
           `);
       }
 
@@ -550,6 +535,17 @@ router.post('/', async (req: Request, res: Response) => {
             `);
         }
 
+        // Consume display lots only for shares sold from purchase-source lots.
+        // Shares sold from dividend lots must not change display-lot totals.
+        const purchaseLotTypeById = new Map(sellPurchaseLots.map((lot) => [lot.id, String(lot.sourceType || '').toLowerCase()]));
+        const displayQuantityToConsume = purchaseAttributionPlan.reduce((sum, allocation) => {
+          const sourceType = purchaseLotTypeById.get(allocation.lotId);
+          if (sourceType === 'purchase') {
+            return sum + Number(allocation.quantity);
+          }
+          return sum;
+        }, 0);
+
         // Also consume display lots smallest-first to keep display state in sync
         const displayLotsResult = await new sql.Request(tx)
           .input('userId', sql.NVarChar, userId)
@@ -560,7 +556,7 @@ router.post('/', async (req: Request, res: Response) => {
             ORDER BY totalQuantity ASC, createdAt ASC
           `);
 
-        let displayRemaining = Number(quantity);
+        let displayRemaining = Number(displayQuantityToConsume);
         for (const row of displayLotsResult.recordset as any[]) {
           if (displayRemaining <= ALLOCATION_TOLERANCE) break;
           const dlId = String(row.id);
