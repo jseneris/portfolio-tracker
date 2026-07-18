@@ -53,6 +53,15 @@ export default function DashboardPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
 
+  const buyShares = Number(addStockForm.shares)
+  const buyPrice = Number(addStockForm.price)
+  const buyTotalCost = Number.isFinite(buyShares) && Number.isFinite(buyPrice)
+    ? buyShares * buyPrice
+    : NaN
+  const hasInsufficientCashForBuy = Boolean(
+    data && Number.isFinite(buyTotalCost) && buyTotalCost > Number(data.availableCash)
+  )
+
   async function loadSummary(backgroundRefresh = false) {
     if (backgroundRefresh) {
       setRefreshing(true)
@@ -151,6 +160,15 @@ export default function DashboardPage() {
       quantity: Number(addStockForm.shares),
       price: Number(addStockForm.price),
       transactionDate: new Date(addStockForm.transactionDate).toISOString(),
+    }
+
+    const availableCash = Number(data?.availableCash)
+    const buyCost = Number(payload.quantity || 0) * Number(payload.price || 0)
+    if (Number.isFinite(availableCash) && Number.isFinite(buyCost) && buyCost > availableCash) {
+      setAddStockError(
+        `Insufficient available cash. Buy requires ${formatMoney(buyCost)} but only ${formatMoney(availableCash)} is available.`
+      )
+      return
     }
 
     setAddStockSaving(true)
@@ -295,7 +313,7 @@ export default function DashboardPage() {
               </label>
 
               <div className="form-actions">
-                <button className="button button-primary" type="submit" disabled={addStockSaving}>
+                <button className="button button-primary" type="submit" disabled={addStockSaving || hasInsufficientCashForBuy}>
                   {addStockSaving ? 'Saving...' : 'Add Stock'}
                 </button>
                 <button className="button" type="button" onClick={closeAddStockModal} disabled={addStockSaving}>
@@ -304,6 +322,11 @@ export default function DashboardPage() {
               </div>
             </form>
 
+            {hasInsufficientCashForBuy ? (
+              <div className="status status-error">
+                Insufficient available cash. Buy requires {formatMoney(buyTotalCost)} and available cash is {formatMoney(Number(data?.availableCash || 0))}.
+              </div>
+            ) : null}
             {addStockError ? <div className="status status-error">{addStockError}</div> : null}
           </div>
         </div>

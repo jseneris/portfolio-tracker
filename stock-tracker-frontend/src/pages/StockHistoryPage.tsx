@@ -20,6 +20,7 @@ import {
   getSaleAllocations,
   getStockSummaryByTicker,
   getStockTransactionsByTicker,
+  getPortfolioSummary,
   splitDisplayLot,
 } from '../api'
 
@@ -115,6 +116,7 @@ export default function StockHistoryPage() {
   const [splitInputs, setSplitInputs] = useState<Record<string, string>>({})
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null)
   const [saleAllocations, setSaleAllocations] = useState<Record<string, SaleAllocation[]>>({})
+  const [availableCash, setAvailableCash] = useState<number | null>(null)
   const [loadingAllocations, setLoadingAllocations] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingLots, setLoadingLots] = useState(false)
@@ -160,6 +162,12 @@ export default function StockHistoryPage() {
     hasRequiredValues &&
     hasValidNumericValues &&
     (!isSell || (!loadingLots && availableLots.length > 0 && hasSellAllocationInput && allocationMatches))
+
+  const buyCost = Number(form.quantity) * Number(form.price)
+  const hasInsufficientCashForBuy = form.type === 'buy'
+    && Number.isFinite(buyCost)
+    && Number.isFinite(Number(availableCash))
+    && buyCost > Number(availableCash)
 
   const displayLotSummary = useMemo(() => {
     if (displayLots.length === 0) {
@@ -245,14 +253,15 @@ export default function StockHistoryPage() {
     setLoading(true)
     setError(null)
     try {
-      const [summaryData, txData, tickerLots, openLotsData, displayLotsData] = await Promise.all([
+      const [tickerSummaryData, txData, tickerLots, openLotsData, displayLotsData, portfolioSummaryData] = await Promise.all([
         getStockSummaryByTicker(ticker),
         getStockTransactionsByTicker(ticker),
         getPurchaseLotsByTicker(ticker),
         getOpenPurchaseLots(ticker),
         getDisplayLotsByTicker(ticker),
+        getPortfolioSummary(),
       ])
-      setSummary(summaryData)
+      setSummary(tickerSummaryData)
 
       const openBuyTransactionIds = new Set(
         tickerLots
@@ -279,6 +288,7 @@ export default function StockHistoryPage() {
       setTransactions(visibleTransactions)
       setOpenLots(openLotsData)
       setDisplayLots(displayLotsData)
+      setAvailableCash(portfolioSummaryData.availableCash)
 
       const nextStates: Record<string, PositiveTransactionState> = {}
       for (const lot of tickerLots) {
@@ -385,6 +395,17 @@ export default function StockHistoryPage() {
       quantity: qty,
       price,
       transactionDate: new Date(form.transactionDate).toISOString(),
+    }
+
+    if (form.type === 'buy') {
+      const available = Number(availableCash)
+      const requiredCash = Number(payload.quantity || 0) * Number(payload.price || 0)
+      if (Number.isFinite(available) && Number.isFinite(requiredCash) && requiredCash > available) {
+        setError(
+          `Insufficient available cash. Buy requires ${formatMoney(requiredCash)} but only ${formatMoney(available)} is available.`
+        )
+        return
+      }
     }
 
     if (form.type === 'sell') {
@@ -740,7 +761,7 @@ export default function StockHistoryPage() {
               )}
 
               <div className="form-actions">
-                <button className="button button-primary" type="submit" disabled={saving || !canSubmit}>
+                <button className="button button-primary" type="submit" disabled={saving || !canSubmit || hasInsufficientCashForBuy}>
                   {saving ? 'Saving...' : 'Add Transaction'}
                 </button>
                 <button className="button" type="button" onClick={closeAddTransactionModal} disabled={saving}>
@@ -748,6 +769,12 @@ export default function StockHistoryPage() {
                 </button>
               </div>
             </form>
+
+            {hasInsufficientCashForBuy ? (
+              <div className="status status-error">
+                Insufficient available cash. Buy requires {formatMoney(buyCost)} and available cash is {formatMoney(Number(availableCash || 0))}.
+              </div>
+            ) : null}
 
             {isSell ? (
               <div className="allocation-panel">
