@@ -91,6 +91,55 @@ Workflow:
 2. Sort by `transactionDate DESC, ticker ASC`.
 3. Return recordset JSON.
 
+### POST /api/stocks/historical-prices/sync-2021
+Fetches and stores Yahoo Finance daily closes for each user ticker on:
+- all cash `deposit`/`withdrawal` dates (up to `2021-12-31`)
+- plus `2021-12-31`
+- plus DOW benchmark ticker `^DJI`
+
+Workflow:
+1. Collect distinct cash deposit/withdrawal dates for the user up to `2021-12-31`.
+2. Add `2021-12-31` to the requested date set.
+3. Collect distinct user tickers with stock transactions up to `2021-12-31`, then include benchmark ticker `^DJI`.
+4. For each ticker, fetch Yahoo daily bars once across the date window.
+5. For each requested date, use same-day close or nearest previous trading day close.
+6. Upsert each point into `HistoricalPrices` (`source = yahoo-finance`).
+7. Return sync summary (`storedRows`, `missingPrices`, requested dates/tickers).
+
+### GET /api/stocks/historical-prices
+Returns stored historical closes from `HistoricalPrices` for a date range.
+
+Query params:
+- `startDate` (optional, default `2021-01-01`)
+- `endDate` (optional, default `2021-12-31`)
+
+Workflow:
+1. Read date range query params.
+2. Query `HistoricalPrices` by `userId` and date range.
+3. Return rows ordered by `priceDate ASC, ticker ASC`.
+
+### GET /api/stocks/portfolio/comparison-2021
+Returns chart points for portfolio-vs-cash-basis comparison on the stored historical-price dates.
+
+Workflow:
+1. Load distinct stored `priceDate` values from `HistoricalPrices` (`source = yahoo-finance`).
+2. Load cash and stock transactions through the date window.
+3. Replay transactions cumulatively per point date to compute:
+  - `availableCash`
+  - holdings by ticker
+  - DOW benchmark shares (deposit => buy benchmark shares, withdrawal => FIFO benchmark share sale)
+  - `cashCostBasis`
+4. Value holdings on each point date using stored closes.
+5. Return points with:
+  - `date`
+  - `availableCash`
+  - `stockValue`
+  - `portfolioValue`
+  - `dowBenchmarkValue`
+  - `dowBenchmarkShares`
+  - `cashCostBasis`
+  - `missingTickers`
+
 ### GET /api/stocks/:ticker
 Returns all stock transactions for one ticker.
 

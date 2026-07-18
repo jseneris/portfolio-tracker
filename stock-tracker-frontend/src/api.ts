@@ -201,6 +201,42 @@ export type RecordStockSplitResponse = {
   transactionsAdjusted: number
 }
 
+export type HistoricalPrice = {
+  userId: string
+  ticker: string
+  priceDate: string
+  marketDate: string
+  closePrice: number
+  source: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type SyncHistoricalPrices2021Response = {
+  source: string
+  targetEndDate: string
+  requestedDates: string[]
+  tickers: string[]
+  storedRows: number
+  missingPrices: Array<{ ticker: string; priceDate: string }>
+}
+
+export type PortfolioComparisonPoint = {
+  date: string
+  availableCash: number
+  cashCostBasis: number
+  stockValue: number
+  portfolioValue: number
+  dowBenchmarkValue: number
+  dowBenchmarkShares: number
+  missingTickers: string[]
+}
+
+export type PortfolioComparison2021Response = {
+  source: string
+  points: PortfolioComparisonPoint[]
+}
+
 // ============================================================================
 // Internal Request Helpers
 // ============================================================================
@@ -324,6 +360,25 @@ export async function recordStockSplit(
       splitDate,
     },
   })
+}
+
+export async function syncHistoricalPrices2021(): Promise<SyncHistoricalPrices2021Response> {
+  return requestApi<SyncHistoricalPrices2021Response>('/api/stocks/historical-prices/sync-2021', {
+    method: 'POST',
+  })
+}
+
+export async function getHistoricalPrices(
+  startDate = '2021-01-01',
+  endDate = '2021-12-31'
+): Promise<HistoricalPrice[]> {
+  return requestApi<HistoricalPrice[]>(
+    `/api/stocks/historical-prices?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`
+  )
+}
+
+export async function getPortfolioComparison2021(): Promise<PortfolioComparison2021Response> {
+  return requestApi<PortfolioComparison2021Response>('/api/stocks/portfolio/comparison-2021')
 }
 
 // ============================================================================

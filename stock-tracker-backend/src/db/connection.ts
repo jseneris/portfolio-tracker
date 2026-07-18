@@ -410,6 +410,35 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotAllocations_DisplayLotId') CREATE INDEX IX_DisplayLotAllocations_DisplayLotId ON DisplayLotAllocations(displayLotId);
   `);
 
+  // Create HistoricalPrices table (stored closes for valuation timelines)
+  await request.batch(`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'HistoricalPrices')
+    CREATE TABLE HistoricalPrices (
+      id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+      userId NVARCHAR(255) NOT NULL,
+      ticker NVARCHAR(10) NOT NULL,
+      priceDate DATE NOT NULL,
+      marketDate DATE NOT NULL,
+      closePrice DECIMAL(18, 8) NOT NULL,
+      source NVARCHAR(50) NOT NULL DEFAULT 'yahoo-finance',
+      createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+      updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+    );
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_HistoricalPrices_UserId')
+      CREATE INDEX IX_HistoricalPrices_UserId ON HistoricalPrices(userId);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_HistoricalPrices_Ticker')
+      CREATE INDEX IX_HistoricalPrices_Ticker ON HistoricalPrices(ticker);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_HistoricalPrices_PriceDate')
+      CREATE INDEX IX_HistoricalPrices_PriceDate ON HistoricalPrices(priceDate);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_HistoricalPrices_User_Ticker_Date_Source')
+      CREATE UNIQUE INDEX UX_HistoricalPrices_User_Ticker_Date_Source
+      ON HistoricalPrices(userId, ticker, priceDate, source);
+  `);
+
   console.log('✓ Database tables initialized');
 }
 
