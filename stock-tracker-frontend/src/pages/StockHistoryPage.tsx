@@ -1,24 +1,26 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
-  CombineLotsResponse,
   CreateStockInput,
-  Lot,
-  SplitLotResponse,
+  DisplayLot,
+  PurchaseLot,
+  SaleAllocation,
+  SplitDisplayLotInput,
   StockTransaction,
   StockTransactionType,
   TickerSummary,
-  UpdateStockInput,
-  combineLots,
+  combineDisplayLots,
+  createDisplayLot,
   createStockTransaction,
   deleteStockTransaction,
   emitPortfolioUpdated,
-  getLots,
-  getLotsByTicker,
+  getDisplayLotsByTicker,
+  getOpenPurchaseLots,
+  getPurchaseLotsByTicker,
+  getSaleAllocations,
   getStockSummaryByTicker,
   getStockTransactionsByTicker,
-  splitLot,
-  updateStockTransaction,
+  splitDisplayLot,
 } from '../api'
 
 const ALLOCATION_TOLERANCE = 1e-6
@@ -30,6 +32,7 @@ type StockFormState = {
   type: StockTransactionType
   quantity: string
   price: string
+  totalAmount: string
   transactionDate: string
 }
 
@@ -37,6 +40,7 @@ const EMPTY_STOCK_FORM: StockFormState = {
   type: 'buy',
   quantity: '',
   price: '',
+  totalAmount: '',
   transactionDate: new Date().toISOString().slice(0, 10),
 }
 
@@ -69,15 +73,7 @@ function formatDate(value: string) {
   return date.toLocaleDateString(undefined, { timeZone: 'UTC' })
 }
 
-function toInputDate(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return ''
-  }
-  return date.toISOString().slice(0, 10)
-}
-
-function getPositiveTransactionState(lot: Lot): PositiveTransactionState {
+function getPositiveTransactionState(lot: PurchaseLot): PositiveTransactionState {
   const original = Number(lot.originalQuantity)
   const remaining = Number(lot.remainingQuantity)
   if (!Number.isFinite(original) || original <= 0 || !Number.isFinite(remaining)) {
@@ -109,23 +105,27 @@ export default function StockHistoryPage() {
   const [transactions, setTransactions] = useState<StockTransaction[]>([])
   const [form, setForm] = useState<StockFormState>(EMPTY_STOCK_FORM)
   const [showAddTransactionModal, setShowAddTransactionModal] = useState(false)
-  const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null)
-  const [availableLots, setAvailableLots] = useState<Lot[]>([])
-  const [openLots, setOpenLots] = useState<Lot[]>([])
+  const [showLotsModal, setShowLotsModal] = useState(false)
+  const [availableLots, setAvailableLots] = useState<PurchaseLot[]>([])
+  const [openLots, setOpenLots] = useState<PurchaseLot[]>([])
+  const [displayLots, setDisplayLots] = useState<DisplayLot[]>([])
   const [positiveTransactionStates, setPositiveTransactionStates] = useState<Record<string, PositiveTransactionState>>({})
   const [allocations, setAllocations] = useState<Record<string, string>>({})
-  const [selectedLotIds, setSelectedLotIds] = useState<string[]>([])
-  const [splitLotTarget, setSplitLotTarget] = useState<Lot | null>(null)
-  const [splitQuantitiesInput, setSplitQuantitiesInput] = useState('')
+  const [selectedDisplayLotIds, setSelectedDisplayLotIds] = useState<string[]>([])
+  const [splitInputs, setSplitInputs] = useState<Record<string, string>>({})
+  const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null)
+  const [saleAllocations, setSaleAllocations] = useState<Record<string, SaleAllocation[]>>({})
+  const [loadingAllocations, setLoadingAllocations] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingLots, setLoadingLots] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [splitting, setSplitting] = useState(false)
-  const [combining, setCombining] = useState(false)
+  const [lotsBusy, setLotsBusy] = useState(false)
+  const [lotsError, setLotsError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
   const isSell = form.type === 'sell'
+  const isDividend = form.type === 'div'
 
   const allocationTotal = useMemo(() => {
     return Object.values(allocations).reduce((sum, value) => {
@@ -142,13 +142,14 @@ export default function StockHistoryPage() {
   const hasRequiredValues =
     Boolean(form.transactionDate) &&
     form.quantity.trim() !== '' &&
-    form.price.trim() !== ''
+    (isDividend ? form.totalAmount.trim() !== '' : form.price.trim() !== '')
 
   const hasValidNumericValues =
     Number.isFinite(quantityValue) &&
     quantityValue > 0 &&
-    Number.isFinite(Number(form.price)) &&
-    Number(form.price) > 0
+    (isDividend
+      ? Number.isFinite(Number(form.totalAmount)) && Number(form.totalAmount) > 0
+      : Number.isFinite(Number(form.price)) && Number(form.price) > 0)
 
   const hasSellAllocationInput = availableLots.some((lot) => {
     const value = Number(allocations[lot.id] || 0)
@@ -160,17 +161,17 @@ export default function StockHistoryPage() {
     hasValidNumericValues &&
     (!isSell || (!loadingLots && availableLots.length > 0 && hasSellAllocationInput && allocationMatches))
 
-  const openLotSummary = useMemo(() => {
-    if (openLots.length === 0) {
+  const displayLotSummary = useMemo(() => {
+    if (displayLots.length === 0) {
       return '--'
     }
-    const quantities = openLots
-      .map((lot) => Number(lot.remainingQuantity))
+    return displayLots
+      .map((lot) => Number(lot.totalQuantity))
       .filter((value) => Number.isFinite(value))
-      .sort((left, right) => left - right)
-      .map((value) => Number(value.toFixed(6)).toString())
-    return quantities.length > 0 ? quantities.join(',') : '--'
-  }, [openLots])
+      .sort((a, b) => a - b)
+      .map((q) => Number(q.toFixed(6)).toString())
+      .join(', ')
+  }, [displayLots])
 
   function validateStockForm(formState: StockFormState): string | null {
     const quantity = Number(formState.quantity)
@@ -178,9 +179,16 @@ export default function StockHistoryPage() {
       return 'Shares must be greater than 0.'
     }
 
-    const price = Number(formState.price)
-    if (!Number.isFinite(price) || price <= 0) {
-      return 'Price must be greater than 0.'
+    if (formState.type === 'div') {
+      const totalAmount = Number(formState.totalAmount)
+      if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+        return 'Total amount must be greater than 0.'
+      }
+    } else {
+      const price = Number(formState.price)
+      if (!Number.isFinite(price) || price <= 0) {
+        return 'Price must be greater than 0.'
+      }
     }
 
     if (!formState.transactionDate) {
@@ -204,7 +212,6 @@ export default function StockHistoryPage() {
 
   function resetForm() {
     setForm(EMPTY_STOCK_FORM)
-    setEditingTransactionId(null)
     setAvailableLots([])
     setAllocations({})
   }
@@ -221,53 +228,8 @@ export default function StockHistoryPage() {
     resetForm()
   }
 
-  function beginEdit(transaction: StockTransaction) {
-    setError(null)
-    setSuccess(null)
-    setEditingTransactionId(transaction.id)
-    setForm({
-      type: transaction.type,
-      quantity: transaction.quantity == null ? '' : String(transaction.quantity),
-      price: transaction.price == null ? '' : String(transaction.price),
-      transactionDate: toInputDate(transaction.transactionDate),
-    })
-    setShowAddTransactionModal(true)
-  }
-
   function setAllocation(lotId: string, value: string) {
     setAllocations((prev) => ({ ...prev, [lotId]: value }))
-  }
-
-  function toggleLotSelection(lotId: string) {
-    setSelectedLotIds((prev) => {
-      if (prev.includes(lotId)) {
-        return prev.filter((id) => id !== lotId)
-      }
-      return [...prev, lotId]
-    })
-  }
-
-  function openSplitModal(lot: Lot) {
-    setError(null)
-    setSuccess(null)
-    setSplitLotTarget(lot)
-    setSplitQuantitiesInput('')
-  }
-
-  function closeSplitModal() {
-    if (splitting) {
-      return
-    }
-    setSplitLotTarget(null)
-    setSplitQuantitiesInput('')
-  }
-
-  function parseSplitQuantities(input: string) {
-    return input
-      .split(',')
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0)
-      .map((value) => Number(value))
   }
 
   function buildAllocationPayload() {
@@ -283,23 +245,23 @@ export default function StockHistoryPage() {
     setLoading(true)
     setError(null)
     try {
-      const [summaryData, txData, lotsData, openLotsData] = await Promise.all([
+      const [summaryData, txData, tickerLots, openLotsData, displayLotsData] = await Promise.all([
         getStockSummaryByTicker(ticker),
         getStockTransactionsByTicker(ticker),
-        getLots(),
-        getLotsByTicker(ticker),
+        getPurchaseLotsByTicker(ticker),
+        getOpenPurchaseLots(ticker),
+        getDisplayLotsByTicker(ticker),
       ])
       setSummary(summaryData)
       setTransactions(txData)
       setOpenLots(openLotsData)
+      setDisplayLots(displayLotsData)
 
-      const tickerLots = lotsData.filter((lot) => lot.ticker.toUpperCase() === ticker)
       const nextStates: Record<string, PositiveTransactionState> = {}
       for (const lot of tickerLots) {
         nextStates[lot.transactionId] = getPositiveTransactionState(lot)
       }
       setPositiveTransactionStates(nextStates)
-      setSelectedLotIds((prev) => prev.filter((id) => openLotsData.some((lot) => lot.id === id)))
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to load transaction history.')
     } finally {
@@ -307,68 +269,11 @@ export default function StockHistoryPage() {
     }
   }
 
-  async function submitCombineLots() {
-    if (selectedLotIds.length < 2) {
-      setError('Select at least two open lots to combine.')
-      return
-    }
-
-    setError(null)
-    setSuccess(null)
-    setCombining(true)
-    try {
-      const response: CombineLotsResponse = await combineLots(selectedLotIds)
-      setSuccess(`Combined ${response.lotIds.length} lots into one lot of ${formatNumber(response.combinedQuantity)} shares.`)
-      setSelectedLotIds([])
-      await loadTransactions()
-      emitPortfolioUpdated()
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unable to combine lots.')
-    } finally {
-      setCombining(false)
-    }
-  }
-
-  async function submitSplitLot() {
-    if (!splitLotTarget) {
-      return
-    }
-
-    setError(null)
-    setSuccess(null)
-
-    const quantities = parseSplitQuantities(splitQuantitiesInput)
-    if (quantities.length < 2) {
-      setError('Enter at least two comma-separated split quantities.')
-      return
-    }
-
-    if (quantities.some((value) => !Number.isFinite(value) || value <= 0)) {
-      setError('All split quantities must be numeric and greater than 0.')
-      return
-    }
-
-    const requestedTotal = quantities.reduce((sum, value) => sum + value, 0)
-    if (Math.abs(requestedTotal - Number(splitLotTarget.remainingQuantity)) > ALLOCATION_TOLERANCE) {
-      setError(
-        `Split total (${requestedTotal.toFixed(6)}) must equal lot remaining (${Number(splitLotTarget.remainingQuantity).toFixed(6)}).`
-      )
-      return
-    }
-
-    setSplitting(true)
-    try {
-      const response: SplitLotResponse = await splitLot(splitLotTarget.id, quantities)
-      setSuccess(`Split lot into ${response.createdLots.length} lots.`)
-      setSplitLotTarget(null)
-      setSplitQuantitiesInput('')
-      await loadTransactions()
-      emitPortfolioUpdated()
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unable to split lot.')
-    } finally {
-      setSplitting(false)
-    }
+  async function reloadDisplayLots() {
+    const data = await getDisplayLotsByTicker(ticker)
+    setDisplayLots(data)
+    setSelectedDisplayLotIds([])
+    setSplitInputs({})
   }
 
   useEffect(() => {
@@ -393,12 +298,21 @@ export default function StockHistoryPage() {
     async function loadLots() {
       setLoadingLots(true)
       try {
-        const lots = await getLotsByTicker(ticker)
+        const lots = await getPurchaseLotsByTicker(ticker)
         if (!cancelled) {
-          setAvailableLots(lots)
+          // Sort: purchases first (newest first), then dividends (newest first)
+          const sorted = [...lots].sort((a, b) => {
+            // First, sort by sourceType: 'purchase' comes before 'dividend'
+            if (a.sourceType !== b.sourceType) {
+              return a.sourceType === 'purchase' ? -1 : 1
+            }
+            // Within same sourceType, sort by purchaseDate descending (newest first)
+            return new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime()
+          })
+          setAvailableLots(sorted)
           setAllocations((prev) => {
             const next: Record<string, string> = {}
-            for (const lot of lots) {
+            for (const lot of sorted) {
               next[lot.id] = prev[lot.id] ?? ''
             }
             return next
@@ -434,11 +348,14 @@ export default function StockHistoryPage() {
       return
     }
 
+    const qty = Number(form.quantity)
+    const price = isDividend ? Number(form.totalAmount) / qty : Number(form.price)
+
     const payload: CreateStockInput = {
       ticker,
       type: form.type,
-      quantity: Number(form.quantity),
-      price: Number(form.price),
+      quantity: qty,
+      price,
       transactionDate: new Date(form.transactionDate).toISOString(),
     }
 
@@ -460,26 +377,14 @@ export default function StockHistoryPage() {
 
     setSaving(true)
     try {
-      if (editingTransactionId) {
-        const updatePayload: UpdateStockInput = {
-          ticker: payload.ticker,
-          type: payload.type,
-          quantity: payload.quantity,
-          price: payload.price,
-          transactionDate: payload.transactionDate,
-        }
-        await updateStockTransaction(editingTransactionId, updatePayload)
-        setSuccess('Transaction updated.')
-      } else {
-        await createStockTransaction(payload)
-        setSuccess('Transaction created.')
-      }
+      await createStockTransaction(payload)
+      setSuccess('Transaction created.')
       emitPortfolioUpdated()
       setShowAddTransactionModal(false)
       resetForm()
       await loadTransactions()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unable to save transaction.')
+      setError(err instanceof Error ? err.message : 'Unable to create transaction.')
     } finally {
       setSaving(false)
     }
@@ -496,13 +401,102 @@ export default function StockHistoryPage() {
     try {
       await deleteStockTransaction(id)
       setSuccess('Transaction deleted.')
-      if (editingTransactionId === id) {
-        closeAddTransactionModal()
-      }
       await loadTransactions()
       emitPortfolioUpdated()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to delete transaction.')
+    }
+  }
+
+  async function toggleSaleAllocations(transactionId: string) {
+    if (expandedSaleId === transactionId) {
+      setExpandedSaleId(null)
+      return
+    }
+
+    if (saleAllocations[transactionId]) {
+      setExpandedSaleId(transactionId)
+      return
+    }
+
+    setLoadingAllocations(true)
+    try {
+      const allocationsData = await getSaleAllocations(transactionId)
+      setSaleAllocations((prev) => ({ ...prev, [transactionId]: allocationsData }))
+      setExpandedSaleId(transactionId)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to load allocations.')
+    } finally {
+      setLoadingAllocations(false)
+    }
+  }
+
+  async function onInitializeDisplayLots() {
+    setLotsError(null)
+    setLotsBusy(true)
+    try {
+      // Create one display lot per open purchase lot
+      for (const lot of openLots) {
+        await createDisplayLot(ticker, {
+          composition: [{ purchaseLotId: lot.id, quantityAllocated: Number(lot.remainingQuantity) }],
+        })
+      }
+      await reloadDisplayLots()
+    } catch (err: unknown) {
+      setLotsError(err instanceof Error ? err.message : 'Unable to initialize display lots.')
+    } finally {
+      setLotsBusy(false)
+    }
+  }
+
+  async function onCombineDisplayLots() {
+    if (selectedDisplayLotIds.length < 2) {
+      setLotsError('Select at least two display lots to combine.')
+      return
+    }
+    setLotsError(null)
+    setLotsBusy(true)
+    try {
+      const [targetId, ...otherIds] = selectedDisplayLotIds
+      await combineDisplayLots(targetId, otherIds)
+      await reloadDisplayLots()
+    } catch (err: unknown) {
+      setLotsError(err instanceof Error ? err.message : 'Unable to combine lots.')
+    } finally {
+      setLotsBusy(false)
+    }
+  }
+
+  async function onSplitDisplayLot(lotId: string) {
+    const input = splitInputs[lotId] ?? ''
+    const quantities = input
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map(Number)
+
+    if (quantities.length < 2 || quantities.some((q) => !Number.isFinite(q) || q <= 0)) {
+      setLotsError('Enter at least two comma-separated positive quantities.')
+      return
+    }
+
+    const lot = displayLots.find((l) => l.id === lotId)
+    const total = quantities.reduce((s, q) => s + q, 0)
+    if (Math.abs(total - Number(lot?.totalQuantity ?? 0)) > ALLOCATION_TOLERANCE) {
+      setLotsError(`Quantities must sum to ${formatNumber(lot?.totalQuantity ?? 0, 6)} (got ${total.toFixed(6)}).`)
+      return
+    }
+
+    setLotsError(null)
+    setLotsBusy(true)
+    try {
+      const payload: SplitDisplayLotInput = { splits: quantities.map((q) => ({ quantityAllocated: q })) }
+      await splitDisplayLot(lotId, payload)
+      await reloadDisplayLots()
+    } catch (err: unknown) {
+      setLotsError(err instanceof Error ? err.message : 'Unable to split lot.')
+    } finally {
+      setLotsBusy(false)
     }
   }
 
@@ -531,7 +525,15 @@ export default function StockHistoryPage() {
       {!loading && !error && summary ? (
         <div className="panel stat-grid">
           <div className="stat"><div className="label">Total Shares</div><div className="value">{formatNumber(summary.totalShares, 6)}</div></div>
-          <div className="stat"><div className="label">Open Lots</div><div className="value">{openLotSummary}</div></div>
+          <button
+            className="stat stat-clickable"
+            type="button"
+            onClick={() => { setLotsError(null); setShowLotsModal(true) }}
+          >
+            <div className="label">Display Lots ({displayLots.length})</div>
+            <div className="value">{displayLotSummary}</div>
+            <div className="hint">click to manage</div>
+          </button>
           <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatMoney(summary.costBasis)}</div></div>
         </div>
       ) : null}
@@ -555,92 +557,76 @@ export default function StockHistoryPage() {
               </thead>
               <tbody>
                 {transactions.map((transaction) => (
-                  <tr key={transaction.id}>
-                    <td>{formatDate(transaction.transactionDate)}</td>
-                    <td>{transaction.type}</td>
-                    <td>
-                      {transaction.type === 'buy' || transaction.type === 'div' ? (
-                        positiveTransactionStates[transaction.id] ? (
-                          <span className={getStatePillClassName(positiveTransactionStates[transaction.id])}>
-                            {positiveTransactionStates[transaction.id]}
-                          </span>
+                  <>
+                    <tr key={transaction.id}>
+                      <td>{formatDate(transaction.transactionDate)}</td>
+                      <td>{transaction.type}</td>
+                      <td>
+                        {transaction.type === 'buy' || transaction.type === 'div' ? (
+                          positiveTransactionStates[transaction.id] ? (
+                            <span className={getStatePillClassName(positiveTransactionStates[transaction.id])}>
+                              {positiveTransactionStates[transaction.id]}
+                            </span>
+                          ) : (
+                            <span className="pill pill-muted">--</span>
+                          )
                         ) : (
                           <span className="pill pill-muted">--</span>
-                        )
-                      ) : (
-                        <span className="pill pill-muted">--</span>
-                      )}
-                    </td>
-                    <td>{formatNumber(transaction.quantity)}</td>
-                    <td>{formatMoney4(transaction.price)}</td>
-                    <td>{formatMoney(transaction.amount)}</td>
-                    <td>
-                      <div className="inline-actions">
-                        <button className="button" type="button" onClick={() => beginEdit(transaction)}>
-                          Edit
-                        </button>
+                        )}
+                      </td>
+                      <td>{formatNumber(transaction.quantity)}</td>
+                      <td>{formatMoney4(transaction.price)}</td>
+                      <td>{formatMoney(transaction.amount)}</td>
+                      <td>
+                        {transaction.type === 'sell' ? (
+                          <button
+                            className="button button-secondary"
+                            type="button"
+                            onClick={() => toggleSaleAllocations(transaction.id)}
+                            disabled={loadingAllocations}
+                          >
+                            {expandedSaleId === transaction.id ? '▼' : '▶'} Lots
+                          </button>
+                        ) : null}
                         <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
                           Delete
                         </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      ) : null}
-
-      {!loading && !error ? (
-        <div className="panel">
-          <div className="row-between">
-            <h3>Open Lot Tools</h3>
-            <button
-              className="button"
-              type="button"
-              onClick={submitCombineLots}
-              disabled={combining || splitting || selectedLotIds.length < 2}
-            >
-              {combining ? 'Combining...' : `Combine Selected (${selectedLotIds.length})`}
-            </button>
-          </div>
-
-          {openLots.length === 0 ? (
-            <p>No open lots for {ticker}.</p>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Select</th>
-                  <th>Purchase Date</th>
-                  <th>Source</th>
-                  <th>Remaining</th>
-                  <th>Unit Cost</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {openLots.map((lot) => (
-                  <tr key={lot.id}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={selectedLotIds.includes(lot.id)}
-                        onChange={() => toggleLotSelection(lot.id)}
-                        disabled={combining || splitting}
-                      />
-                    </td>
-                    <td>{formatDate(lot.purchaseDate)}</td>
-                    <td>{lot.sourceType}</td>
-                    <td>{formatNumber(lot.remainingQuantity, 6)}</td>
-                    <td>{formatMoney(lot.unitCost)}</td>
-                    <td>
-                      <button className="button" type="button" onClick={() => openSplitModal(lot)} disabled={combining || splitting}>
-                        Split Lot
-                      </button>
-                    </td>
-                  </tr>
+                      </td>
+                    </tr>
+                    {transaction.type === 'sell' && expandedSaleId === transaction.id ? (
+                      <tr>
+                        <td colSpan={7}>
+                          <div style={{ padding: '1rem', backgroundColor: '#f5f5f5' }}>
+                            <h4 style={{ marginTop: 0 }}>Purchase Lots Consumed</h4>
+                            {saleAllocations[transaction.id] && saleAllocations[transaction.id].length > 0 ? (
+                              <table style={{ width: '100%', fontSize: '0.9em', borderCollapse: 'collapse' }}>
+                                <thead>
+                                  <tr style={{ borderBottom: '1px solid #ddd' }}>
+                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Purchase Date</th>
+                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Unit Cost</th>
+                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Quantity Consumed</th>
+                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Total Cost</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {saleAllocations[transaction.id].map((alloc, index) => (
+                                    <tr key={index} style={{ borderBottom: '1px solid #eee' }}>
+                                      <td style={{ padding: '0.5rem' }}>{formatDate(alloc.purchaseDate)}</td>
+                                      <td style={{ padding: '0.5rem' }}>{formatMoney4(alloc.unitCost)}</td>
+                                      <td style={{ padding: '0.5rem' }}>{formatNumber(alloc.quantity)}</td>
+                                      <td style={{ padding: '0.5rem' }}>{formatMoney(alloc.unitCost * alloc.quantity)}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            ) : (
+                              <p>No purchase lots found for this sale.</p>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </>
                 ))}
               </tbody>
             </table>
@@ -651,7 +637,7 @@ export default function StockHistoryPage() {
       {showAddTransactionModal ? (
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="add-stock-history-transaction-title">
           <div className="modal-card">
-            <h3 id="add-stock-history-transaction-title">{editingTransactionId ? 'Edit Transaction' : 'Add Transaction'} ({ticker})</h3>
+            <h3 id="add-stock-history-transaction-title">Add Transaction ({ticker})</h3>
             <p>Enter date, transaction type, shares, and price.</p>
 
             <form className="form-grid" onSubmit={onSubmit}>
@@ -659,6 +645,8 @@ export default function StockHistoryPage() {
                 Date
                 <input
                   type="date"
+                  min="1980-01-01"
+                  max={new Date().toISOString().slice(0, 10)}
                   value={form.transactionDate}
                   onChange={(event) => setForm((prev) => ({ ...prev, transactionDate: event.target.value }))}
                   disabled={saving}
@@ -695,21 +683,35 @@ export default function StockHistoryPage() {
                 />
               </label>
 
-              <label>
-                Price
-                <input
-                  type="number"
-                  min="0.0001"
-                  step="0.0001"
-                  value={form.price}
-                  onChange={(event) => setForm((prev) => ({ ...prev, price: event.target.value }))}
-                  disabled={saving}
-                />
-              </label>
+              {isDividend ? (
+                <label>
+                  Total Amount
+                  <input
+                    type="number"
+                    min="0.0001"
+                    step="0.0001"
+                    value={form.totalAmount}
+                    onChange={(event) => setForm((prev) => ({ ...prev, totalAmount: event.target.value }))}
+                    disabled={saving}
+                  />
+                </label>
+              ) : (
+                <label>
+                  Price
+                  <input
+                    type="number"
+                    min="0.0001"
+                    step="0.0001"
+                    value={form.price}
+                    onChange={(event) => setForm((prev) => ({ ...prev, price: event.target.value }))}
+                    disabled={saving}
+                  />
+                </label>
+              )}
 
               <div className="form-actions">
                 <button className="button button-primary" type="submit" disabled={saving || !canSubmit}>
-                  {saving ? 'Saving...' : editingTransactionId ? 'Save Changes' : 'Add Transaction'}
+                  {saving ? 'Saving...' : 'Add Transaction'}
                 </button>
                 <button className="button" type="button" onClick={closeAddTransactionModal} disabled={saving}>
                   Cancel
@@ -736,7 +738,8 @@ export default function StockHistoryPage() {
                   <table className="table">
                     <thead>
                       <tr>
-                        <th>Purchase Date</th>
+                        <th>Type</th>
+                        <th>Date</th>
                         <th>Remaining</th>
                         <th>Unit Cost</th>
                         <th>Allocate</th>
@@ -745,6 +748,7 @@ export default function StockHistoryPage() {
                     <tbody>
                       {availableLots.map((lot) => (
                         <tr key={lot.id}>
+                          <td>{lot.sourceType === 'purchase' ? 'Buy' : 'Dividend'}</td>
                           <td>{formatDate(lot.purchaseDate)}</td>
                           <td>{formatNumber(lot.remainingQuantity, 6)}</td>
                           <td>{formatMoney(lot.unitCost)}</td>
@@ -772,38 +776,107 @@ export default function StockHistoryPage() {
         </div>
       ) : null}
 
-      {splitLotTarget ? (
-        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="split-lot-title">
+      {showLotsModal ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="lots-modal-title">
           <div className="modal-card">
-            <h3 id="split-lot-title">Split Lot ({ticker})</h3>
-            <p>
-              Remaining shares: {formatNumber(splitLotTarget.remainingQuantity, 6)}. Enter comma-separated split quantities
-              that add up exactly.
-            </p>
+            <div className="row-between">
+              <h3 id="lots-modal-title">Display Lots — {ticker}</h3>
+              <button className="button" type="button" onClick={() => setShowLotsModal(false)} disabled={lotsBusy}>
+                Close
+              </button>
+            </div>
+            <p>Check lots to combine them, or enter comma-separated quantities to split a lot.</p>
 
-            <div className="form-grid">
-              <label>
-                Quantities
-                <input
-                  type="text"
-                  placeholder="Example: 1, 2"
-                  value={splitQuantitiesInput}
-                  onChange={(event) => setSplitQuantitiesInput(event.target.value)}
-                  disabled={splitting}
-                />
-              </label>
-              <div className="form-actions">
-                <button className="button button-primary" type="button" onClick={submitSplitLot} disabled={splitting}>
-                  {splitting ? 'Splitting...' : 'Split Lot'}
-                </button>
-                <button className="button" type="button" onClick={closeSplitModal} disabled={splitting}>
-                  Cancel
-                </button>
-              </div>
+            {lotsError ? <div className="status status-error">{lotsError}</div> : null}
+
+            {displayLots.length === 0 ? (
+              <>
+                <p>No display lots exist yet for {ticker}. You have {openLots.length} open purchase lot{openLots.length !== 1 ? 's' : ''} with the following share counts:</p>
+                {openLots.length > 0 ? (
+                  <ul>
+                    {openLots.map((lot) => (
+                      <li key={lot.id}>{formatNumber(lot.remainingQuantity, 6)} shares</li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div className="form-actions">
+                  <button
+                    className="button button-primary"
+                    type="button"
+                    onClick={onInitializeDisplayLots}
+                    disabled={lotsBusy || openLots.length === 0}
+                  >
+                    {lotsBusy ? 'Creating...' : `Create one display lot per purchase lot (${openLots.length})`}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Select to Combine</th>
+                    <th>Quantity</th>
+                    <th>Split Into (comma-separated)</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayLots.map((lot) => (
+                    <tr key={lot.id}>
+                      <td>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedDisplayLotIds.includes(lot.id)}
+                            onChange={() => setSelectedDisplayLotIds((prev) =>
+                              prev.includes(lot.id) ? prev.filter((id) => id !== lot.id) : [...prev, lot.id]
+                            )}
+                            disabled={lotsBusy}
+                          />
+                          {selectedDisplayLotIds.includes(lot.id) ? '✓' : ''}
+                        </label>
+                      </td>
+                      <td>{formatNumber(lot.totalQuantity, 6)}</td>
+                      <td>
+                        <input
+                          type="text"
+                          placeholder={`e.g. ${(Number(lot.totalQuantity) / 2).toFixed(2)},${(Number(lot.totalQuantity) / 2).toFixed(2)}`}
+                          value={splitInputs[lot.id] ?? ''}
+                          onChange={(e) => setSplitInputs((prev) => ({ ...prev, [lot.id]: e.target.value }))}
+                          disabled={lotsBusy}
+                        />
+                      </td>
+                      <td>
+                        <button
+                          className="button"
+                          type="button"
+                          onClick={() => onSplitDisplayLot(lot.id)}
+                          disabled={lotsBusy || !splitInputs[lot.id]?.trim()}
+                        >
+                          Split
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <div className="form-actions">
+              <button
+                className="button button-primary"
+                type="button"
+                onClick={onCombineDisplayLots}
+                disabled={lotsBusy || selectedDisplayLotIds.length < 2}
+              >
+                {lotsBusy ? 'Working...' : `Combine Selected (${selectedDisplayLotIds.length})`}
+              </button>
             </div>
           </div>
         </div>
       ) : null}
+
+      <div style={{ marginTop: '2rem', textAlign: 'center', color: '#999', fontSize: '0.85rem' }}>Stock History Page</div>
     </section>
   )
 }

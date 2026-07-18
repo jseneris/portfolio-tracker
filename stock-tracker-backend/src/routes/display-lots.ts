@@ -20,7 +20,7 @@ router.get('/', async (req: Request, res: Response) => {
       .query(`
         SELECT id, userId, ticker, totalQuantity, createdAt, updatedAt
         FROM DisplayLots
-        WHERE userId = @userId
+        WHERE userId = @userId AND totalQuantity > 0
         ORDER BY ticker ASC, totalQuantity ASC
       `);
     
@@ -48,7 +48,7 @@ router.get('/ticker/:ticker', async (req: Request, res: Response) => {
       .query(`
         SELECT id, userId, ticker, totalQuantity, createdAt, updatedAt
         FROM DisplayLots
-        WHERE userId = @userId AND ticker = @ticker
+        WHERE userId = @userId AND ticker = @ticker AND totalQuantity > 0
         ORDER BY totalQuantity ASC, createdAt ASC
       `);
     

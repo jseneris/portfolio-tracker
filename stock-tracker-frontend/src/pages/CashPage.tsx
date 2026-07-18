@@ -1,14 +1,14 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import {
   CashSummary,
   CashTransaction,
   CashTransactionType,
+  CreateCashInput,
   createCashTransaction,
   deleteCashTransaction,
   emitPortfolioUpdated,
   getCashSummary,
   getCashTransactions,
-  updateCashTransaction,
 } from '../api'
 
 type CashFormState = {
@@ -21,14 +21,6 @@ const EMPTY_FORM: CashFormState = {
   type: 'deposit',
   amount: '',
   transactionDate: new Date().toISOString().slice(0, 10),
-}
-
-function toInputDate(value: string) {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return ''
-  }
-  return date.toISOString().slice(0, 10)
 }
 
 function formatDate(value: string) {
@@ -76,13 +68,10 @@ export default function CashPage() {
   const [transactions, setTransactions] = useState<CashTransaction[]>([])
   const [summary, setSummary] = useState<CashSummary | null>(null)
   const [form, setForm] = useState<CashFormState>(EMPTY_FORM)
-  const [editingId, setEditingId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
-
-  const formMode = useMemo(() => (editingId ? 'edit' : 'create'), [editingId])
 
   async function loadCashData() {
     setLoading(true)
@@ -107,18 +96,6 @@ export default function CashPage() {
 
   function clearForm() {
     setForm(EMPTY_FORM)
-    setEditingId(null)
-  }
-
-  function beginEdit(transaction: CashTransaction) {
-    setEditingId(transaction.id)
-    setForm({
-      type: transaction.type,
-      amount: String(transaction.amount),
-      transactionDate: toInputDate(transaction.transactionDate),
-    })
-    setSuccess(null)
-    setError(null)
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -132,7 +109,7 @@ export default function CashPage() {
       return
     }
 
-    const payload = {
+    const payload: CreateCashInput = {
       type: form.type,
       amount: Number(form.amount),
       transactionDate: new Date(form.transactionDate).toISOString(),
@@ -140,18 +117,13 @@ export default function CashPage() {
 
     setSaving(true)
     try {
-      if (editingId) {
-        await updateCashTransaction(editingId, payload)
-        setSuccess('Cash transaction updated.')
-      } else {
-        await createCashTransaction(payload)
-        setSuccess('Cash transaction created.')
-      }
+      await createCashTransaction(payload)
+      setSuccess('Cash transaction created.')
       clearForm()
       await loadCashData()
       emitPortfolioUpdated()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unable to save cash transaction.')
+      setError(err instanceof Error ? err.message : 'Unable to create cash transaction.')
     } finally {
       setSaving(false)
     }
@@ -168,9 +140,6 @@ export default function CashPage() {
     try {
       await deleteCashTransaction(transaction.id)
       setSuccess('Cash transaction deleted.')
-      if (editingId === transaction.id) {
-        clearForm()
-      }
       await loadCashData()
       emitPortfolioUpdated()
     } catch (err: unknown) {
@@ -182,11 +151,11 @@ export default function CashPage() {
     <section>
       <div className="panel">
         <h2>Cash (MVP)</h2>
-        <p>Create, edit, and delete cash transactions. Summary updates after each successful mutation.</p>
+        <p>Create and delete cash transactions. Summary updates after each successful transaction.</p>
       </div>
 
       <div className="panel">
-        <h3>{formMode === 'edit' ? 'Edit Transaction' : 'Add Transaction'}</h3>
+        <h3>Add Transaction</h3>
         <form className="form-grid" onSubmit={onSubmit}>
           <label>
             Type
@@ -226,13 +195,8 @@ export default function CashPage() {
 
           <div className="form-actions">
             <button className="button button-primary" type="submit" disabled={saving}>
-              {saving ? 'Saving...' : formMode === 'edit' ? 'Update Transaction' : 'Add Transaction'}
+              {saving ? 'Creating...' : 'Add Transaction'}
             </button>
-            {formMode === 'edit' ? (
-              <button className="button" type="button" onClick={clearForm} disabled={saving}>
-                Cancel Edit
-              </button>
-            ) : null}
           </div>
         </form>
 
@@ -274,14 +238,9 @@ export default function CashPage() {
                   <td>{transaction.type}</td>
                   <td>{formatMoney(Number(transaction.amount))}</td>
                   <td>
-                    <div className="inline-actions">
-                      <button className="button" type="button" onClick={() => beginEdit(transaction)}>
-                        Edit
-                      </button>
-                      <button className="button button-danger" type="button" onClick={() => onDelete(transaction)}>
-                        Delete
-                      </button>
-                    </div>
+                    <button className="button button-danger" type="button" onClick={() => onDelete(transaction)}>
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -289,6 +248,8 @@ export default function CashPage() {
           </table>
         )}
       </div>
+
+      <div style={{ marginTop: '2rem', textAlign: 'center', color: '#999', fontSize: '0.85rem' }}>Cash Page</div>
     </section>
   )
 }

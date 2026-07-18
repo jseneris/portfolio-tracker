@@ -165,7 +165,7 @@ router.get('/:ticker', async (req: Request, res: Response) => {
       .query(`
         SELECT * FROM StockTransactions 
         WHERE userId = @userId AND ticker = @ticker 
-        ORDER BY transactionDate ASC
+        ORDER BY transactionDate DESC
       `);
     
     res.json(result.recordset);
@@ -201,6 +201,40 @@ router.get('/:ticker/summary', async (req: Request, res: Response) => {
       numberOfLots: lot.numberOfLots || 0,
       costBasis: lot.costBasis || 0
     });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// GET allocations for a specific sale transaction (which purchase lots it affected)
+router.get('/:transactionId/allocations', async (req: Request, res: Response) => {
+  try {
+    const { transactionId } = req.params;
+    const userId = req.user?.id!;
+
+    const result = await getPool().request()
+      .input('transactionId', sql.UniqueIdentifier, transactionId)
+      .input('userId', sql.NVarChar, userId)
+      .query(`
+        SELECT 
+          pla.purchaseLotId as lotId,
+          pla.quantityConsumed as quantity,
+          pl.ticker,
+          pl.purchaseDate,
+          pl.unitCost
+        FROM PurchaseLotAllocations pla
+        JOIN PurchaseLots pl ON pla.purchaseLotId = pl.id
+        WHERE pla.saleTransactionId = @transactionId AND pla.userId = @userId
+        ORDER BY pl.purchaseDate ASC
+      `);
+
+    res.json(result.recordset.map((row: any) => ({
+      lotId: row.lotId,
+      quantity: Number(row.quantity || 0),
+      ticker: row.ticker,
+      purchaseDate: row.purchaseDate,
+      unitCost: Number(row.unitCost || 0)
+    })));
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
@@ -294,7 +328,7 @@ router.post('/', async (req: Request, res: Response) => {
         .input('userId', sql.NVarChar, userId)
         .input('ticker', sql.NVarChar, normalizedTicker)
         .query(`
-        SELECT id, transactionId, remainingQuantity
+        SELECT id, transactionId, remainingQuantity, purchaseDate
         FROM PurchaseLots
         WHERE userId = @userId
           AND ticker = @ticker
@@ -304,7 +338,22 @@ router.post('/', async (req: Request, res: Response) => {
         id: String(lot.id),
         transactionId: String(lot.transactionId),
         remainingQuantity: Number(lot.remainingQuantity),
-      } as PurchaseLot));
+        purchaseDate: new Date(lot.purchaseDate),
+      } as PurchaseLot & { purchaseDate: Date }));
+
+      // Validate that all allocated purchase lots have a purchase date on or before the sale date
+      const saleDate = new Date(transactionDate);
+      for (const allocation of allocations) {
+        const purchaseLot = purchaseLots.find((lot) => lot.id === allocation.lotId);
+        if (!purchaseLot) {
+          return res.status(400).json({ error: `Purchase lot ${allocation.lotId} not found for ${normalizedTicker}` });
+        }
+        if (purchaseLot.purchaseDate > saleDate) {
+          return res.status(400).json({
+            error: `Cannot allocate purchase lot dated ${purchaseLot.purchaseDate.toISOString().slice(0, 10)} to sale dated ${transactionDate}. Purchases must occur before or on the sale date.`
+          });
+        }
+      }
 
       const openLotsById = new Map(openLots.map((lot) => [lot.id, lot]));
       const purchaseLotsById = new Map(purchaseLots.map((lot) => [lot.id, lot]));
@@ -379,87 +428,176 @@ router.post('/', async (req: Request, res: Response) => {
     
     const id = uuidv4();
 
-    await pool.request()
-      .input('id', sql.UniqueIdentifier, id)
-      .input('userId', sql.NVarChar, userId)
-      .input('ticker', sql.NVarChar, normalizedTicker)
-      .input('type', sql.NVarChar, type)
-      .input('quantity', sql.Decimal(18, 8), finalQuantity ?? null)
-      .input('price', sql.Decimal(18, 8), finalPrice ?? null)
-      .input('amount', sql.Decimal(18, 4), amount)
-      .input('transactionDate', sql.DateTime2, new Date(transactionDate))
-      .query(`
-        INSERT INTO StockTransactions 
-        (id, userId, ticker, type, quantity, price, amount, transactionDate)
-        VALUES (@id, @userId, @ticker, @type, @quantity, @price, @amount, @transactionDate)
-      `);
-    
+    const tx = new sql.Transaction(pool);
+    await tx.begin();
 
-    // If it's a buy transaction, create a purchase lot
-    if (type === 'buy') {
-      const lotId = uuidv4();
-      await pool.request()
-        .input('lotId', sql.UniqueIdentifier, lotId)
+    try {
+      await new sql.Request(tx)
+        .input('id', sql.UniqueIdentifier, id)
         .input('userId', sql.NVarChar, userId)
         .input('ticker', sql.NVarChar, normalizedTicker)
-        .input('transactionId', sql.UniqueIdentifier, id)
-        .input('quantity', sql.Decimal(18, 8), quantity)
-        .input('price', sql.Decimal(18, 8), price)
+        .input('type', sql.NVarChar, type)
+        .input('quantity', sql.Decimal(18, 8), finalQuantity ?? null)
+        .input('price', sql.Decimal(18, 8), finalPrice ?? null)
+        .input('amount', sql.Decimal(18, 4), amount)
         .input('transactionDate', sql.DateTime2, new Date(transactionDate))
         .query(`
-          INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
-          VALUES (@lotId, @userId, @ticker, @transactionId, 'purchase', @quantity, @quantity, @price, @transactionDate)
+          INSERT INTO StockTransactions 
+          (id, userId, ticker, type, quantity, price, amount, transactionDate)
+          VALUES (@id, @userId, @ticker, @type, @quantity, @price, @amount, @transactionDate)
         `);
-    }
+      
 
-
-    // Dividends are reinvested only: they create their own lot rather than affecting cash directly
-    if (type === 'div') {
-      const lotId = uuidv4();
-      await pool.request()
-        .input('lotId', sql.UniqueIdentifier, lotId)
-        .input('userId', sql.NVarChar, userId)
-        .input('ticker', sql.NVarChar, normalizedTicker)
-        .input('transactionId', sql.UniqueIdentifier, id)
-        .input('quantity', sql.Decimal(18, 8), quantity)
-        .input('price', sql.Decimal(18, 8), price)
-        .input('transactionDate', sql.DateTime2, new Date(transactionDate))
-        .query(`
-          INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
-          VALUES (@lotId, @userId, @ticker, @transactionId, 'dividend', @quantity, @quantity, @price, @transactionDate)
-        `);
-    }
-
-    // Sells consume lots smallest-first, recording the actual allocation for auditability.
-    if (type === 'sell') {
-      // Allocations recorded in PurchaseLotAllocations below
-
-      for (const allocation of purchaseAttributionPlan) {
-        await pool.request()
-          .input('lotId', sql.UniqueIdentifier, allocation.lotId)
+      // If it's a buy transaction, create a purchase lot and a matching display lot
+      if (type === 'buy') {
+        const lotId = uuidv4();
+        await new sql.Request(tx)
+          .input('lotId', sql.UniqueIdentifier, lotId)
           .input('userId', sql.NVarChar, userId)
-          .input('quantity', sql.Decimal(18, 8), allocation.quantity)
+          .input('ticker', sql.NVarChar, normalizedTicker)
+          .input('transactionId', sql.UniqueIdentifier, id)
+          .input('quantity', sql.Decimal(18, 8), quantity)
+          .input('price', sql.Decimal(18, 8), price)
+          .input('transactionDate', sql.DateTime2, new Date(transactionDate))
           .query(`
-            UPDATE PurchaseLots
-            SET remainingQuantity = remainingQuantity - @quantity, updatedAt = GETUTCDATE()
-            WHERE id = @lotId AND userId = @userId
+            INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
+            VALUES (@lotId, @userId, @ticker, @transactionId, 'purchase', @quantity, @quantity, @price, @transactionDate)
           `);
 
-        const purchaseAllocationId = uuidv4();
-        await pool.request()
-          .input('allocationId', sql.UniqueIdentifier, purchaseAllocationId)
+        const displayLotId = uuidv4();
+        await new sql.Request(tx)
+          .input('displayLotId', sql.UniqueIdentifier, displayLotId)
           .input('userId', sql.NVarChar, userId)
-          .input('saleTransactionId', sql.UniqueIdentifier, id)
-          .input('purchaseLotId', sql.UniqueIdentifier, allocation.lotId)
-          .input('quantity', sql.Decimal(18, 8), allocation.quantity)
+          .input('ticker', sql.NVarChar, normalizedTicker)
+          .input('totalQuantity', sql.Decimal(18, 8), quantity)
           .query(`
-            INSERT INTO PurchaseLotAllocations (id, userId, saleTransactionId, purchaseLotId, quantityConsumed)
-            VALUES (@allocationId, @userId, @saleTransactionId, @purchaseLotId, @quantity)
+            INSERT INTO DisplayLots (id, userId, ticker, totalQuantity)
+            VALUES (@displayLotId, @userId, @ticker, @totalQuantity)
+          `);
+
+        await new sql.Request(tx)
+          .input('compositionId', sql.UniqueIdentifier, uuidv4())
+          .input('displayLotId', sql.UniqueIdentifier, displayLotId)
+          .input('purchaseLotId', sql.UniqueIdentifier, lotId)
+          .input('quantityAllocated', sql.Decimal(18, 8), quantity)
+          .query(`
+            INSERT INTO DisplayLotComposition (id, displayLotId, purchaseLotId, quantityAllocated)
+            VALUES (@compositionId, @displayLotId, @purchaseLotId, @quantityAllocated)
           `);
       }
+
+      // Dividends create a purchase lot (sourceType=dividend) and a matching display lot
+      if (type === 'div') {
+        const lotId = uuidv4();
+        await new sql.Request(tx)
+          .input('lotId', sql.UniqueIdentifier, lotId)
+          .input('userId', sql.NVarChar, userId)
+          .input('ticker', sql.NVarChar, normalizedTicker)
+          .input('transactionId', sql.UniqueIdentifier, id)
+          .input('quantity', sql.Decimal(18, 8), quantity)
+          .input('price', sql.Decimal(18, 8), price)
+          .input('transactionDate', sql.DateTime2, new Date(transactionDate))
+          .query(`
+            INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
+            VALUES (@lotId, @userId, @ticker, @transactionId, 'dividend', @quantity, @quantity, @price, @transactionDate)
+          `);
+
+        const displayLotId = uuidv4();
+        await new sql.Request(tx)
+          .input('displayLotId', sql.UniqueIdentifier, displayLotId)
+          .input('userId', sql.NVarChar, userId)
+          .input('ticker', sql.NVarChar, normalizedTicker)
+          .input('totalQuantity', sql.Decimal(18, 8), quantity)
+          .query(`
+            INSERT INTO DisplayLots (id, userId, ticker, totalQuantity)
+            VALUES (@displayLotId, @userId, @ticker, @totalQuantity)
+          `);
+
+        await new sql.Request(tx)
+          .input('compositionId', sql.UniqueIdentifier, uuidv4())
+          .input('displayLotId', sql.UniqueIdentifier, displayLotId)
+          .input('purchaseLotId', sql.UniqueIdentifier, lotId)
+          .input('quantityAllocated', sql.Decimal(18, 8), quantity)
+          .query(`
+            INSERT INTO DisplayLotComposition (id, displayLotId, purchaseLotId, quantityAllocated)
+            VALUES (@compositionId, @displayLotId, @purchaseLotId, @quantityAllocated)
+          `);
+      }
+
+      // Sells consume lots smallest-first, recording the actual allocation for auditability.
+      if (type === 'sell') {
+        for (const allocation of purchaseAttributionPlan) {
+          await new sql.Request(tx)
+            .input('lotId', sql.UniqueIdentifier, allocation.lotId)
+            .input('userId', sql.NVarChar, userId)
+            .input('quantity', sql.Decimal(18, 8), allocation.quantity)
+            .query(`
+              UPDATE PurchaseLots
+              SET remainingQuantity = remainingQuantity - @quantity, updatedAt = GETUTCDATE()
+              WHERE id = @lotId AND userId = @userId
+            `);
+
+          const purchaseAllocationId = uuidv4();
+          await new sql.Request(tx)
+            .input('allocationId', sql.UniqueIdentifier, purchaseAllocationId)
+            .input('userId', sql.NVarChar, userId)
+            .input('saleTransactionId', sql.UniqueIdentifier, id)
+            .input('purchaseLotId', sql.UniqueIdentifier, allocation.lotId)
+            .input('quantity', sql.Decimal(18, 8), allocation.quantity)
+            .query(`
+              INSERT INTO PurchaseLotAllocations (id, userId, saleTransactionId, purchaseLotId, quantityConsumed)
+              VALUES (@allocationId, @userId, @saleTransactionId, @purchaseLotId, @quantity)
+            `);
+        }
+
+        // Also consume display lots smallest-first to keep display state in sync
+        const displayLotsResult = await new sql.Request(tx)
+          .input('userId', sql.NVarChar, userId)
+          .input('ticker', sql.NVarChar, normalizedTicker)
+          .query(`
+            SELECT id, totalQuantity FROM DisplayLots
+            WHERE userId = @userId AND ticker = @ticker AND totalQuantity > 0
+            ORDER BY totalQuantity ASC, createdAt ASC
+          `);
+
+        let displayRemaining = Number(quantity);
+        for (const row of displayLotsResult.recordset as any[]) {
+          if (displayRemaining <= ALLOCATION_TOLERANCE) break;
+          const dlId = String(row.id);
+          const dlQty = Number(row.totalQuantity);
+          const consume = Math.min(dlQty, displayRemaining);
+          displayRemaining -= consume;
+
+          await new sql.Request(tx)
+            .input('allocationId', sql.UniqueIdentifier, uuidv4())
+            .input('userId', sql.NVarChar, userId)
+            .input('saleTransactionId', sql.UniqueIdentifier, id)
+            .input('displayLotId', sql.UniqueIdentifier, dlId)
+            .input('quantity', sql.Decimal(18, 8), consume)
+            .query(`
+              INSERT INTO DisplayLotAllocations (id, userId, saleTransactionId, displayLotId, quantityConsumed)
+              VALUES (@allocationId, @userId, @saleTransactionId, @displayLotId, @quantity)
+            `);
+
+          // Update DisplayLot quantity (don't delete to preserve foreign key references to DisplayLotAllocations)
+          await new sql.Request(tx)
+            .input('displayLotId', sql.UniqueIdentifier, dlId)
+            .input('userId', sql.NVarChar, userId)
+            .input('quantity', sql.Decimal(18, 8), consume)
+            .query(`
+              UPDATE DisplayLots
+              SET totalQuantity = totalQuantity - @quantity, updatedAt = GETUTCDATE()
+              WHERE id = @displayLotId AND userId = @userId
+            `);
+        }
+      }
+
+      await tx.commit();
+      res.status(201).json({ id, ticker: normalizedTicker, type, quantity, price, amount, transactionDate });
+    } catch (innerError) {
+      await tx.rollback();
+      throw innerError;
     }
-    
-    res.status(201).json({ id, ticker: normalizedTicker, type, quantity, price, amount, transactionDate });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
@@ -565,6 +703,58 @@ router.delete('/:id', async (req: Request, res: Response) => {
               UPDATE DisplayLots
               SET totalQuantity = totalQuantity + @quantity, updatedAt = GETUTCDATE()
               WHERE id = @displayLotId AND userId = @userId
+            `);
+        }
+      } else if (transactionType === 'buy' || transactionType === 'div') {
+        // For buy/div, delete the associated DisplayLotComposition, DisplayLots, and PurchaseLot
+        
+        const purchaseLotsResult = await new sql.Request(tx)
+          .input('transactionId', sql.UniqueIdentifier, id)
+          .input('userId', sql.NVarChar, userId)
+          .query(`
+            SELECT id FROM PurchaseLots
+            WHERE transactionId = @transactionId AND userId = @userId
+          `);
+
+        for (const row of purchaseLotsResult.recordset) {
+          const purchaseLotId = row.id;
+          
+          // Find and delete all DisplayLotComposition records that reference this PurchaseLot
+          const compositionsResult = await new sql.Request(tx)
+            .input('purchaseLotId', sql.UniqueIdentifier, purchaseLotId)
+            .query(`
+              SELECT displayLotId FROM DisplayLotComposition
+              WHERE purchaseLotId = @purchaseLotId
+            `);
+
+          for (const comp of compositionsResult.recordset) {
+            const displayLotId = comp.displayLotId;
+            
+            // Delete the composition record
+            await new sql.Request(tx)
+              .input('purchaseLotId', sql.UniqueIdentifier, purchaseLotId)
+              .query(`
+                DELETE FROM DisplayLotComposition
+                WHERE purchaseLotId = @purchaseLotId
+              `);
+
+            // Delete the DisplayLot
+            await new sql.Request(tx)
+              .input('displayLotId', sql.UniqueIdentifier, displayLotId)
+              .input('userId', sql.NVarChar, userId)
+              .query(`
+                DELETE FROM DisplayLots
+                WHERE id = @displayLotId AND userId = @userId
+              `);
+          }
+
+          // Delete the PurchaseLot
+          await new sql.Request(tx)
+            .input('purchaseLotId', sql.UniqueIdentifier, purchaseLotId)
+            .input('userId', sql.NVarChar, userId)
+            .query(`
+              DELETE FROM PurchaseLots
+              WHERE id = @purchaseLotId AND userId = @userId
             `);
         }
       }

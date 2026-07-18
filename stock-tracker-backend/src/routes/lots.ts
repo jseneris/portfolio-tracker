@@ -18,7 +18,7 @@ router.get('/', async (req: Request, res: Response) => {
     
     const result = await request
       .input('userId', sql.NVarChar, userId)
-      .query('SELECT * FROM PurchaseLots WHERE userId = @userId ORDER BY purchaseDate ASC');
+      .query('SELECT * FROM PurchaseLots WHERE userId = @userId AND remainingQuantity > 0 ORDER BY purchaseDate ASC');
     
     res.json(result.recordset);
   } catch (error) {
@@ -52,6 +52,29 @@ router.get('/:ticker', async (req: Request, res: Response) => {
 
     const result = await request.query(query);
     
+    res.json(result.recordset);
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// GET open (unconsumed) purchase lots for ticker — excludes dividend lots, only remainingQuantity > 0
+router.get('/:ticker/open', async (req: Request, res: Response) => {
+  try {
+    const { ticker } = req.params;
+    const userId = req.user?.id!;
+
+    const result = await getPool().request()
+      .input('userId', sql.NVarChar, userId)
+      .input('ticker', sql.NVarChar, ticker.toUpperCase())
+      .query(`
+        SELECT * FROM PurchaseLots
+        WHERE userId = @userId AND ticker = @ticker
+          AND sourceType = 'purchase'
+          AND remainingQuantity > 0
+        ORDER BY purchaseDate ASC
+      `);
+
     res.json(result.recordset);
   } catch (error) {
     res.status(500).json({ error: String(error) });

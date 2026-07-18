@@ -82,6 +82,24 @@ body {
   margin-top: 0.2rem;
 }
 
+.stat-clickable {
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.stat-clickable:hover {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.stat-clickable .hint {
+  font-size: 0.72rem;
+  color: #3b82f6;
+  margin-top: 0.2rem;
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;

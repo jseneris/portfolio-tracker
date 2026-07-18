@@ -248,6 +248,18 @@ export default function DashboardPage() {
 
             <form className="form-grid" onSubmit={onAddStockSubmit}>
               <label>
+                Date
+                <input
+                  type="date"
+                  min="1980-01-01"
+                  max={new Date().toISOString().slice(0, 10)}
+                  value={addStockForm.transactionDate}
+                  onChange={(event) => setAddStockForm((prev) => ({ ...prev, transactionDate: event.target.value }))}
+                  disabled={addStockSaving}
+                />
+              </label>
+
+              <label>
                 Stock Ticker
                 <input
                   type="text"
@@ -282,16 +294,6 @@ export default function DashboardPage() {
                 />
               </label>
 
-              <label>
-                Date
-                <input
-                  type="date"
-                  value={addStockForm.transactionDate}
-                  onChange={(event) => setAddStockForm((prev) => ({ ...prev, transactionDate: event.target.value }))}
-                  disabled={addStockSaving}
-                />
-              </label>
-
               <div className="form-actions">
                 <button className="button button-primary" type="submit" disabled={addStockSaving}>
                   {addStockSaving ? 'Saving...' : 'Add Stock'}
@@ -306,6 +308,8 @@ export default function DashboardPage() {
           </div>
         </div>
       ) : null}
+
+      <div style={{ marginTop: '2rem', textAlign: 'center', color: '#999', fontSize: '0.85rem' }}>Dashboard Page</div>
     </section>
   )
 }

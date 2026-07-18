@@ -6,8 +6,16 @@ export function emitPortfolioUpdated() {
   window.dispatchEvent(new Event(PORTFOLIO_UPDATED_EVENT))
 }
 
+// ============================================================================
+// Enums & Basic Types
+// ============================================================================
+
 export type CashTransactionType = 'deposit' | 'withdrawal' | 'interest' | 'fee'
 export type StockTransactionType = 'buy' | 'sell' | 'div'
+
+// ============================================================================
+// Cash Types
+// ============================================================================
 
 export type CashTransaction = {
   id: string
@@ -29,6 +37,36 @@ export type CashSummary = {
   availableCash: number
   costBasis: number
   adjustments: number
+}
+
+export type CreateCashInput = {
+  type: CashTransactionType
+  amount: number
+  transactionDate: string
+}
+
+// ============================================================================
+// Stock & Portfolio Types
+// ============================================================================
+
+export type StockTransaction = {
+  id: string
+  userId: string
+  ticker: string
+  type: StockTransactionType
+  quantity: number | null
+  price: number | null
+  amount: number | null
+  transactionDate: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type TickerSummary = {
+  ticker: string
+  totalShares: number
+  numberOfLots: number
+  costBasis: number
 }
 
 export type PortfolioSummary = {
@@ -56,27 +94,29 @@ export type AllocationInput = {
   quantity: number
 }
 
-export type StockTransaction = {
-  id: string
-  userId: string
+export type SaleAllocation = {
+  lotId: string
+  quantity: number
+  ticker: string
+  purchaseDate: string
+  unitCost: number
+}
+
+export type CreateStockInput = {
   ticker: string
   type: StockTransactionType
-  quantity: number | null
-  price: number | null
-  amount: number | null
+  quantity?: number
+  price?: number
+  amount?: number
   transactionDate: string
-  createdAt?: string
-  updatedAt?: string
+  allocations?: AllocationInput[]
 }
 
-export type TickerSummary = {
-  ticker: string
-  totalShares: number
-  numberOfLots: number
-  costBasis: number
-}
+// ============================================================================
+// Purchase Lot Types (Source Lots - Auto-Created from Transactions)
+// ============================================================================
 
-export type Lot = {
+export type PurchaseLot = {
   id: string
   userId: string
   ticker: string
@@ -90,48 +130,79 @@ export type Lot = {
   updatedAt?: string
 }
 
-export type SplitLotResponse = {
-  parentLotId: string
+// ============================================================================
+// Display Lot Types (User-Created Organizational Groupings)
+// ============================================================================
+
+export type DisplayLot = {
+  id: string
+  userId: string
   ticker: string
-  quantities: number[]
-  createdLots: Array<{
-    id: string
-    quantity: number
+  totalQuantity: number
+  createdAt: string
+  updatedAt: string
+}
+
+export type DisplayLotComposition = {
+  id: string
+  purchaseLotId: string
+  quantityAllocated: number
+  ticker: string
+  unitCost: number
+  sourceType: 'purchase' | 'dividend'
+  purchaseDate: string
+}
+
+export type CreateDisplayLotInput = {
+  composition: Array<{
+    purchaseLotId: string
+    quantityAllocated: number
   }>
 }
 
-export type CombineLotsResponse = {
-  lotIds: string[]
-  combinedLotId: string
+export type SplitDisplayLotInput = {
+  splits: Array<{
+    quantityAllocated: number
+  }>
+}
+
+export type CreateDisplayLotResponse = {
+  id: string
   ticker: string
-  combinedQuantity: number
-  combinedUnitCost: number
+  totalQuantity: number
+  compositionCount: number
 }
 
-export type CreateCashInput = {
-  type: CashTransactionType
-  amount: number
-  transactionDate: string
-}
-
-export type UpdateCashInput = CreateCashInput
-
-export type CreateStockInput = {
+export type CombineDisplayLotsResponse = {
+  id: string
   ticker: string
-  type: StockTransactionType
-  quantity?: number
-  price?: number
-  transactionDate: string
-  allocations?: AllocationInput[]
+  totalQuantity: number
+  mergedFromCount: number
 }
 
-export type UpdateStockInput = {
+export type SplitDisplayLotResponse = {
+  originalDisplayLotId: string
+  newDisplayLotIds: string[]
   ticker: string
-  type: StockTransactionType
-  quantity?: number
-  price?: number
-  transactionDate: string
 }
+
+// ============================================================================
+// Stock Split Types
+// ============================================================================
+
+export type RecordStockSplitResponse = {
+  id: string
+  ticker: string
+  ratio: string
+  multiplier: number
+  splitDate: string
+  lotsAdjusted: number
+  transactionsAdjusted: number
+}
+
+// ============================================================================
+// Internal Request Helpers
+// ============================================================================
 
 type RequestMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
@@ -175,6 +246,14 @@ async function requestApi<T>(path: string, options: RequestOptions = {}): Promis
   return response.json() as Promise<T>
 }
 
+// ============================================================================
+// Cash API
+// ============================================================================
+
+// ============================================================================
+// Cash API
+// ============================================================================
+
 export async function getPortfolioSummary(): Promise<PortfolioSummary> {
   return requestApi<PortfolioSummary>('/api/stocks/portfolio/summary')
 }
@@ -194,16 +273,13 @@ export async function createCashTransaction(payload: CreateCashInput): Promise<C
   })
 }
 
-export async function updateCashTransaction(id: string, payload: UpdateCashInput): Promise<CashTransaction> {
-  return requestApi<CashTransaction>(`/api/cash/${id}`, {
-    method: 'PUT',
-    body: payload,
-  })
-}
-
 export async function deleteCashTransaction(id: string): Promise<void> {
   return requestApi<void>(`/api/cash/${id}`, { method: 'DELETE' })
 }
+
+// ============================================================================
+// Stock Transactions API
+// ============================================================================
 
 export async function getStockTransactions(): Promise<StockTransaction[]> {
   return requestApi<StockTransaction[]>('/api/stocks')
@@ -224,43 +300,93 @@ export async function createStockTransaction(payload: CreateStockInput): Promise
   })
 }
 
-export async function updateStockTransaction(id: string, payload: UpdateStockInput): Promise<StockTransaction> {
-  return requestApi<StockTransaction>(`/api/stocks/${id}`, {
-    method: 'PUT',
-    body: payload,
-  })
-}
-
 export async function deleteStockTransaction(id: string): Promise<void> {
   return requestApi<void>(`/api/stocks/${id}`, { method: 'DELETE' })
 }
 
-export async function getLots(): Promise<Lot[]> {
-  return requestApi<Lot[]>('/api/lots')
+export async function getSaleAllocations(transactionId: string): Promise<SaleAllocation[]> {
+  return requestApi<SaleAllocation[]>(`/api/stocks/${transactionId}/allocations`)
 }
 
-export async function getLotsByTicker(ticker: string, sourceType?: string): Promise<Lot[]> {
-  const query = sourceType ? `?sourceType=${encodeURIComponent(sourceType)}` : ''
-  return requestApi<Lot[]>(`/api/lots/${encodeURIComponent(ticker)}${query}`)
-}
-
-export async function updateLotRemainingQuantity(id: string, remainingQuantity: number): Promise<{ id: string; remainingQuantity: number }> {
-  return requestApi<{ id: string; remainingQuantity: number }>(`/api/lots/${id}`, {
-    method: 'PUT',
-    body: { remainingQuantity },
-  })
-}
-
-export async function splitLot(id: string, quantities: number[]): Promise<SplitLotResponse> {
-  return requestApi<SplitLotResponse>(`/api/lots/lot/${id}/split`, {
+export async function recordStockSplit(
+  ticker: string,
+  numerator: number,
+  denominator: number,
+  splitDate?: string
+): Promise<RecordStockSplitResponse> {
+  return requestApi<RecordStockSplitResponse>('/api/stocks/split', {
     method: 'POST',
-    body: { quantities },
+    body: {
+      ticker,
+      numerator,
+      denominator,
+      splitDate,
+    },
   })
 }
 
-export async function combineLots(lotIds: string[]): Promise<CombineLotsResponse> {
-  return requestApi<CombineLotsResponse>('/api/lots/combine', {
+// ============================================================================
+// Purchase Lot API (Source Lots - Auto-Created from Transactions)
+// ============================================================================
+
+export async function getPurchaseLots(): Promise<PurchaseLot[]> {
+  return requestApi<PurchaseLot[]>('/api/lots')
+}
+
+export async function getPurchaseLotsByTicker(ticker: string): Promise<PurchaseLot[]> {
+  return requestApi<PurchaseLot[]>(`/api/lots/${encodeURIComponent(ticker)}`)
+}
+
+export async function getOpenPurchaseLots(ticker: string): Promise<PurchaseLot[]> {
+  return requestApi<PurchaseLot[]>(`/api/lots/${encodeURIComponent(ticker)}/open`)
+}
+
+// ============================================================================
+// Display Lot API (User-Created Organizational Groupings)
+// ============================================================================
+
+export async function getDisplayLots(): Promise<DisplayLot[]> {
+  return requestApi<DisplayLot[]>('/api/display-lots')
+}
+
+export async function getDisplayLotsByTicker(ticker: string): Promise<DisplayLot[]> {
+  return requestApi<DisplayLot[]>(`/api/display-lots/ticker/${encodeURIComponent(ticker)}`)
+}
+
+export async function getDisplayLotComposition(displayLotId: string): Promise<DisplayLotComposition[]> {
+  return requestApi<DisplayLotComposition[]>(`/api/display-lots/${displayLotId}/composition`)
+}
+
+export async function createDisplayLot(
+  ticker: string,
+  payload: CreateDisplayLotInput
+): Promise<CreateDisplayLotResponse> {
+  return requestApi<CreateDisplayLotResponse>(`/api/display-lots/${encodeURIComponent(ticker)}`, {
     method: 'POST',
-    body: { lotIds },
+    body: payload,
   })
+}
+
+export async function combineDisplayLots(
+  displayLotId: string,
+  displayLotIds: string[]
+): Promise<CombineDisplayLotsResponse> {
+  return requestApi<CombineDisplayLotsResponse>(`/api/display-lots/${displayLotId}/combine`, {
+    method: 'POST',
+    body: { displayLotIds },
+  })
+}
+
+export async function splitDisplayLot(
+  displayLotId: string,
+  payload: SplitDisplayLotInput
+): Promise<SplitDisplayLotResponse> {
+  return requestApi<SplitDisplayLotResponse>(`/api/display-lots/${displayLotId}/split`, {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function deleteDisplayLot(displayLotId: string): Promise<void> {
+  return requestApi<void>(`/api/display-lots/${displayLotId}`, { method: 'DELETE' })
 }
