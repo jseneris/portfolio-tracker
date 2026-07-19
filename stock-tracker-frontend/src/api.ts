@@ -252,6 +252,15 @@ export type PortfolioComparison2021Response = {
   points: PortfolioComparisonPoint[]
 }
 
+export type UserTargetSettings = {
+  saleTargetPercent: number
+  buyTargetPercentUnder3DisplayLots: number
+  buyTargetPercentFor3DisplayLots: number
+  buyTargetPercentFor4DisplayLots: number
+  buyTargetPercentFor5DisplayLots: number
+  buyTargetPercentFor6OrMoreDisplayLots: number
+}
+
 // ============================================================================
 // Internal Request Helpers
 // ============================================================================
@@ -401,6 +410,17 @@ export async function getHistoricalPrices(
 
 export async function getPortfolioComparison2021(): Promise<PortfolioComparison2021Response> {
   return requestApi<PortfolioComparison2021Response>('/api/stocks/portfolio/comparison-2021')
+}
+
+export async function getUserTargetSettings(): Promise<UserTargetSettings> {
+  return requestApi<UserTargetSettings>('/api/user-settings/targets')
+}
+
+export async function updateUserTargetSettings(payload: UserTargetSettings): Promise<UserTargetSettings> {
+  return requestApi<UserTargetSettings>('/api/user-settings/targets', {
+    method: 'PUT',
+    body: payload,
+  })
 }
 
 // ============================================================================

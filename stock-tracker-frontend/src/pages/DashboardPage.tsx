@@ -4,12 +4,27 @@ import {
   CreateStockInput,
   PORTFOLIO_UPDATED_EVENT,
   PortfolioSummary,
+  StockTransaction,
   createStockTransaction,
   emitPortfolioUpdated,
+  getDisplayLots,
   getPortfolioSummary,
+  getStockTransactions,
+  UserTargetSettings,
+  getUserTargetSettings,
 } from '../api'
 
-function formatMoney(value: number) {
+const DEFAULT_SALE_TARGET_PERCENT = 10
+const DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS = 5
+const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10
+const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15
+const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20
+const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25
+
+function formatMoney(value: number | null) {
+  if (value == null || Number.isNaN(Number(value))) {
+    return '--'
+  }
   return `$${value.toFixed(2)}`
 }
 
@@ -52,6 +67,120 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
+  const [saleTargetsByTicker, setSaleTargetsByTicker] = useState<Record<string, number | null>>({})
+  const [buyTargetsByTicker, setBuyTargetsByTicker] = useState<Record<string, number | null>>({})
+
+  function normalizePositivePercent(value: unknown, fallback: number): number {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+  }
+
+  function normalizeSettings(settings: UserTargetSettings): UserTargetSettings {
+    return {
+      saleTargetPercent: normalizePositivePercent(settings.saleTargetPercent, DEFAULT_SALE_TARGET_PERCENT),
+      buyTargetPercentUnder3DisplayLots: normalizePositivePercent(settings.buyTargetPercentUnder3DisplayLots, DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS),
+      buyTargetPercentFor3DisplayLots: normalizePositivePercent(settings.buyTargetPercentFor3DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS),
+      buyTargetPercentFor4DisplayLots: normalizePositivePercent(settings.buyTargetPercentFor4DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS),
+      buyTargetPercentFor5DisplayLots: normalizePositivePercent(settings.buyTargetPercentFor5DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS),
+      buyTargetPercentFor6OrMoreDisplayLots: normalizePositivePercent(settings.buyTargetPercentFor6OrMoreDisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS),
+    }
+  }
+
+  function buildLatestBuyOrSellByTicker(transactions: StockTransaction[]): Map<string, StockTransaction> {
+    const latestByTicker = new Map<string, StockTransaction>()
+
+    for (const tx of transactions) {
+      const type = String(tx.type || '').toLowerCase()
+      if (type !== 'buy' && type !== 'sell') {
+        continue
+      }
+
+      const price = Number(tx.price)
+      if (!Number.isFinite(price) || price <= 0) {
+        continue
+      }
+
+      const ticker = String(tx.ticker || '').toUpperCase()
+      if (!ticker) {
+        continue
+      }
+
+      const existing = latestByTicker.get(ticker)
+      if (!existing) {
+        latestByTicker.set(ticker, tx)
+        continue
+      }
+
+      const existingTs = new Date(existing.transactionDate).getTime()
+      const currentTs = new Date(tx.transactionDate).getTime()
+      if (currentTs > existingTs) {
+        latestByTicker.set(ticker, tx)
+      }
+    }
+
+    return latestByTicker
+  }
+
+  function getBuyTargetPercentForDisplayLotCount(settings: UserTargetSettings, displayLotCount: number): number {
+    if (displayLotCount < 3) {
+      return settings.buyTargetPercentUnder3DisplayLots
+    }
+    if (displayLotCount === 3) {
+      return settings.buyTargetPercentFor3DisplayLots
+    }
+    if (displayLotCount === 4) {
+      return settings.buyTargetPercentFor4DisplayLots
+    }
+    if (displayLotCount === 5) {
+      return settings.buyTargetPercentFor5DisplayLots
+    }
+    return settings.buyTargetPercentFor6OrMoreDisplayLots
+  }
+
+  function calculateSaleTargetsByTicker(
+    summary: PortfolioSummary,
+    latestByTicker: Map<string, StockTransaction>,
+    saleTargetPercent: number
+  ): Record<string, number | null> {
+    const targets: Record<string, number | null> = {}
+    const multiplier = 1 + saleTargetPercent / 100
+    for (const stock of summary.stocks) {
+      const ticker = String(stock.ticker || '').toUpperCase()
+      const baseTx = latestByTicker.get(ticker)
+      const basePrice = Number(baseTx?.price)
+      targets[ticker] = Number.isFinite(basePrice) && basePrice > 0
+        ? basePrice * multiplier
+        : null
+    }
+
+    return targets
+  }
+
+  function calculateBuyTargetsByTicker(
+    summary: PortfolioSummary,
+    latestByTicker: Map<string, StockTransaction>,
+    displayLotCountsByTicker: Record<string, number>,
+    settings: UserTargetSettings
+  ): Record<string, number | null> {
+    const targets: Record<string, number | null> = {}
+
+    for (const stock of summary.stocks) {
+      const ticker = String(stock.ticker || '').toUpperCase()
+      const displayLotCount = Number(displayLotCountsByTicker[ticker] || 0)
+      const buyTargetPercent = getBuyTargetPercentForDisplayLotCount(settings, displayLotCount)
+
+      const baseTx = latestByTicker.get(ticker)
+      const basePrice = Number(baseTx?.price)
+      if (!Number.isFinite(basePrice) || basePrice <= 0) {
+        targets[ticker] = null
+        continue
+      }
+
+      targets[ticker] = basePrice * (1 - buyTargetPercent / 100)
+    }
+
+    return targets
+  }
 
   const buyShares = Number(addStockForm.shares)
   const buyPrice = Number(addStockForm.price)
@@ -71,8 +200,27 @@ export default function DashboardPage() {
     setError(null)
 
     try {
-      const summary = await getPortfolioSummary()
+      const [summary, transactionsResult, settingsResult, displayLotsResult] = await Promise.all([
+        getPortfolioSummary(),
+        getStockTransactions(),
+        getUserTargetSettings(),
+        getDisplayLots(),
+      ])
+
+      const normalizedSettings = normalizeSettings(settingsResult)
+      const latestByTicker = buildLatestBuyOrSellByTicker(transactionsResult)
+      const displayLotCountsByTicker: Record<string, number> = {}
+      for (const lot of displayLotsResult) {
+        const ticker = String(lot.ticker || '').toUpperCase()
+        if (!ticker) {
+          continue
+        }
+        displayLotCountsByTicker[ticker] = Number(displayLotCountsByTicker[ticker] || 0) + 1
+      }
+
       setData(summary)
+      setSaleTargetsByTicker(calculateSaleTargetsByTicker(summary, latestByTicker, normalizedSettings.saleTargetPercent))
+      setBuyTargetsByTicker(calculateBuyTargetsByTicker(summary, latestByTicker, displayLotCountsByTicker, normalizedSettings))
       setLastUpdatedAt(new Date())
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to load summary')
@@ -236,6 +384,8 @@ export default function DashboardPage() {
                   <th>Ticker</th>
                   <th>Total Shares</th>
                   <th>Cost Basis</th>
+                  <th>Buy Target</th>
+                  <th>Sale Target</th>
                   <th>Lots</th>
                 </tr>
               </thead>
@@ -249,6 +399,8 @@ export default function DashboardPage() {
                     </td>
                     <td>{formatShares(row.totalShares)}</td>
                     <td>{formatMoney(row.costBasis)}</td>
+                    <td>{formatMoney(buyTargetsByTicker[row.ticker] ?? null)}</td>
+                    <td>{formatMoney(saleTargetsByTicker[row.ticker] ?? null)}</td>
                     <td>{row.lotCount}</td>
                   </tr>
                 ))}

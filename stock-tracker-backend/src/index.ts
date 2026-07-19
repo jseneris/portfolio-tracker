@@ -8,6 +8,7 @@ import cashRoutes from './routes/cash.js';
 import stockRoutes from './routes/stocks.js';
 import lotsRoutes from './routes/lots.js';
 import displayLotsRoutes from './routes/display-lots.js';
+import userSettingsRoutes from './routes/user-settings.js';
 
 
 const app: Express = express();
@@ -52,6 +53,7 @@ app.use('/api/cash', cashRoutes);
 app.use('/api/stocks', stockRoutes);
 app.use('/api/lots', lotsRoutes);
 app.use('/api/display-lots', displayLotsRoutes);
+app.use('/api/user-settings', userSettingsRoutes);
 
 // Health check
 app.get('/api/health', (req: Request, res: Response) => {

@@ -9,6 +9,7 @@ import {
   splitDisplayLot,
   StockTransaction,
   getPortfolioSummary,
+  getUserTargetSettings,
   getStockTransactionsByTicker,
   getDisplayLotsByTicker,
   getDisplayLotComposition,
@@ -19,6 +20,7 @@ import {
 } from '../api'
 
 const SPLIT_TOLERANCE = 1e-6
+const DEFAULT_SALE_TARGET_PERCENT = 10
 
 function formatMoney(value: number | null) {
   if (value == null || Number.isNaN(Number(value))) {
@@ -58,6 +60,7 @@ export default function HoldingsPage() {
   const [splitQuantitiesInput, setSplitQuantitiesInput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [saleTargetPercent, setSaleTargetPercent] = useState<number>(DEFAULT_SALE_TARGET_PERCENT)
 
   const tickers = useMemo(() => {
     return (portfolio?.stocks ?? []).map((stock) => stock.ticker)
@@ -85,6 +88,52 @@ export default function HoldingsPage() {
   useEffect(() => {
     loadPortfolio()
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadUserTargetSettings() {
+      try {
+        const settings = await getUserTargetSettings()
+        if (!cancelled) {
+          const percent = Number(settings.saleTargetPercent)
+          if (Number.isFinite(percent) && percent > 0) {
+            setSaleTargetPercent(percent)
+          }
+        }
+      } catch {
+        // Keep default when settings are unavailable.
+      }
+    }
+
+    loadUserTargetSettings()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const latestBuyOrSellTransaction = useMemo(() => {
+    const candidates = transactions
+      .filter((tx) => (tx.type === 'buy' || tx.type === 'sell') && Number.isFinite(Number(tx.price)))
+      .slice()
+      .sort((a, b) => new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime())
+
+    return candidates[0] ?? null
+  }, [transactions])
+
+  const saleTargetPrice = useMemo(() => {
+    if (!latestBuyOrSellTransaction) {
+      return null
+    }
+
+    const basePrice = Number(latestBuyOrSellTransaction.price)
+    if (!Number.isFinite(basePrice) || basePrice <= 0) {
+      return null
+    }
+
+    return basePrice * (1 + saleTargetPercent / 100)
+  }, [latestBuyOrSellTransaction, saleTargetPercent])
 
   useEffect(() => {
     if (!selectedTicker) {
@@ -386,6 +435,14 @@ export default function HoldingsPage() {
 
           <div className="panel">
             <h3>Transactions ({selectedTicker})</h3>
+            <p>
+              Sale target uses the most recent buy/sell price and your configured percentage ({saleTargetPercent.toFixed(2)}%).
+            </p>
+            <p>
+              Latest buy/sell price: {formatMoney(latestBuyOrSellTransaction ? Number(latestBuyOrSellTransaction.price) : null)}
+              {' | '}
+              Sale target: {formatMoney(saleTargetPrice)}
+            </p>
             {detailsLoading ? (
               <p>Loading transactions...</p>
             ) : transactions.length === 0 ? (

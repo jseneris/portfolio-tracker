@@ -458,6 +458,74 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     END
   `);
 
+  await request.batch(`
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'UserSettings')
+    CREATE TABLE UserSettings (
+      id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+      userId NVARCHAR(255) NOT NULL,
+      saleTargetPercent DECIMAL(9, 4) NOT NULL DEFAULT 10,
+      buyTargetPercentUnder3DisplayLots DECIMAL(9, 4) NOT NULL DEFAULT 5,
+      buyTargetPercentFor3DisplayLots DECIMAL(9, 4) NOT NULL DEFAULT 10,
+      buyTargetPercentFor4DisplayLots DECIMAL(9, 4) NOT NULL DEFAULT 15,
+      buyTargetPercentFor5DisplayLots DECIMAL(9, 4) NOT NULL DEFAULT 20,
+      buyTargetPercentFor6OrMoreDisplayLots DECIMAL(9, 4) NOT NULL DEFAULT 25,
+      createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+      updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+    );
+  `);
+
+  await request.batch(`
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('UserSettings') AND name = 'buyTargetPercentUnder3DisplayLots')
+      ALTER TABLE UserSettings ADD buyTargetPercentUnder3DisplayLots DECIMAL(9, 4) NULL;
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('UserSettings') AND name = 'buyTargetPercentFor3DisplayLots')
+      ALTER TABLE UserSettings ADD buyTargetPercentFor3DisplayLots DECIMAL(9, 4) NULL;
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('UserSettings') AND name = 'buyTargetPercentFor4DisplayLots')
+      ALTER TABLE UserSettings ADD buyTargetPercentFor4DisplayLots DECIMAL(9, 4) NULL;
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('UserSettings') AND name = 'buyTargetPercentFor5DisplayLots')
+      ALTER TABLE UserSettings ADD buyTargetPercentFor5DisplayLots DECIMAL(9, 4) NULL;
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('UserSettings') AND name = 'buyTargetPercentFor6OrMoreDisplayLots')
+      ALTER TABLE UserSettings ADD buyTargetPercentFor6OrMoreDisplayLots DECIMAL(9, 4) NULL;
+  `);
+
+  await request.batch(`
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_UserSettings_UserId')
+      CREATE UNIQUE INDEX UX_UserSettings_UserId ON UserSettings(userId);
+  `);
+
+  await request.batch(`
+    UPDATE UserSettings
+    SET saleTargetPercent = 10
+    WHERE saleTargetPercent IS NULL OR saleTargetPercent <= 0;
+
+    UPDATE UserSettings
+    SET buyTargetPercentUnder3DisplayLots = 5
+    WHERE buyTargetPercentUnder3DisplayLots IS NULL OR buyTargetPercentUnder3DisplayLots <= 0;
+
+    UPDATE UserSettings
+    SET buyTargetPercentFor3DisplayLots = 10
+    WHERE buyTargetPercentFor3DisplayLots IS NULL OR buyTargetPercentFor3DisplayLots <= 0;
+
+    UPDATE UserSettings
+    SET buyTargetPercentFor4DisplayLots = 15
+    WHERE buyTargetPercentFor4DisplayLots IS NULL OR buyTargetPercentFor4DisplayLots <= 0;
+
+    UPDATE UserSettings
+    SET buyTargetPercentFor5DisplayLots = 20
+    WHERE buyTargetPercentFor5DisplayLots IS NULL OR buyTargetPercentFor5DisplayLots <= 0;
+
+    UPDATE UserSettings
+    SET buyTargetPercentFor6OrMoreDisplayLots = 25
+    WHERE buyTargetPercentFor6OrMoreDisplayLots IS NULL OR buyTargetPercentFor6OrMoreDisplayLots <= 0;
+  `);
+
+  await request.batch(`
+    ALTER TABLE UserSettings ALTER COLUMN buyTargetPercentUnder3DisplayLots DECIMAL(9, 4) NOT NULL;
+    ALTER TABLE UserSettings ALTER COLUMN buyTargetPercentFor3DisplayLots DECIMAL(9, 4) NOT NULL;
+    ALTER TABLE UserSettings ALTER COLUMN buyTargetPercentFor4DisplayLots DECIMAL(9, 4) NOT NULL;
+    ALTER TABLE UserSettings ALTER COLUMN buyTargetPercentFor5DisplayLots DECIMAL(9, 4) NOT NULL;
+    ALTER TABLE UserSettings ALTER COLUMN buyTargetPercentFor6OrMoreDisplayLots DECIMAL(9, 4) NOT NULL;
+  `);
+
   console.log('✓ Database tables initialized');
 }
 

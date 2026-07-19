@@ -6,6 +6,7 @@ import HoldingsPage from './pages/HoldingsPage'
 import StockHistoryPage from './pages/StockHistoryPage'
 import Comparison2021Page from './pages/Comparison2021Page'
 import StockSplitsPage from './pages/StockSplitsPage'
+import UserSettingsPage from './pages/UserSettingsPage'
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
           <NavLink to="/holdings">Holdings</NavLink>
           <NavLink to="/splits">Splits</NavLink>
           <NavLink to="/comparison-2021">2021 Compare</NavLink>
+          <NavLink to="/user-settings">User</NavLink>
         </nav>
       </header>
 
@@ -31,6 +33,7 @@ export default function App() {
           <Route path="/holdings" element={<HoldingsPage />} />
           <Route path="/splits" element={<StockSplitsPage />} />
           <Route path="/comparison-2021" element={<Comparison2021Page />} />
+          <Route path="/user-settings" element={<UserSettingsPage />} />
         </Routes>
       </main>
     </div>
