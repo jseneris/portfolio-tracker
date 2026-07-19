@@ -274,6 +274,60 @@ export default function StockHistoryPage() {
     return values
   }, [transactions, splitEvents])
 
+  const preSplitLotValuesById = useMemo(() => {
+    const values: Record<string, { remaining: number; unitCost: number; hasAdjustment: boolean }> = {}
+
+    if (!isSell) {
+      return values
+    }
+
+    const saleDay = toUtcDayTimestamp(form.transactionDate)
+    if (!Number.isFinite(saleDay)) {
+      return values
+    }
+
+    const splitTimeline = splitEvents
+      .map((split) => ({
+        day: toUtcDayTimestamp(split.splitDate),
+        multiplier: Number(split.multiplier),
+      }))
+      .filter((entry) => Number.isFinite(entry.day) && Number.isFinite(entry.multiplier) && entry.multiplier > 0)
+
+    for (const lot of availableLots) {
+      let cumulativeMultiplier = 1
+
+      for (const split of splitTimeline) {
+        if (saleDay <= split.day) {
+          cumulativeMultiplier *= split.multiplier
+        }
+      }
+
+      const currentRemaining = Number(lot.remainingQuantity)
+      const currentUnitCost = Number(lot.unitCost)
+
+      const preSplitRemaining = Number.isFinite(currentRemaining) && cumulativeMultiplier > 0
+        ? currentRemaining / cumulativeMultiplier
+        : currentRemaining
+
+      const preSplitUnitCost = Number.isFinite(currentUnitCost)
+        ? currentUnitCost * cumulativeMultiplier
+        : currentUnitCost
+
+      values[lot.id] = {
+        remaining: preSplitRemaining,
+        unitCost: preSplitUnitCost,
+        hasAdjustment: Math.abs(cumulativeMultiplier - 1) > ALLOCATION_TOLERANCE,
+      }
+    }
+
+    return values
+  }, [isSell, form.transactionDate, splitEvents, availableLots])
+
+  const hasPreSplitLotAdjustments = useMemo(
+    () => Object.values(preSplitLotValuesById).some((value) => value.hasAdjustment),
+    [preSplitLotValuesById]
+  )
+
   function validateStockForm(formState: StockFormState): string | null {
     const quantity = Number(formState.quantity)
     if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -937,6 +991,13 @@ export default function StockHistoryPage() {
                 ) : null}
 
                 {!loadingLots && availableLots.length > 0 ? (
+                  <>
+                    {hasPreSplitLotAdjustments ? (
+                      <div className="status status-warning" style={{ marginBottom: '0.75rem' }}>
+                        Showing pre-split lot values based on selected sale date.
+                        Allocation inputs use pre-split share quantities.
+                      </div>
+                    ) : null}
                   <table className="table">
                     <thead>
                       <tr>
@@ -948,27 +1009,37 @@ export default function StockHistoryPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {availableLots.map((lot) => (
-                        <tr key={lot.id}>
-                          <td>{lot.sourceType === 'purchase' ? 'Buy' : 'Dividend'}</td>
-                          <td>{formatDate(lot.purchaseDate)}</td>
-                          <td>{formatNumber(lot.remainingQuantity, 6)}</td>
-                          <td>{formatMoney(lot.unitCost)}</td>
-                          <td>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.00000001"
-                              max={Number(lot.remainingQuantity).toString()}
-                              value={allocations[lot.id] ?? ''}
-                              onChange={(event) => setAllocation(lot.id, event.target.value)}
-                              disabled={saving}
-                            />
-                          </td>
-                        </tr>
-                      ))}
+                      {availableLots.map((lot) => {
+                        const preSplitLot = preSplitLotValuesById[lot.id]
+                        const displayRemaining = preSplitLot ? preSplitLot.remaining : Number(lot.remainingQuantity)
+                        const displayUnitCost = preSplitLot ? preSplitLot.unitCost : Number(lot.unitCost)
+                        const inputMax = Number.isFinite(displayRemaining)
+                          ? displayRemaining.toFixed(8)
+                          : Number(lot.remainingQuantity).toString()
+
+                        return (
+                          <tr key={lot.id}>
+                            <td>{lot.sourceType === 'purchase' ? 'Buy' : 'Dividend'}</td>
+                            <td>{formatDate(lot.purchaseDate)}</td>
+                            <td>{formatNumber(displayRemaining, 6)}</td>
+                            <td>{formatMoney(displayUnitCost)}</td>
+                            <td>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.00000001"
+                                max={inputMax}
+                                value={allocations[lot.id] ?? ''}
+                                onChange={(event) => setAllocation(lot.id, event.target.value)}
+                                disabled={saving}
+                              />
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
+                  </>
                 ) : null}
               </div>
             ) : null}

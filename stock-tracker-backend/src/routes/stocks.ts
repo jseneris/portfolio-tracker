@@ -8,11 +8,13 @@ const router = Router();
 const yahooFinance = new YahooFinance();
 
 const ALLOCATION_TOLERANCE = 1e-6;
+const SPLIT_TOLERANCE = 1e-6;
 const HISTORICAL_PRICE_SOURCE = 'yahoo-finance';
 const GLOBAL_HISTORICAL_PRICE_USER_ID = 'GLOBAL';
 const HISTORICAL_2021_START_DATE = '2021-01-01';
 const HISTORICAL_2021_END_DATE = '2021-12-31';
 const HISTORICAL_SYNC_2021_MAX_ROWS_PER_RUN = 10000;
+const BACKDATED_LOOKAHEAD_DAYS = 180;
 const DOW_BENCHMARK_TICKER = '^DJI';
 const NASDAQ_BENCHMARK_TICKER = '^IXIC';
 const SP500_BENCHMARK_TICKER = '^GSPC';
@@ -43,6 +45,21 @@ interface ExistingSplit {
 interface PricePoint {
   marketDate: string;
   close: number;
+}
+
+interface SplitPoint {
+  splitDate: string;
+  ratioNumerator: number;
+  ratioDenominator: number;
+  multiplier: number;
+}
+
+interface BackdatedMarketDataSyncSummary {
+  backdatedCheckPerformed: boolean;
+  splitCheckPerformed: boolean;
+  historicalPricesInserted: number;
+  splitsDiscovered: number;
+  splitsInserted: number;
 }
 
 interface ComparisonPoint {
@@ -102,6 +119,529 @@ function resolveClosestPriceOnOrBefore(quotes: PricePoint[], requestedDate: stri
   }
 
   return best;
+}
+
+function getUtcTodayDateOnly(): Date {
+  return parseDateOnly(toIsoDate(new Date()));
+}
+
+function parseSplitRatio(splitRow: any): { numerator: number; denominator: number } | null {
+  const directNumerator = Number(splitRow?.numerator);
+  const directDenominator = Number(splitRow?.denominator);
+  if (Number.isFinite(directNumerator) && directNumerator > 0 && Number.isFinite(directDenominator) && directDenominator > 0) {
+    return { numerator: directNumerator, denominator: directDenominator };
+  }
+
+  const splitRatio = splitRow?.splitRatio;
+  if (typeof splitRatio === 'string') {
+    const match = splitRatio.trim().match(/^(\d+(?:\.\d+)?)\s*[/:]\s*(\d+(?:\.\d+)?)$/);
+    if (match) {
+      const numerator = Number(match[1]);
+      const denominator = Number(match[2]);
+      if (Number.isFinite(numerator) && numerator > 0 && Number.isFinite(denominator) && denominator > 0) {
+        return { numerator, denominator };
+      }
+    }
+  }
+
+  const numericSplitRatio = Number(splitRatio);
+  if (Number.isFinite(numericSplitRatio) && numericSplitRatio > 0) {
+    return { numerator: numericSplitRatio, denominator: 1 };
+  }
+
+  return null;
+}
+
+function parseSplitEventDate(splitRow: any, splitKey?: string): string | null {
+  const rawDate = splitRow?.date ?? splitKey;
+  let parsedDate: Date;
+
+  if (typeof rawDate === 'number' && Number.isFinite(rawDate)) {
+    parsedDate = rawDate > 1_000_000_000_000 ? new Date(rawDate) : new Date(rawDate * 1000);
+  } else if (rawDate instanceof Date) {
+    parsedDate = rawDate;
+  } else if (typeof rawDate === 'string') {
+    const numericRawDate = Number(rawDate);
+    if (Number.isFinite(numericRawDate)) {
+      parsedDate = numericRawDate > 1_000_000_000_000
+        ? new Date(numericRawDate)
+        : new Date(numericRawDate * 1000);
+    } else {
+      parsedDate = new Date(rawDate);
+    }
+  } else {
+    return null;
+  }
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return null;
+  }
+
+  return toIsoDate(parsedDate);
+}
+
+async function fetchYahooSplitEvents(ticker: string, startDate: string, endDate: string): Promise<SplitPoint[]> {
+  const period1 = parseDateOnly(startDate);
+  const period2 = addUtcDays(parseDateOnly(endDate), 1);
+
+  const chart = await yahooFinance.chart(ticker, {
+    period1,
+    period2,
+    interval: '1d',
+    events: 'split'
+  } as any);
+
+  const rawSplitsNode = (chart as any)?.events?.splits;
+  const rawSplitEntries: Array<{ splitKey: string; splitRow: any }> = Array.isArray(rawSplitsNode)
+    ? rawSplitsNode.map((splitRow: any, index: number) => ({ splitKey: String(index), splitRow }))
+    : rawSplitsNode && typeof rawSplitsNode === 'object'
+      ? Object.entries(rawSplitsNode).map(([splitKey, splitRow]) => ({ splitKey, splitRow }))
+      : [];
+
+  const deduped = new Map<string, SplitPoint>();
+  for (const { splitKey, splitRow } of rawSplitEntries) {
+    const splitDate = parseSplitEventDate(splitRow, splitKey);
+    if (!splitDate) {
+      continue;
+    }
+
+    const ratio = parseSplitRatio(splitRow);
+    if (!ratio) {
+      continue;
+    }
+
+    const multiplier = ratio.numerator / ratio.denominator;
+    if (!Number.isFinite(multiplier) || multiplier <= 0) {
+      continue;
+    }
+
+    const dedupeKey = `${splitDate}|${ratio.numerator.toFixed(8)}|${ratio.denominator.toFixed(8)}`;
+    if (!deduped.has(dedupeKey)) {
+      deduped.set(dedupeKey, {
+        splitDate,
+        ratioNumerator: ratio.numerator,
+        ratioDenominator: ratio.denominator,
+        multiplier
+      });
+    }
+  }
+
+  return Array.from(deduped.values()).sort((a, b) => a.splitDate.localeCompare(b.splitDate));
+}
+
+async function reconcileDisplayLotsAfterSplit(tx: sql.Transaction, ticker: string): Promise<void> {
+  const userRows = await new sql.Request(tx)
+    .input('ticker', sql.NVarChar, ticker)
+    .query(`
+      SELECT DISTINCT userId
+      FROM PurchaseLots
+      WHERE ticker = @ticker AND sourceType = 'purchase'
+      UNION
+      SELECT DISTINCT userId
+      FROM DisplayLots
+      WHERE ticker = @ticker
+    `);
+
+  for (const userRow of userRows.recordset as any[]) {
+    const userId = String(userRow.userId || '');
+    if (!userId) {
+      continue;
+    }
+
+    const openPurchaseTotalRow = await new sql.Request(tx)
+      .input('userId', sql.NVarChar, userId)
+      .input('ticker', sql.NVarChar, ticker)
+      .query(`
+        SELECT COALESCE(SUM(remainingQuantity), 0) AS total
+        FROM PurchaseLots
+        WHERE userId = @userId
+          AND ticker = @ticker
+          AND sourceType = 'purchase'
+          AND remainingQuantity > 0
+      `);
+
+    const targetTotal = Number(openPurchaseTotalRow.recordset[0]?.total || 0);
+
+    const displayLotsResult = await new sql.Request(tx)
+      .input('userId', sql.NVarChar, userId)
+      .input('ticker', sql.NVarChar, ticker)
+      .query(`
+        SELECT id, totalQuantity
+        FROM DisplayLots
+        WHERE userId = @userId
+          AND ticker = @ticker
+          AND totalQuantity > 0
+        ORDER BY totalQuantity ASC, createdAt ASC
+      `);
+
+    const displayRows = displayLotsResult.recordset as any[];
+    const displayTotal = displayRows.reduce((sum, row) => {
+      const qty = Number(row.totalQuantity);
+      return Number.isFinite(qty) ? sum + qty : sum;
+    }, 0);
+
+    const delta = targetTotal - displayTotal;
+
+    if (delta > SPLIT_TOLERANCE) {
+      await new sql.Request(tx)
+        .input('id', sql.UniqueIdentifier, uuidv4())
+        .input('userId', sql.NVarChar, userId)
+        .input('ticker', sql.NVarChar, ticker)
+        .input('totalQuantity', sql.Decimal(18, 8), delta)
+        .query(`
+          INSERT INTO DisplayLots (id, userId, ticker, totalQuantity)
+          VALUES (@id, @userId, @ticker, @totalQuantity)
+        `);
+      continue;
+    }
+
+    if (delta < -SPLIT_TOLERANCE) {
+      let toExhaust = Math.abs(delta);
+
+      for (const row of displayRows) {
+        if (toExhaust <= SPLIT_TOLERANCE) {
+          break;
+        }
+
+        const lotId = String(row.id);
+        const lotQty = Number(row.totalQuantity);
+        if (!Number.isFinite(lotQty) || lotQty <= SPLIT_TOLERANCE) {
+          continue;
+        }
+
+        const reduceBy = Math.min(lotQty, toExhaust);
+        toExhaust -= reduceBy;
+
+        await new sql.Request(tx)
+          .input('displayLotId', sql.UniqueIdentifier, lotId)
+          .input('userId', sql.NVarChar, userId)
+          .input('reduceBy', sql.Decimal(18, 8), reduceBy)
+          .query(`
+            UPDATE DisplayLots
+            SET totalQuantity = CASE
+              WHEN totalQuantity - @reduceBy < 0 THEN 0
+              ELSE totalQuantity - @reduceBy
+            END,
+            updatedAt = GETUTCDATE()
+            WHERE id = @displayLotId AND userId = @userId
+          `);
+      }
+    }
+  }
+}
+
+async function insertSplitAndApplyHistoricalAdjustments(
+  pool: sql.ConnectionPool,
+  userId: string,
+  ticker: string,
+  split: SplitPoint
+): Promise<boolean> {
+  const tx = new sql.Transaction(pool);
+  await tx.begin();
+
+  try {
+    const splitId = uuidv4();
+    const splitDate = parseDateOnly(split.splitDate);
+
+    const insertResult = await new sql.Request(tx)
+      .input('id', sql.UniqueIdentifier, splitId)
+      .input('userId', sql.NVarChar, userId)
+      .input('ticker', sql.NVarChar, ticker)
+      .input('ratioNumerator', sql.Decimal(18, 8), split.ratioNumerator)
+      .input('ratioDenominator', sql.Decimal(18, 8), split.ratioDenominator)
+      .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+      .input('splitDate', sql.DateTime2, splitDate)
+      .query(`
+        INSERT INTO StockSplits (id, userId, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
+        SELECT @id, @userId, @ticker, @ratioNumerator, @ratioDenominator, @multiplier, @splitDate
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM StockSplits
+          WHERE ticker = @ticker
+            AND ratioNumerator = @ratioNumerator
+            AND ratioDenominator = @ratioDenominator
+            AND splitDate = @splitDate
+        )
+      `);
+
+    if (!Array.isArray(insertResult.rowsAffected) || Number(insertResult.rowsAffected[0] || 0) <= 0) {
+      await tx.commit();
+      return false;
+    }
+
+    const lotTargets = await new sql.Request(tx)
+      .input('ticker', sql.NVarChar, ticker)
+      .input('splitDate', sql.DateTime2, splitDate)
+      .query(`
+        SELECT id, userId
+        FROM PurchaseLots
+        WHERE ticker = @ticker AND purchaseDate <= @splitDate
+      `);
+
+    await new sql.Request(tx)
+      .input('ticker', sql.NVarChar, ticker)
+      .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+      .input('splitDate', sql.DateTime2, splitDate)
+      .input('splitId', sql.UniqueIdentifier, splitId)
+      .query(`
+        UPDATE PurchaseLots
+        SET originalQuantity = originalQuantity * @multiplier,
+            remainingQuantity = remainingQuantity * @multiplier,
+            unitCost = unitCost / @multiplier,
+            splitAdjusted = 1,
+            lastSplitId = @splitId,
+            updatedAt = GETUTCDATE()
+        WHERE ticker = @ticker AND purchaseDate <= @splitDate
+      `);
+
+    for (const lot of lotTargets.recordset as any[]) {
+      await new sql.Request(tx)
+        .input('id', sql.UniqueIdentifier, uuidv4())
+        .input('splitId', sql.UniqueIdentifier, splitId)
+        .input('userId', sql.NVarChar, lot.userId)
+        .input('entityType', sql.NVarChar, 'lot')
+        .input('entityId', sql.UniqueIdentifier, lot.id)
+        .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+        .query(`
+          INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
+          VALUES (@id, @splitId, @userId, @entityType, @entityId, @multiplier)
+        `);
+    }
+
+    const transactionTargets = await new sql.Request(tx)
+      .input('ticker', sql.NVarChar, ticker)
+      .input('splitDate', sql.DateTime2, splitDate)
+      .query(`
+        SELECT id, userId
+        FROM StockTransactions
+        WHERE ticker = @ticker AND transactionDate <= @splitDate AND type IN ('buy', 'sell', 'div')
+      `);
+
+    await new sql.Request(tx)
+      .input('ticker', sql.NVarChar, ticker)
+      .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+      .input('splitDate', sql.DateTime2, splitDate)
+      .input('splitId', sql.UniqueIdentifier, splitId)
+      .query(`
+        UPDATE StockTransactions
+        SET quantity = CASE WHEN quantity IS NOT NULL THEN quantity * @multiplier ELSE NULL END,
+            price = CASE WHEN price IS NOT NULL AND quantity IS NOT NULL THEN price / @multiplier ELSE price END,
+            splitAdjusted = 1,
+            lastSplitId = @splitId,
+            updatedAt = GETUTCDATE()
+        WHERE ticker = @ticker AND transactionDate <= @splitDate AND type IN ('buy', 'sell', 'div')
+      `);
+
+    for (const stockTx of transactionTargets.recordset as any[]) {
+      await new sql.Request(tx)
+        .input('id', sql.UniqueIdentifier, uuidv4())
+        .input('splitId', sql.UniqueIdentifier, splitId)
+        .input('userId', sql.NVarChar, stockTx.userId)
+        .input('entityType', sql.NVarChar, 'transaction')
+        .input('entityId', sql.UniqueIdentifier, stockTx.id)
+        .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+        .query(`
+          INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
+          VALUES (@id, @splitId, @userId, @entityType, @entityId, @multiplier)
+        `);
+    }
+
+    const allocationTargets = await new sql.Request(tx)
+      .input('ticker', sql.NVarChar, ticker)
+      .input('splitDate', sql.DateTime2, splitDate)
+      .query(`
+        SELECT pla.id, pla.userId
+        FROM PurchaseLotAllocations pla
+        JOIN StockTransactions st ON pla.saleTransactionId = st.id
+        WHERE st.ticker = @ticker AND st.transactionDate <= @splitDate
+      `);
+
+    await new sql.Request(tx)
+      .input('ticker', sql.NVarChar, ticker)
+      .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+      .input('splitDate', sql.DateTime2, splitDate)
+      .query(`
+        UPDATE pla
+        SET pla.quantityConsumed = pla.quantityConsumed * @multiplier,
+            pla.updatedAt = GETUTCDATE()
+        FROM PurchaseLotAllocations pla
+        JOIN StockTransactions st ON pla.saleTransactionId = st.id
+        WHERE st.ticker = @ticker AND st.transactionDate <= @splitDate
+      `);
+
+    for (const allocation of allocationTargets.recordset as any[]) {
+      await new sql.Request(tx)
+        .input('id', sql.UniqueIdentifier, uuidv4())
+        .input('splitId', sql.UniqueIdentifier, splitId)
+        .input('userId', sql.NVarChar, allocation.userId)
+        .input('entityType', sql.NVarChar, 'allocation')
+        .input('entityId', sql.UniqueIdentifier, allocation.id)
+        .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+        .query(`
+          INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
+          VALUES (@id, @splitId, @userId, @entityType, @entityId, @multiplier)
+        `);
+    }
+
+    await reconcileDisplayLotsAfterSplit(tx, ticker);
+
+    await tx.commit();
+    return true;
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
+}
+
+async function ensureBackfilledMarketDataForBackdatedTransaction(
+  pool: sql.ConnectionPool,
+  userId: string,
+  ticker: string,
+  transactionDate: Date
+): Promise<BackdatedMarketDataSyncSummary> {
+  const summary: BackdatedMarketDataSyncSummary = {
+    backdatedCheckPerformed: false,
+    splitCheckPerformed: false,
+    historicalPricesInserted: 0,
+    splitsDiscovered: 0,
+    splitsInserted: 0,
+  };
+
+  const todayUtc = getUtcTodayDateOnly();
+  if (transactionDate.getTime() >= todayUtc.getTime()) {
+    return summary;
+  }
+
+  summary.backdatedCheckPerformed = true;
+
+  const startDate = toIsoDate(transactionDate);
+  const backfillCandidateEnd = addUtcDays(parseDateOnly(startDate), BACKDATED_LOOKAHEAD_DAYS);
+  const backfillEnd = backfillCandidateEnd.getTime() < todayUtc.getTime() ? backfillCandidateEnd : todayUtc;
+  const backfillEndDate = toIsoDate(backfillEnd);
+
+  // Only backfill the 180-day window when the transaction date itself is missing.
+  const hasPriceForTransactionDate = await pool.request()
+    .input('ticker', sql.NVarChar, ticker)
+    .input('priceDate', sql.Date, parseDateOnly(startDate))
+    .query(`
+      SELECT TOP 1 id
+      FROM HistoricalPrices
+      WHERE ticker = @ticker
+        AND priceDate = @priceDate
+    `);
+
+  if (hasPriceForTransactionDate.recordset.length === 0) {
+    const requestedDates = buildDateRangeInclusive(startDate, backfillEndDate);
+
+    const existingRows = await pool.request()
+      .input('ticker', sql.NVarChar, ticker)
+      .input('startDate', sql.Date, parseDateOnly(startDate))
+      .input('endDate', sql.Date, parseDateOnly(backfillEndDate))
+      .query(`
+        SELECT CONVERT(VARCHAR(10), priceDate, 23) AS priceDate
+        FROM HistoricalPrices
+        WHERE ticker = @ticker
+          AND priceDate >= @startDate
+          AND priceDate <= @endDate
+      `);
+
+    const existingDates = new Set(
+      (existingRows.recordset ?? [])
+        .map((row: any) => String(row.priceDate || ''))
+        .filter((d) => !!d)
+    );
+
+    const missingDates = requestedDates.filter((dateText) => !existingDates.has(dateText));
+    if (missingDates.length > 0) {
+      const quotes = await fetchYahooDailyCloses(ticker, startDate, backfillEndDate);
+
+      for (const priceDate of missingDates) {
+        const matched = resolveClosestPriceOnOrBefore(quotes, priceDate);
+        if (!matched) {
+          continue;
+        }
+
+        await pool.request()
+          .input('globalUserId', sql.NVarChar, GLOBAL_HISTORICAL_PRICE_USER_ID)
+          .input('ticker', sql.NVarChar, ticker)
+          .input('priceDate', sql.Date, parseDateOnly(priceDate))
+          .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
+          .input('closePrice', sql.Decimal(18, 8), matched.close)
+          .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
+          .query(`
+            MERGE HistoricalPrices AS target
+            USING (
+              SELECT
+                @globalUserId AS userId,
+                @ticker AS ticker,
+                @priceDate AS priceDate,
+                @source AS source
+            ) AS sourceRow
+            ON target.userId = sourceRow.userId
+               AND target.ticker = sourceRow.ticker
+               AND target.priceDate = sourceRow.priceDate
+               AND target.source = sourceRow.source
+            WHEN MATCHED THEN
+              UPDATE SET
+                marketDate = @marketDate,
+                closePrice = @closePrice,
+                updatedAt = GETUTCDATE()
+            WHEN NOT MATCHED THEN
+              INSERT (id, userId, ticker, priceDate, marketDate, closePrice, source)
+              VALUES (NEWID(), @globalUserId, @ticker, @priceDate, @marketDate, @closePrice, @source);
+          `);
+
+        summary.historicalPricesInserted += 1;
+      }
+    }
+  }
+
+  // Also ensure stock split rows from transaction date through today exist in DB.
+  summary.splitCheckPerformed = true;
+  const yahooSplits = await fetchYahooSplitEvents(ticker, startDate, toIsoDate(todayUtc));
+  summary.splitsDiscovered = yahooSplits.length;
+  if (yahooSplits.length === 0) {
+    return summary;
+  }
+
+  const existingSplitRows = await pool.request()
+    .input('ticker', sql.NVarChar, ticker)
+    .input('startDate', sql.Date, parseDateOnly(startDate))
+    .input('endDate', sql.Date, todayUtc)
+    .query(`
+      SELECT
+        CONVERT(VARCHAR(10), splitDate, 23) AS splitDate,
+        ratioNumerator,
+        ratioDenominator
+      FROM StockSplits
+      WHERE ticker = @ticker
+        AND splitDate >= @startDate
+        AND splitDate <= @endDate
+    `);
+
+  const existingSplitKeys = new Set(
+    (existingSplitRows.recordset ?? []).map((row: any) => {
+      const splitDate = String(row.splitDate || '');
+      const ratioNumerator = Number(row.ratioNumerator || 0).toFixed(8);
+      const ratioDenominator = Number(row.ratioDenominator || 0).toFixed(8);
+      return `${splitDate}|${ratioNumerator}|${ratioDenominator}`;
+    })
+  );
+
+  for (const split of yahooSplits) {
+    const splitKey = `${split.splitDate}|${split.ratioNumerator.toFixed(8)}|${split.ratioDenominator.toFixed(8)}`;
+    if (existingSplitKeys.has(splitKey)) {
+      continue;
+    }
+
+    const inserted = await insertSplitAndApplyHistoricalAdjustments(pool, userId, ticker, split);
+    if (inserted) {
+      existingSplitKeys.add(splitKey);
+      summary.splitsInserted += 1;
+    }
+  }
+
+  return summary;
 }
 
 async function fetchYahooDailyCloses(ticker: string, firstRequestedDate: string, lastRequestedDate: string): Promise<PricePoint[]> {
@@ -998,6 +1538,18 @@ router.post('/', async (req: Request, res: Response) => {
 
     const normalizedTicker = ticker.toUpperCase();
     const pool = getPool();
+    const parsedTransactionDate = new Date(transactionDate);
+
+    if (Number.isNaN(parsedTransactionDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid transactionDate' });
+    }
+
+    const marketDataSync = await ensureBackfilledMarketDataForBackdatedTransaction(
+      pool,
+      userId,
+      normalizedTicker,
+      parsedTransactionDate
+    );
 
     // Calculate amount based on transaction type
     let amount: number | null = null;
@@ -1184,7 +1736,7 @@ router.post('/', async (req: Request, res: Response) => {
         .input('quantity', sql.Decimal(18, 8), finalQuantity ?? null)
         .input('price', sql.Decimal(18, 8), finalPrice ?? null)
         .input('amount', sql.Decimal(18, 4), amount)
-        .input('transactionDate', sql.DateTime2, new Date(transactionDate))
+        .input('transactionDate', sql.DateTime2, parsedTransactionDate)
         .query(`
           INSERT INTO StockTransactions 
           (id, userId, ticker, type, quantity, price, amount, transactionDate)
@@ -1203,7 +1755,7 @@ router.post('/', async (req: Request, res: Response) => {
           .input('transactionId', sql.UniqueIdentifier, id)
           .input('quantity', sql.Decimal(18, 8), quantity)
           .input('price', sql.Decimal(18, 8), price)
-          .input('transactionDate', sql.DateTime2, new Date(transactionDate))
+          .input('transactionDate', sql.DateTime2, parsedTransactionDate)
           .query(`
             INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
             VALUES (@lotId, @userId, @ticker, @transactionId, 'purchase', @quantity, @quantity, @price, @transactionDate)
@@ -1242,7 +1794,7 @@ router.post('/', async (req: Request, res: Response) => {
           .input('transactionId', sql.UniqueIdentifier, id)
           .input('quantity', sql.Decimal(18, 8), quantity)
           .input('price', sql.Decimal(18, 8), price)
-          .input('transactionDate', sql.DateTime2, new Date(transactionDate))
+          .input('transactionDate', sql.DateTime2, parsedTransactionDate)
           .query(`
             INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
             VALUES (@lotId, @userId, @ticker, @transactionId, 'dividend', @quantity, @quantity, @price, @transactionDate)
@@ -1333,14 +1885,23 @@ router.post('/', async (req: Request, res: Response) => {
         tx,
         userId,
         normalizedTicker,
-        new Date(transactionDate),
+        parsedTransactionDate,
         id,
         createdPurchaseLotId,
         createdPurchaseAllocationIds
       );
 
       await tx.commit();
-      res.status(201).json({ id, ticker: normalizedTicker, type, quantity, price, amount, transactionDate });
+      res.status(201).json({
+        id,
+        ticker: normalizedTicker,
+        type,
+        quantity,
+        price,
+        amount,
+        transactionDate,
+        marketDataSync,
+      });
     } catch (innerError) {
       await tx.rollback();
       throw innerError;
