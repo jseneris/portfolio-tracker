@@ -192,13 +192,22 @@ export type SplitDisplayLotResponse = {
 // ============================================================================
 
 export type RecordStockSplitResponse = {
+  splitId: string
+  message: string
+  ticker: string
+  ratioNumerator: number
+  ratioDenominator: number
+  multiplier: number
+}
+
+export type StockSplitEvent = {
   id: string
   ticker: string
-  ratio: string
+  ratioNumerator: number
+  ratioDenominator: number
   multiplier: number
   splitDate: string
-  lotsAdjusted: number
-  transactionsAdjusted: number
+  createdAt?: string
 }
 
 export type HistoricalPrice = {
@@ -357,15 +366,22 @@ export async function recordStockSplit(
   denominator: number,
   splitDate?: string
 ): Promise<RecordStockSplitResponse> {
-  return requestApi<RecordStockSplitResponse>('/api/stocks/split', {
+  return requestApi<RecordStockSplitResponse>(`/api/lots/ticker/${encodeURIComponent(ticker)}/split`, {
     method: 'POST',
     body: {
-      ticker,
-      numerator,
-      denominator,
+      ratioNumerator: numerator,
+      ratioDenominator: denominator,
       splitDate,
     },
   })
+}
+
+export async function getStockSplitsByTicker(ticker: string): Promise<StockSplitEvent[]> {
+  return requestApi<StockSplitEvent[]>(`/api/lots/ticker/${encodeURIComponent(ticker)}/splits`)
+}
+
+export async function getAllStockSplits(): Promise<StockSplitEvent[]> {
+  return requestApi<StockSplitEvent[]>('/api/lots/splits')
 }
 
 export async function syncHistoricalPrices2021(): Promise<SyncHistoricalPrices2021Response> {

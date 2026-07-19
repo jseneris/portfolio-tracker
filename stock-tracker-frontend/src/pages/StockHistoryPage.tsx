@@ -5,6 +5,7 @@ import {
   DisplayLot,
   PurchaseLot,
   SaleAllocation,
+  StockSplitEvent,
   SplitDisplayLotInput,
   StockTransaction,
   StockTransactionType,
@@ -18,6 +19,7 @@ import {
   getOpenPurchaseLots,
   getPurchaseLotsByTicker,
   getSaleAllocations,
+  getStockSplitsByTicker,
   getStockSummaryByTicker,
   getStockTransactionsByTicker,
   getPortfolioSummary,
@@ -74,6 +76,14 @@ function formatDate(value: string) {
   return date.toLocaleDateString(undefined, { timeZone: 'UTC' })
 }
 
+function toUtcDayTimestamp(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return Number.NaN
+  }
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+}
+
 function getPositiveTransactionState(lot: PurchaseLot): PositiveTransactionState {
   const original = Number(lot.originalQuantity)
   const remaining = Number(lot.remainingQuantity)
@@ -116,6 +126,8 @@ export default function StockHistoryPage() {
   const [splitInputs, setSplitInputs] = useState<Record<string, string>>({})
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null)
   const [saleAllocations, setSaleAllocations] = useState<Record<string, SaleAllocation[]>>({})
+  const [splitEvents, setSplitEvents] = useState<StockSplitEvent[]>([])
+  const [showOriginalPreSplit, setShowOriginalPreSplit] = useState(false)
   const [availableCash, setAvailableCash] = useState<number | null>(null)
   const [loadingAllocations, setLoadingAllocations] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -180,6 +192,87 @@ export default function StockHistoryPage() {
       .map((q) => Number(q.toFixed(6)).toString())
       .join(', ')
   }, [displayLots])
+
+  const totalDisplayLotShares = useMemo(() => {
+    return displayLots.reduce((sum, lot) => {
+      const quantity = Number(lot.totalQuantity)
+      return Number.isFinite(quantity) ? sum + quantity : sum
+    }, 0)
+  }, [displayLots])
+
+  const totalOpenPurchaseShares = useMemo(() => {
+    return openLots.reduce((sum, lot) => {
+      const quantity = Number(lot.remainingQuantity)
+      return Number.isFinite(quantity) ? sum + quantity : sum
+    }, 0)
+  }, [openLots])
+
+  const displayLotShareDelta = totalDisplayLotShares - totalOpenPurchaseShares
+  const displayLotsOutOfSync = Math.abs(displayLotShareDelta) > ALLOCATION_TOLERANCE
+
+  const transactionTimeline = useMemo(() => {
+    type TimelineEntry =
+      | { kind: 'transaction'; date: number; transaction: StockTransaction }
+      | { kind: 'split'; date: number; split: StockSplitEvent }
+
+    const txEntries: TimelineEntry[] = transactions.map((transaction) => ({
+      kind: 'transaction',
+      date: new Date(transaction.transactionDate).getTime(),
+      transaction,
+    }))
+
+    const splitEntries: TimelineEntry[] = splitEvents.map((split) => ({
+      kind: 'split',
+      date: new Date(split.splitDate).getTime(),
+      split,
+    }))
+
+    return [...txEntries, ...splitEntries].sort((a, b) => b.date - a.date)
+  }, [transactions, splitEvents])
+
+  const originalTransactionValuesById = useMemo(() => {
+    const splitTimeline = splitEvents
+      .map((split) => ({
+        day: toUtcDayTimestamp(split.splitDate),
+        multiplier: Number(split.multiplier),
+      }))
+      .filter((entry) => Number.isFinite(entry.day) && Number.isFinite(entry.multiplier) && entry.multiplier > 0)
+
+    const values: Record<string, { quantity: number | null; price: number | null; hadSplitAdjustments: boolean }> = {}
+
+    for (const transaction of transactions) {
+      const transactionDay = toUtcDayTimestamp(transaction.transactionDate)
+      let cumulativeMultiplier = 1
+
+      if (Number.isFinite(transactionDay)) {
+        for (const split of splitTimeline) {
+          if (transactionDay <= split.day) {
+            cumulativeMultiplier *= split.multiplier
+          }
+        }
+      }
+
+      const quantity = transaction.quantity == null
+        ? null
+        : Number.isFinite(Number(transaction.quantity))
+          ? Number(transaction.quantity) / cumulativeMultiplier
+          : null
+
+      const price = transaction.price == null
+        ? null
+        : Number.isFinite(Number(transaction.price))
+          ? Number(transaction.price) * cumulativeMultiplier
+          : null
+
+      values[transaction.id] = {
+        quantity,
+        price,
+        hadSplitAdjustments: Math.abs(cumulativeMultiplier - 1) > ALLOCATION_TOLERANCE,
+      }
+    }
+
+    return values
+  }, [transactions, splitEvents])
 
   function validateStockForm(formState: StockFormState): string | null {
     const quantity = Number(formState.quantity)
@@ -253,13 +346,14 @@ export default function StockHistoryPage() {
     setLoading(true)
     setError(null)
     try {
-      const [tickerSummaryData, txData, tickerLots, openLotsData, displayLotsData, portfolioSummaryData] = await Promise.all([
+      const [tickerSummaryData, txData, tickerLots, openLotsData, displayLotsData, portfolioSummaryData, splitEventsData] = await Promise.all([
         getStockSummaryByTicker(ticker),
         getStockTransactionsByTicker(ticker),
         getPurchaseLotsByTicker(ticker),
         getOpenPurchaseLots(ticker),
         getDisplayLotsByTicker(ticker),
         getPortfolioSummary(),
+        getStockSplitsByTicker(ticker),
       ])
       setSummary(tickerSummaryData)
 
@@ -289,6 +383,7 @@ export default function StockHistoryPage() {
       setOpenLots(openLotsData)
       setDisplayLots(displayLotsData)
       setAvailableCash(portfolioSummaryData.availableCash)
+      setSplitEvents(splitEventsData)
 
       const nextStates: Record<string, PositiveTransactionState> = {}
       for (const lot of tickerLots) {
@@ -572,24 +667,48 @@ export default function StockHistoryPage() {
       {loading ? <div className="panel">Loading transactions...</div> : null}
 
       {!loading && !error && summary ? (
-        <div className="panel stat-grid">
-          <div className="stat"><div className="label">Total Shares</div><div className="value">{formatNumber(summary.totalShares, 6)}</div></div>
-          <button
-            className="stat stat-clickable"
-            type="button"
-            onClick={() => { setLotsError(null); setShowLotsModal(true) }}
-          >
-            <div className="label">Display Lots ({displayLots.length})</div>
-            <div className="value">{displayLotSummary}</div>
-            <div className="hint">click to manage</div>
-          </button>
-          <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatMoney(summary.costBasis)}</div></div>
-        </div>
+        <>
+          <div className="panel stat-grid">
+            <div className="stat"><div className="label">Total Shares</div><div className="value">{formatNumber(summary.totalShares, 6)}</div></div>
+            <button
+              className="stat stat-clickable"
+              type="button"
+              onClick={() => { setLotsError(null); setShowLotsModal(true) }}
+            >
+              <div className="label">Display Lots ({displayLots.length})</div>
+              <div className="value">{displayLotSummary}</div>
+              <div className="hint">click to manage</div>
+            </button>
+            <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatMoney(summary.costBasis)}</div></div>
+          </div>
+
+          {displayLotsOutOfSync ? (
+            <div className="panel status status-warning">
+              Display lots are out of sync by {formatNumber(Math.abs(displayLotShareDelta), 6)} shares.
+              Display lots total {formatNumber(totalDisplayLotShares, 6)} while open purchase lots total {formatNumber(totalOpenPurchaseShares, 6)}.
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       {!loading && !error ? (
         <div className="panel">
-          {transactions.length === 0 ? (
+          {splitEvents.length > 0 ? (
+            <div className="row-between" style={{ marginBottom: '0.75rem' }}>
+              <p style={{ margin: 0, color: '#5b6472' }}>
+                Toggle between split-adjusted values and original pre-split values for quantity and price.
+              </p>
+              <button
+                className="button"
+                type="button"
+                onClick={() => setShowOriginalPreSplit((prev) => !prev)}
+              >
+                {showOriginalPreSplit ? 'Showing: Original Pre-Split' : 'Showing: Current Split-Adjusted'}
+              </button>
+            </div>
+          ) : null}
+
+          {transactionTimeline.length === 0 ? (
             <p>No transactions found for {ticker}.</p>
           ) : (
             <table className="table">
@@ -605,80 +724,106 @@ export default function StockHistoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {transactions.map((transaction) => (
-                  <>
-                    <tr key={transaction.id}>
-                      <td>{formatDate(transaction.transactionDate)}</td>
-                      <td>{transaction.type}</td>
-                      <td>
-                        {transaction.type === 'buy' || transaction.type === 'div' ? (
-                          positiveTransactionStates[transaction.id] ? (
-                            <span className={getStatePillClassName(positiveTransactionStates[transaction.id])}>
-                              {positiveTransactionStates[transaction.id]}
-                            </span>
-                          ) : (
-                            <span className="pill pill-muted">--</span>
-                          )
-                        ) : (
-                          <span className="pill pill-muted">--</span>
-                        )}
-                      </td>
-                      <td>{formatNumber(transaction.quantity)}</td>
-                      <td>{formatMoney4(transaction.price)}</td>
-                      <td>{formatMoney(transaction.amount)}</td>
-                      <td>
-                        {transaction.type === 'sell' ? (
-                          <button
-                            className="button button-secondary"
-                            type="button"
-                            onClick={() => toggleSaleAllocations(transaction.id)}
-                            disabled={loadingAllocations}
-                          >
-                            {expandedSaleId === transaction.id ? '▼' : '▶'} Lots
-                          </button>
-                        ) : null}
-                        <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                    {transaction.type === 'sell' && expandedSaleId === transaction.id ? (
-                      <tr>
-                        <td colSpan={7}>
-                          <div style={{ padding: '1rem', backgroundColor: '#f5f5f5' }}>
-                            <h4 style={{ marginTop: 0 }}>Purchase Lots Consumed</h4>
-                            {saleAllocations[transaction.id] && saleAllocations[transaction.id].length > 0 ? (
-                              <table style={{ width: '100%', fontSize: '0.9em', borderCollapse: 'collapse' }}>
-                                <thead>
-                                  <tr style={{ borderBottom: '1px solid #ddd' }}>
-                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Original Type</th>
-                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Purchase Date</th>
-                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Unit Cost</th>
-                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Quantity Consumed</th>
-                                    <th style={{ textAlign: 'left', padding: '0.5rem' }}>Total Cost</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {saleAllocations[transaction.id].map((alloc, index) => (
-                                    <tr key={index} style={{ borderBottom: '1px solid #eee' }}>
-                                      <td style={{ padding: '0.5rem' }}>{alloc.sourceType === 'purchase' ? 'buy' : 'div'}</td>
-                                      <td style={{ padding: '0.5rem' }}>{formatDate(alloc.purchaseDate)}</td>
-                                      <td style={{ padding: '0.5rem' }}>{formatMoney4(alloc.unitCost)}</td>
-                                      <td style={{ padding: '0.5rem' }}>{formatNumber(alloc.quantity)}</td>
-                                      <td style={{ padding: '0.5rem' }}>{formatMoney(alloc.unitCost * alloc.quantity)}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            ) : (
-                              <p>No purchase lots found for this sale.</p>
-                            )}
-                          </div>
+                {transactionTimeline.map((entry) => {
+                  if (entry.kind === 'split') {
+                    return (
+                      <tr key={`split-${entry.split.id}`} style={{ backgroundColor: '#fff7e6' }}>
+                        <td>{formatDate(entry.split.splitDate)}</td>
+                        <td colSpan={6}>
+                          <strong>Stock Split</strong> {entry.split.ratioNumerator}:{entry.split.ratioDenominator}
+                          {' '}({formatNumber(entry.split.multiplier, 8)}x). Older transactions below this row are pre-split.
                         </td>
                       </tr>
-                    ) : null}
-                  </>
-                ))}
+                    )
+                  }
+
+                  const transaction = entry.transaction
+                  const originalValues = originalTransactionValuesById[transaction.id]
+                  const displayQuantity = showOriginalPreSplit ? (originalValues?.quantity ?? transaction.quantity) : transaction.quantity
+                  const displayPrice = showOriginalPreSplit ? (originalValues?.price ?? transaction.price) : transaction.price
+                  return [
+                      <tr key={transaction.id}>
+                        <td>{formatDate(transaction.transactionDate)}</td>
+                        <td>{transaction.type}</td>
+                        <td>
+                          {transaction.type === 'buy' || transaction.type === 'div' ? (
+                            positiveTransactionStates[transaction.id] ? (
+                              <span className={getStatePillClassName(positiveTransactionStates[transaction.id])}>
+                                {positiveTransactionStates[transaction.id]}
+                              </span>
+                            ) : (
+                              <span className="pill pill-muted">--</span>
+                            )
+                          ) : (
+                            <span className="pill pill-muted">--</span>
+                          )}
+                        </td>
+                        <td>
+                          {formatNumber(displayQuantity)}
+                          {showOriginalPreSplit && originalValues?.hadSplitAdjustments ? (
+                            <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>pre-split</div>
+                          ) : null}
+                        </td>
+                        <td>
+                          {formatMoney4(displayPrice)}
+                          {showOriginalPreSplit && originalValues?.hadSplitAdjustments ? (
+                            <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>pre-split</div>
+                          ) : null}
+                        </td>
+                        <td>{formatMoney(transaction.amount)}</td>
+                        <td>
+                          {transaction.type === 'sell' ? (
+                            <button
+                              className="button button-secondary"
+                              type="button"
+                              onClick={() => toggleSaleAllocations(transaction.id)}
+                              disabled={loadingAllocations}
+                            >
+                              {expandedSaleId === transaction.id ? '▼' : '▶'} Lots
+                            </button>
+                          ) : null}
+                          <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
+                            Delete
+                          </button>
+                        </td>
+                      </tr>,
+                      transaction.type === 'sell' && expandedSaleId === transaction.id ? (
+                        <tr key={`${transaction.id}-allocations`}>
+                          <td colSpan={7}>
+                            <div style={{ padding: '1rem', backgroundColor: '#f5f5f5' }}>
+                              <h4 style={{ marginTop: 0 }}>Purchase Lots Consumed</h4>
+                              {saleAllocations[transaction.id] && saleAllocations[transaction.id].length > 0 ? (
+                                <table style={{ width: '100%', fontSize: '0.9em', borderCollapse: 'collapse' }}>
+                                  <thead>
+                                    <tr style={{ borderBottom: '1px solid #ddd' }}>
+                                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Original Type</th>
+                                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Purchase Date</th>
+                                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Unit Cost</th>
+                                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Quantity Consumed</th>
+                                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Total Cost</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {saleAllocations[transaction.id].map((alloc, index) => (
+                                      <tr key={index} style={{ borderBottom: '1px solid #eee' }}>
+                                        <td style={{ padding: '0.5rem' }}>{alloc.sourceType === 'purchase' ? 'buy' : 'div'}</td>
+                                        <td style={{ padding: '0.5rem' }}>{formatDate(alloc.purchaseDate)}</td>
+                                        <td style={{ padding: '0.5rem' }}>{formatMoney4(alloc.unitCost)}</td>
+                                        <td style={{ padding: '0.5rem' }}>{formatNumber(alloc.quantity)}</td>
+                                        <td style={{ padding: '0.5rem' }}>{formatMoney(alloc.unitCost * alloc.quantity)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              ) : (
+                                <p>No purchase lots found for this sale.</p>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null,
+                  ]
+                })}
               </tbody>
             </table>
           )}
@@ -843,6 +988,13 @@ export default function StockHistoryPage() {
               </button>
             </div>
             <p>Check lots to combine them, or enter comma-separated quantities to split a lot.</p>
+
+            {displayLotsOutOfSync ? (
+              <div className="status status-warning">
+                Display lots are out of sync by {formatNumber(Math.abs(displayLotShareDelta), 6)} shares.
+                You can still combine or split display lots, but totals may not match purchase lots until corrected.
+              </div>
+            ) : null}
 
             {lotsError ? <div className="status status-error">{lotsError}</div> : null}
 

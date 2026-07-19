@@ -35,6 +35,11 @@ interface PurchaseLot {
   sourceType?: string;
 }
 
+interface ExistingSplit {
+  id: string;
+  multiplier: number;
+}
+
 interface PricePoint {
   marketDate: string;
   close: number;
@@ -144,6 +149,120 @@ function buildSmallestFirstConsumption(openLots: OpenLot[], sellQuantity: number
   }
 
   return consumptionPlan;
+}
+
+async function applyAutomaticSplitCatchUpForInsertedTransaction(
+  tx: sql.Transaction,
+  userId: string,
+  ticker: string,
+  transactionDate: Date,
+  stockTransactionId: string,
+  createdPurchaseLotId: string | null,
+  createdPurchaseAllocationIds: string[]
+) {
+  const splitRows = await new sql.Request(tx)
+    .input('ticker', sql.NVarChar, ticker)
+    .input('transactionDate', sql.DateTime2, transactionDate)
+    .query(`
+      SELECT id, multiplier
+      FROM StockSplits
+      WHERE ticker = @ticker
+        AND splitDate >= @transactionDate
+      ORDER BY splitDate ASC, createdAt ASC, id ASC
+    `);
+
+  const splits: ExistingSplit[] = (splitRows.recordset ?? []).map((row: any) => ({
+    id: String(row.id),
+    multiplier: Number(row.multiplier),
+  }));
+
+  if (splits.length === 0) {
+    return;
+  }
+
+  for (const split of splits) {
+    await new sql.Request(tx)
+      .input('id', sql.UniqueIdentifier, stockTransactionId)
+      .input('userId', sql.NVarChar, userId)
+      .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+      .input('splitId', sql.UniqueIdentifier, split.id)
+      .query(`
+        UPDATE StockTransactions
+        SET quantity = CASE WHEN quantity IS NOT NULL THEN quantity * @multiplier ELSE NULL END,
+            price = CASE WHEN price IS NOT NULL AND quantity IS NOT NULL THEN price / @multiplier ELSE price END,
+            splitAdjusted = 1,
+            lastSplitId = @splitId,
+            updatedAt = GETUTCDATE()
+        WHERE id = @id AND userId = @userId AND type IN ('buy', 'sell', 'div')
+      `);
+
+    await new sql.Request(tx)
+      .input('id', sql.UniqueIdentifier, uuidv4())
+      .input('splitId', sql.UniqueIdentifier, split.id)
+      .input('userId', sql.NVarChar, userId)
+      .input('entityType', sql.NVarChar, 'transaction')
+      .input('entityId', sql.UniqueIdentifier, stockTransactionId)
+      .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+      .query(`
+        INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
+        VALUES (@id, @splitId, @userId, @entityType, @entityId, @multiplier)
+      `);
+
+    if (createdPurchaseLotId) {
+      await new sql.Request(tx)
+        .input('lotId', sql.UniqueIdentifier, createdPurchaseLotId)
+        .input('userId', sql.NVarChar, userId)
+        .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+        .input('splitId', sql.UniqueIdentifier, split.id)
+        .query(`
+          UPDATE PurchaseLots
+          SET originalQuantity = originalQuantity * @multiplier,
+              remainingQuantity = remainingQuantity * @multiplier,
+              unitCost = unitCost / @multiplier,
+              splitAdjusted = 1,
+              lastSplitId = @splitId,
+              updatedAt = GETUTCDATE()
+          WHERE id = @lotId AND userId = @userId
+        `);
+
+      await new sql.Request(tx)
+        .input('id', sql.UniqueIdentifier, uuidv4())
+        .input('splitId', sql.UniqueIdentifier, split.id)
+        .input('userId', sql.NVarChar, userId)
+        .input('entityType', sql.NVarChar, 'lot')
+        .input('entityId', sql.UniqueIdentifier, createdPurchaseLotId)
+        .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+        .query(`
+          INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
+          VALUES (@id, @splitId, @userId, @entityType, @entityId, @multiplier)
+        `);
+    }
+
+    for (const allocationId of createdPurchaseAllocationIds) {
+      await new sql.Request(tx)
+        .input('allocationId', sql.UniqueIdentifier, allocationId)
+        .input('userId', sql.NVarChar, userId)
+        .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+        .query(`
+          UPDATE PurchaseLotAllocations
+          SET quantityConsumed = quantityConsumed * @multiplier,
+              updatedAt = GETUTCDATE()
+          WHERE id = @allocationId AND userId = @userId
+        `);
+
+      await new sql.Request(tx)
+        .input('id', sql.UniqueIdentifier, uuidv4())
+        .input('splitId', sql.UniqueIdentifier, split.id)
+        .input('userId', sql.NVarChar, userId)
+        .input('entityType', sql.NVarChar, 'allocation')
+        .input('entityId', sql.UniqueIdentifier, allocationId)
+        .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+        .query(`
+          INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
+          VALUES (@id, @splitId, @userId, @entityType, @entityId, @multiplier)
+        `);
+    }
+  }
 }
 
 // GET portfolio summary in one database call (cash summary + stock rollup)
@@ -895,6 +1014,8 @@ router.post('/', async (req: Request, res: Response) => {
     let sellConsumptionPlan: Allocation[] = [];
     let purchaseAttributionPlan: Allocation[] = [];
     let sellPurchaseLots: Array<PurchaseLot & { purchaseDate: Date }> = [];
+    let createdPurchaseLotId: string | null = null;
+    const createdPurchaseAllocationIds: string[] = [];
 
     // Sell transactions require explicit allocations in the request, but matching is applied
     // smallest-lot-first to close out full lots whenever possible.
@@ -1074,6 +1195,7 @@ router.post('/', async (req: Request, res: Response) => {
       // If it's a buy transaction, create a purchase lot and a matching display lot
       if (type === 'buy') {
         const lotId = uuidv4();
+        createdPurchaseLotId = lotId;
         await new sql.Request(tx)
           .input('lotId', sql.UniqueIdentifier, lotId)
           .input('userId', sql.NVarChar, userId)
@@ -1112,6 +1234,7 @@ router.post('/', async (req: Request, res: Response) => {
       // Dividends create only a purchase lot (sourceType=dividend).
       if (type === 'div') {
         const lotId = uuidv4();
+        createdPurchaseLotId = lotId;
         await new sql.Request(tx)
           .input('lotId', sql.UniqueIdentifier, lotId)
           .input('userId', sql.NVarChar, userId)
@@ -1140,6 +1263,7 @@ router.post('/', async (req: Request, res: Response) => {
             `);
 
           const purchaseAllocationId = uuidv4();
+          createdPurchaseAllocationIds.push(purchaseAllocationId);
           await new sql.Request(tx)
             .input('allocationId', sql.UniqueIdentifier, purchaseAllocationId)
             .input('userId', sql.NVarChar, userId)
@@ -1204,6 +1328,16 @@ router.post('/', async (req: Request, res: Response) => {
             `);
         }
       }
+
+      await applyAutomaticSplitCatchUpForInsertedTransaction(
+        tx,
+        userId,
+        normalizedTicker,
+        new Date(transactionDate),
+        id,
+        createdPurchaseLotId,
+        createdPurchaseAllocationIds
+      );
 
       await tx.commit();
       res.status(201).json({ id, ticker: normalizedTicker, type, quantity, price, amount, transactionDate });
