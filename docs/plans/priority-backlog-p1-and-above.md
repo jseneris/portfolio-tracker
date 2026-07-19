@@ -23,4 +23,3 @@ This backlog includes items with priority P1, P2, and P3.
 
 1. Normalize transaction types into lookup tables if richer metadata and easier future expansion are needed.
 2. Add a Users table and foreign key relationships when user lifecycle/profile/authorization metadata becomes necessary.
-3. Rename or clarify StockSplits.userId semantics (actor vs owner) to align with global split behavior.

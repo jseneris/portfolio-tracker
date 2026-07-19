@@ -80,7 +80,6 @@ Records which lot(s) a sale transaction drew from and how much of each lot was c
 ### StockSplits
 Audit record of each stock split applied to a ticker, used to retroactively adjust affected lots/transactions/allocations and to flag which records were touched. A given ticker can have any number of `StockSplits` rows (one per split event); the same `(ticker, ratioNumerator, ratioDenominator, splitDate)` combination cannot be applied twice.
 - **id**: Unique identifier
-- **userId**: User identifier
 - **ticker**: Stock ticker symbol
 - **ratioNumerator**: The "new shares" side of the split ratio as entered by the caller (e.g. `2` for a 2-for-1 split, `5` for a 5-for-3 split)
 - **ratioDenominator**: The "old shares" side of the split ratio as entered by the caller (e.g. `1` for a 2-for-1 split, `3` for a 5-for-3 split)
@@ -93,7 +92,6 @@ Audit record of each stock split applied to a ticker, used to retroactively adju
 	- `multiplier > 0`
 - **uniqueness/indexes**:
 	- `UX_StockSplits_Ticker_Ratio_Date` on `(ticker, ratioNumerator, ratioDenominator, splitDate)`
-	- `IX_StockSplits_UserId`
 	- `IX_StockSplits_Ticker`
 
 ### SplitAdjustments

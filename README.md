@@ -7,6 +7,11 @@ Monorepo for a portfolio tracking MVP with a TypeScript backend and React fronte
 - stock-tracker-backend: API routes for cash, stocks, lots, and portfolio summary.
 - stock-tracker-frontend: MVP UI for dashboard, cash, stocks, and holdings workflows.
 
+## Documentation
+
+- Start with [docs/README.md](docs/README.md) for the cleaned-up docs hub.
+- Canonical living technical docs remain under [instructions/](instructions/).
+
 ## Recent Frontend Changes
 
 - Dashboard Add Stock modal added (ticker, shares, price, date).

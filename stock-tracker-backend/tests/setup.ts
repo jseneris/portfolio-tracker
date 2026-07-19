@@ -22,8 +22,9 @@ export async function clearUserData(): Promise<void> {
   await request.query('DELETE FROM SplitAdjustments WHERE userId = @userId');
   await request.query('DELETE FROM PurchaseLots WHERE userId = @userId');
   await request.query('DELETE FROM StockTransactions WHERE userId = @userId');
-  await request.query('DELETE FROM StockSplits WHERE userId = @userId');
+  await request.query('DELETE FROM StockSplits');
   await request.query('DELETE FROM CashTransactions WHERE userId = @userId');
+  await request.query('DELETE FROM UserSettings WHERE userId = @userId');
 }
 
 /**
@@ -263,7 +264,7 @@ export async function getPurchaseLots(ticker: string): Promise<any[]> {
     .input('userId', sql.NVarChar, TEST_USER_ID)
     .input('ticker', sql.NVarChar, ticker.toUpperCase())
     .query(`
-      SELECT id, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate
+      SELECT id, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate, splitAdjusted, lastSplitId
       FROM PurchaseLots
       WHERE userId = @userId AND ticker = @ticker
       ORDER BY purchaseDate ASC
@@ -351,13 +352,12 @@ export async function applySplit(ticker: string, numerator: number, denominator:
   // Check if this split already exists (idempotency)
   const existingResult = await pool.request()
     .input('ticker', sql.NVarChar, ticker.toUpperCase())
-    .input('userId', sql.NVarChar, TEST_USER_ID)
     .input('numerator', sql.Decimal(18, 8), numerator)
     .input('denominator', sql.Decimal(18, 8), denominator)
     .input('splitDate', sql.DateTime2, splitDate)
     .query(`
       SELECT id FROM StockSplits
-      WHERE ticker = @ticker AND userId = @userId
+      WHERE ticker = @ticker
         AND ratioNumerator = @numerator
         AND ratioDenominator = @denominator
         AND splitDate = @splitDate
@@ -376,15 +376,14 @@ export async function applySplit(ticker: string, numerator: number, denominator:
     // Record split
     await new sql.Request(transaction)
       .input('id', sql.UniqueIdentifier, splitId)
-      .input('userId', sql.NVarChar, TEST_USER_ID)
       .input('ticker', sql.NVarChar, ticker.toUpperCase())
       .input('numerator', sql.Decimal(18, 8), numerator)
       .input('denominator', sql.Decimal(18, 8), denominator)
       .input('multiplier', sql.Decimal(18, 8), multiplier)
       .input('splitDate', sql.DateTime2, splitDate)
       .query(`
-        INSERT INTO StockSplits (id, userId, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
-        VALUES (@id, @userId, @ticker, @numerator, @denominator, @multiplier, @splitDate)
+        INSERT INTO StockSplits (id, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
+        VALUES (@id, @ticker, @numerator, @denominator, @multiplier, @splitDate)
       `);
 
     // Update purchase lots

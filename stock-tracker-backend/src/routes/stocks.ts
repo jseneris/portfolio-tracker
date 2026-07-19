@@ -10,7 +10,6 @@ const yahooFinance = new YahooFinance();
 const ALLOCATION_TOLERANCE = 1e-6;
 const SPLIT_TOLERANCE = 1e-6;
 const HISTORICAL_PRICE_SOURCE = 'yahoo-finance';
-const GLOBAL_HISTORICAL_PRICE_USER_ID = 'GLOBAL';
 const HISTORICAL_2021_START_DATE = '2021-01-01';
 const HISTORICAL_2021_END_DATE = '2021-12-31';
 const HISTORICAL_SYNC_2021_MAX_ROWS_PER_RUN = 10000;
@@ -352,8 +351,8 @@ async function insertSplitAndApplyHistoricalAdjustments(
       .input('multiplier', sql.Decimal(18, 8), split.multiplier)
       .input('splitDate', sql.DateTime2, splitDate)
       .query(`
-        INSERT INTO StockSplits (id, userId, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
-        SELECT @id, @userId, @ticker, @ratioNumerator, @ratioDenominator, @multiplier, @splitDate
+        INSERT INTO StockSplits (id, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
+        SELECT @id, @ticker, @ratioNumerator, @ratioDenominator, @multiplier, @splitDate
         WHERE NOT EXISTS (
           SELECT 1
           FROM StockSplits
@@ -562,7 +561,6 @@ async function ensureBackfilledMarketDataForBackdatedTransaction(
         }
 
         await pool.request()
-          .input('globalUserId', sql.NVarChar, GLOBAL_HISTORICAL_PRICE_USER_ID)
           .input('ticker', sql.NVarChar, ticker)
           .input('priceDate', sql.Date, parseDateOnly(priceDate))
           .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
@@ -572,13 +570,11 @@ async function ensureBackfilledMarketDataForBackdatedTransaction(
             MERGE HistoricalPrices AS target
             USING (
               SELECT
-                @globalUserId AS userId,
                 @ticker AS ticker,
                 @priceDate AS priceDate,
                 @source AS source
             ) AS sourceRow
-            ON target.userId = sourceRow.userId
-               AND target.ticker = sourceRow.ticker
+            ON target.ticker = sourceRow.ticker
                AND target.priceDate = sourceRow.priceDate
                AND target.source = sourceRow.source
             WHEN MATCHED THEN
@@ -587,8 +583,8 @@ async function ensureBackfilledMarketDataForBackdatedTransaction(
                 closePrice = @closePrice,
                 updatedAt = GETUTCDATE()
             WHEN NOT MATCHED THEN
-              INSERT (id, userId, ticker, priceDate, marketDate, closePrice, source)
-              VALUES (NEWID(), @globalUserId, @ticker, @priceDate, @marketDate, @closePrice, @source);
+              INSERT (id, ticker, priceDate, marketDate, closePrice, source)
+              VALUES (NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source);
           `);
 
         summary.historicalPricesInserted += 1;
@@ -1065,7 +1061,6 @@ router.post('/historical-prices/sync-2021', async (req: Request, res: Response) 
         }
 
         await pool.request()
-          .input('globalUserId', sql.NVarChar, GLOBAL_HISTORICAL_PRICE_USER_ID)
           .input('ticker', sql.NVarChar, ticker)
           .input('priceDate', sql.Date, parseDateOnly(priceDate))
           .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
@@ -1075,13 +1070,11 @@ router.post('/historical-prices/sync-2021', async (req: Request, res: Response) 
             MERGE HistoricalPrices AS target
             USING (
               SELECT
-                @globalUserId AS userId,
                 @ticker AS ticker,
                 @priceDate AS priceDate,
                 @source AS source
             ) AS sourceRow
-            ON target.userId = sourceRow.userId
-               AND target.ticker = sourceRow.ticker
+            ON target.ticker = sourceRow.ticker
                AND target.priceDate = sourceRow.priceDate
                AND target.source = sourceRow.source
             WHEN MATCHED THEN
@@ -1090,8 +1083,8 @@ router.post('/historical-prices/sync-2021', async (req: Request, res: Response) 
                 closePrice = @closePrice,
                 updatedAt = GETUTCDATE()
             WHEN NOT MATCHED THEN
-              INSERT (id, userId, ticker, priceDate, marketDate, closePrice, source)
-              VALUES (NEWID(), @globalUserId, @ticker, @priceDate, @marketDate, @closePrice, @source);
+              INSERT (id, ticker, priceDate, marketDate, closePrice, source)
+              VALUES (NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source);
           `);
 
         storedRows += 1;

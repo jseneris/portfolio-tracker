@@ -379,15 +379,14 @@ router.post('/ticker/:ticker/split', async (req: Request, res: Response) => {
 
     await new sql.Request(transaction)
       .input('id', sql.UniqueIdentifier, splitId)
-      .input('userId', sql.NVarChar, actorUserId)
       .input('ticker', sql.NVarChar, normalizedTicker)
       .input('ratioNumerator', sql.Decimal(18, 8), ratioNumerator)
       .input('ratioDenominator', sql.Decimal(18, 8), ratioDenominator)
       .input('multiplier', sql.Decimal(18, 8), multiplier)
       .input('splitDate', sql.DateTime2, parsedSplitDate)
       .query(`
-         INSERT INTO StockSplits (id, userId, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
-         VALUES (@id, @userId, @ticker, @ratioNumerator, @ratioDenominator, @multiplier, @splitDate)
+         INSERT INTO StockSplits (id, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
+         VALUES (@id, @ticker, @ratioNumerator, @ratioDenominator, @multiplier, @splitDate)
          `);
 
     const lotTargets = await new sql.Request(transaction)

@@ -63,7 +63,6 @@ Audit record of each stock split event. Enables retroactive adjustment of lots a
 
 **Columns:**
 - `id` (UNIQUEIDENTIFIER): Primary key, auto-generated
-- `userId` (NVARCHAR(255)): User identifier
 - `ticker` (NVARCHAR(10)): Stock ticker symbol
 - `ratioNumerator` (DECIMAL(18,8)): "New shares" side of ratio (e.g., `2` for 2-for-1)
 - `ratioDenominator` (DECIMAL(18,8)): "Old shares" side of ratio (e.g., `1` for 2-for-1)
@@ -76,7 +75,6 @@ Audit record of each stock split event. Enables retroactive adjustment of lots a
 - Unique constraint on `(ticker, ratioNumerator, ratioDenominator, splitDate)` to prevent duplicate splits
 
 **Indexes:**
-- `IX_StockSplits_UserId`
 - `IX_StockSplits_Ticker`
 - `UX_StockSplits_Ticker_Ratio_Date` unique on `(ticker, ratioNumerator, ratioDenominator, splitDate)`
 

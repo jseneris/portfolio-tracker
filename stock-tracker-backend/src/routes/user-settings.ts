@@ -10,37 +10,6 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25;
 
-async function ensureUserSettingsBuyTargetColumns() {
-  await getPool().request().batch(`
-    IF OBJECT_ID('UserSettings', 'U') IS NULL
-    BEGIN
-      CREATE TABLE UserSettings (
-        id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-        userId NVARCHAR(255) NOT NULL,
-        saleTargetPercent DECIMAL(9, 4) NOT NULL DEFAULT 10,
-        buyTargetPercentUnder3DisplayLots DECIMAL(9, 4) NULL,
-        buyTargetPercentFor3DisplayLots DECIMAL(9, 4) NULL,
-        buyTargetPercentFor4DisplayLots DECIMAL(9, 4) NULL,
-        buyTargetPercentFor5DisplayLots DECIMAL(9, 4) NULL,
-        buyTargetPercentFor6OrMoreDisplayLots DECIMAL(9, 4) NULL,
-        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
-        updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
-      );
-    END;
-
-    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('UserSettings') AND name = 'buyTargetPercentUnder3DisplayLots')
-      ALTER TABLE UserSettings ADD buyTargetPercentUnder3DisplayLots DECIMAL(9, 4) NULL;
-    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('UserSettings') AND name = 'buyTargetPercentFor3DisplayLots')
-      ALTER TABLE UserSettings ADD buyTargetPercentFor3DisplayLots DECIMAL(9, 4) NULL;
-    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('UserSettings') AND name = 'buyTargetPercentFor4DisplayLots')
-      ALTER TABLE UserSettings ADD buyTargetPercentFor4DisplayLots DECIMAL(9, 4) NULL;
-    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('UserSettings') AND name = 'buyTargetPercentFor5DisplayLots')
-      ALTER TABLE UserSettings ADD buyTargetPercentFor5DisplayLots DECIMAL(9, 4) NULL;
-    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('UserSettings') AND name = 'buyTargetPercentFor6OrMoreDisplayLots')
-      ALTER TABLE UserSettings ADD buyTargetPercentFor6OrMoreDisplayLots DECIMAL(9, 4) NULL;
-  `);
-}
-
 function normalizeTargetPercent(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -48,7 +17,6 @@ function normalizeTargetPercent(value: unknown, fallback: number): number {
 
 router.get('/targets', async (req: Request, res: Response) => {
   try {
-    await ensureUserSettingsBuyTargetColumns();
     const userId = req.user?.id!;
 
     const result = await getPool().request()
@@ -96,7 +64,6 @@ router.get('/targets', async (req: Request, res: Response) => {
 
 router.put('/targets', async (req: Request, res: Response) => {
   try {
-    await ensureUserSettingsBuyTargetColumns();
     const userId = req.user?.id!;
     const saleTargetPercent = Number(req.body?.saleTargetPercent);
     const buyTargetPercentUnder3DisplayLots = Number(req.body?.buyTargetPercentUnder3DisplayLots);
