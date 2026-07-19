@@ -202,7 +202,6 @@ export type RecordStockSplitResponse = {
 }
 
 export type HistoricalPrice = {
-  userId: string
   ticker: string
   priceDate: string
   marketDate: string
@@ -216,6 +215,8 @@ export type SyncHistoricalPrices2021Response = {
   source: string
   targetEndDate: string
   requestedDates: string[]
+  syncedDates?: string[]
+  remainingDates?: number
   tickers: string[]
   storedRows: number
   missingPrices: Array<{ ticker: string; priceDate: string }>
@@ -223,12 +224,17 @@ export type SyncHistoricalPrices2021Response = {
 
 export type PortfolioComparisonPoint = {
   date: string
+  hasCashFlowEvent: boolean
   availableCash: number
   cashCostBasis: number
   stockValue: number
   portfolioValue: number
   dowBenchmarkValue: number
   dowBenchmarkShares: number
+  nasdaqBenchmarkValue: number
+  nasdaqBenchmarkShares: number
+  sp500BenchmarkValue: number
+  sp500BenchmarkShares: number
   missingTickers: string[]
 }
 

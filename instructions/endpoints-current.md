@@ -95,19 +95,24 @@ Workflow:
 Fetches and stores Yahoo Finance daily closes for each user ticker on:
 - all cash `deposit`/`withdrawal` dates (up to `2021-12-31`)
 - plus `2021-12-31`
-- plus DOW benchmark ticker `^DJI`
+- plus benchmark tickers `^DJI` (DOW), `^IXIC` (Nasdaq), `^GSPC` (S&P 500)
 
 Workflow:
-1. Collect distinct cash deposit/withdrawal dates for the user up to `2021-12-31`.
-2. Add `2021-12-31` to the requested date set.
-3. Collect distinct user tickers with stock transactions up to `2021-12-31`, then include benchmark ticker `^DJI`.
-4. For each ticker, fetch Yahoo daily bars once across the date window.
-5. For each requested date, use same-day close or nearest previous trading day close.
-6. Upsert each point into `HistoricalPrices` (`source = yahoo-finance`).
-7. Return sync summary (`storedRows`, `missingPrices`, requested dates/tickers).
+1. Collect distinct cash deposit/withdrawal dates for the user within 2021.
+2. Build a priority date queue in this order:
+  - cash deposit/withdrawal dates
+  - `2021-12-31`
+  - remaining unsynced dates from first cash date through `2021-12-31`
+3. Collect distinct user tickers with stock transactions up to `2021-12-31`, then include benchmark tickers `^DJI`, `^IXIC`, `^GSPC`.
+4. Skip dates already fully synced for all selected tickers.
+5. Process only the next capped batch of dates (incremental backfill per click).
+6. For each ticker, fetch Yahoo daily bars once across the selected batch date window.
+7. For each selected date, use same-day close or nearest previous trading day close.
+8. Upsert each point into global `HistoricalPrices` (`source = yahoo-finance`) shared across users.
+9. Return sync summary (`storedRows`, `missingPrices`, requested dates/tickers, remaining date count).
 
 ### GET /api/stocks/historical-prices
-Returns stored historical closes from `HistoricalPrices` for a date range.
+Returns stored historical closes from global `HistoricalPrices` for a date range.
 
 Query params:
 - `startDate` (optional, default `2021-01-01`)
@@ -115,28 +120,33 @@ Query params:
 
 Workflow:
 1. Read date range query params.
-2. Query `HistoricalPrices` by `userId` and date range.
+2. Query global `HistoricalPrices` by date range.
 3. Return rows ordered by `priceDate ASC, ticker ASC`.
 
 ### GET /api/stocks/portfolio/comparison-2021
 Returns chart points for portfolio-vs-cash-basis comparison on the stored historical-price dates.
 
 Workflow:
-1. Load distinct stored `priceDate` values from `HistoricalPrices` (`source = yahoo-finance`).
+1. Load distinct stored `priceDate` values from global `HistoricalPrices` (`source = yahoo-finance`).
 2. Load cash and stock transactions through the date window.
 3. Replay transactions cumulatively per point date to compute:
   - `availableCash`
   - holdings by ticker
-  - DOW benchmark shares (deposit => buy benchmark shares, withdrawal => FIFO benchmark share sale)
+  - benchmark shares for DOW/Nasdaq/S&P (deposit => buy benchmark shares, withdrawal => FIFO benchmark share sale)
   - `cashCostBasis`
 4. Value holdings on each point date using stored closes.
 5. Return points with:
   - `date`
+  - `hasCashFlowEvent`
   - `availableCash`
   - `stockValue`
   - `portfolioValue`
   - `dowBenchmarkValue`
   - `dowBenchmarkShares`
+  - `nasdaqBenchmarkValue`
+  - `nasdaqBenchmarkShares`
+  - `sp500BenchmarkValue`
+  - `sp500BenchmarkShares`
   - `cashCostBasis`
   - `missingTickers`
 

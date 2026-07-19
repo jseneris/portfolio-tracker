@@ -71,6 +71,11 @@ export default function Comparison2021Page() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
+  const cashFlowTablePoints = useMemo(
+    () => points.filter((point) => point.hasCashFlowEvent),
+    [points]
+  )
+
   const chart = useMemo(() => {
     if (points.length === 0) {
       return null
@@ -80,6 +85,8 @@ export default function Comparison2021Page() {
       point.portfolioValue,
       point.cashCostBasis,
       point.dowBenchmarkValue,
+      point.nasdaqBenchmarkValue,
+      point.sp500BenchmarkValue,
     ])
     const minY = Math.min(...values)
     const maxY = Math.max(...values)
@@ -141,6 +148,28 @@ export default function Comparison2021Page() {
       margin.top
     )
 
+    const nasdaqPath = buildPath(
+      points,
+      (point) => point.nasdaqBenchmarkValue,
+      plotWidth,
+      plotHeight,
+      minY,
+      maxY,
+      margin.left,
+      margin.top
+    )
+
+    const sp500Path = buildPath(
+      points,
+      (point) => point.sp500BenchmarkValue,
+      plotWidth,
+      plotHeight,
+      minY,
+      maxY,
+      margin.left,
+      margin.top
+    )
+
     const yTickCount = 5
     const yTicks = Array.from({ length: yTickCount }, (_, index) => {
       const ratio = index / (yTickCount - 1)
@@ -171,6 +200,8 @@ export default function Comparison2021Page() {
       portfolioPath,
       cashBasisBars,
       dowPath,
+      nasdaqPath,
+      sp500Path,
       yTicks,
       xTicks,
     }
@@ -200,8 +231,12 @@ export default function Comparison2021Page() {
     try {
       const syncResult = await syncHistoricalPrices2021()
       await loadComparison()
+      const processedDateCount = syncResult.syncedDates?.length ?? syncResult.requestedDates.length
+      const remainingDates = Number(syncResult.remainingDates ?? 0)
       setSuccess(
-        `Synced ${syncResult.storedRows} price points across ${syncResult.tickers.length} tickers and ${syncResult.requestedDates.length} dates.`
+        remainingDates > 0
+          ? `Synced ${syncResult.storedRows} price points across ${syncResult.tickers.length} tickers and ${processedDateCount} dates. ${remainingDates} dates remain to backfill.`
+          : `Synced ${syncResult.storedRows} price points across ${syncResult.tickers.length} tickers and ${processedDateCount} dates. Backfill is complete.`
       )
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to sync historical prices.')
@@ -313,6 +348,8 @@ export default function Comparison2021Page() {
                   opacity="0.35"
                 />
               ))}
+              <path d={chart.nasdaqPath} fill="none" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" />
+              <path d={chart.sp500Path} fill="none" stroke="#ef4444" strokeWidth="3" strokeLinecap="round" />
               <path d={chart.dowPath} fill="none" stroke="#f59e0b" strokeWidth="3" strokeLinecap="round" />
               <path d={chart.portfolioPath} fill="none" stroke="#16a34a" strokeWidth="3" strokeLinecap="round" />
             </svg>
@@ -320,6 +357,8 @@ export default function Comparison2021Page() {
               <span><i className="legend-dot legend-dot-portfolio" />Portfolio Value</span>
               <span><i className="legend-dot legend-dot-basis" />Cash Cost Basis (deposit/withdrawal days)</span>
               <span><i className="legend-dot legend-dot-dow" />DOW Benchmark</span>
+              <span><i className="legend-dot legend-dot-nasdaq" />Nasdaq Benchmark</span>
+              <span><i className="legend-dot legend-dot-sp500" />S&P 500 Benchmark</span>
               <span>Range: {formatMoney(chart.minY)} to {formatMoney(chart.maxY)}</span>
             </div>
           </div>
@@ -327,8 +366,8 @@ export default function Comparison2021Page() {
       </div>
 
       <div className="panel">
-        {points.length === 0 ? (
-          <p>No points to display.</p>
+        {cashFlowTablePoints.length === 0 ? (
+          <p>No cash deposit/withdrawal dates to display.</p>
         ) : (
           <table className="table">
             <thead>
@@ -337,23 +376,23 @@ export default function Comparison2021Page() {
                 <th>Portfolio Value</th>
                 <th>Cash Cost Basis</th>
                 <th>DOW Benchmark</th>
-                <th>DOW Shares</th>
+                <th>Nasdaq Benchmark</th>
+                <th>S&amp;P 500 Benchmark</th>
                 <th>Available Cash</th>
                 <th>Stock Value</th>
-                <th>Missing Tickers</th>
               </tr>
             </thead>
             <tbody>
-              {points.map((point) => (
+              {cashFlowTablePoints.map((point) => (
                 <tr key={point.date}>
                   <td>{formatDate(point.date)}</td>
                   <td>{formatMoney(point.portfolioValue)}</td>
                   <td>{formatMoney(point.cashCostBasis)}</td>
                   <td>{formatMoney(point.dowBenchmarkValue)}</td>
-                  <td>{point.dowBenchmarkShares.toFixed(6)}</td>
+                  <td>{formatMoney(point.nasdaqBenchmarkValue)}</td>
+                  <td>{formatMoney(point.sp500BenchmarkValue)}</td>
                   <td>{formatMoney(point.availableCash)}</td>
                   <td>{formatMoney(point.stockValue)}</td>
-                  <td>{point.missingTickers.length > 0 ? point.missingTickers.join(', ') : '--'}</td>
                 </tr>
               ))}
             </tbody>

@@ -437,6 +437,25 @@ IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CashTransactions_Date'
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_HistoricalPrices_User_Ticker_Date_Source')
       CREATE UNIQUE INDEX UX_HistoricalPrices_User_Ticker_Date_Source
       ON HistoricalPrices(userId, ticker, priceDate, source);
+
+    IF OBJECT_ID('HistoricalPrices', 'U') IS NOT NULL
+    BEGIN
+      ;WITH Dedup AS (
+        SELECT
+          id,
+          ROW_NUMBER() OVER (
+            PARTITION BY ticker, priceDate, source
+            ORDER BY updatedAt DESC, createdAt DESC, id DESC
+          ) AS rn
+        FROM HistoricalPrices
+      )
+      DELETE FROM HistoricalPrices
+      WHERE id IN (SELECT id FROM Dedup WHERE rn > 1);
+
+      UPDATE HistoricalPrices
+      SET userId = 'GLOBAL'
+      WHERE userId <> 'GLOBAL';
+    END
   `);
 
   console.log('✓ Database tables initialized');

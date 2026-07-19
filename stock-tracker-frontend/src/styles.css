@@ -388,6 +388,14 @@ body {
   background: #f59e0b;
 }
 
+.legend-dot-nasdaq {
+  background: #2563eb;
+}
+
+.legend-dot-sp500 {
+  background: #ef4444;
+}
+
 @keyframes shimmer {
   0% {
     background-position: 100% 0;
