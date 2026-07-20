@@ -4,6 +4,7 @@ dotenv.config({ path: envPath });
 import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { initializeDatabase, closeDatabase } from './db/connection.js';
+import { authenticateRequest } from './auth.js';
 import cashRoutes from './routes/cash.js';
 import stockRoutes from './routes/stocks.js';
 import lotsRoutes from './routes/lots.js';
@@ -21,32 +22,7 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Auth middleware (simplified - in production, use proper JWT validation with Auth0)
-app.use((req: Request, res: Response, next: NextFunction) => {
-  // For now, accept Bearer token or x-user-id header
-  const authHeader = req.headers.authorization;
-  const userId = req.headers['x-user-id'] as string;
-  
-  if (authHeader?.startsWith('Bearer ')) {
-    // In production, validate the JWT token here
-    req.user = { id: userId || 'dev-user' };
-  } else if (userId) {
-    req.user = { id: userId };
-  } else {
-    // Development mode - use default user
-    req.user = { id: 'dev-user' };
-  }
-  next();
-});
-
-// Type augmentation for Request
-declare global {
-  namespace Express {
-    interface Request {
-      user?: { id: string };
-    }
-  }
-}
+app.use(authenticateRequest);
 
 // Routes
 app.use('/api/cash', cashRoutes);

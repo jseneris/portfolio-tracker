@@ -58,9 +58,9 @@ describe('18. User Settings - Target Preferences', () => {
     const pool = getPool();
     const rowCountResult = await pool.request()
       .input('userId', sql.NVarChar, TEST_USER_ID)
-      .query('SELECT COUNT(*) AS rowCount FROM UserSettings WHERE userId = @userId');
+      .query('SELECT COUNT(*) AS settingsCount FROM UserSettings WHERE userId = @userId');
 
-    expect(Number(rowCountResult.recordset[0].rowCount)).toBe(1);
+    expect(Number(rowCountResult.recordset[0].settingsCount)).toBe(1);
   });
 
   it('updates the existing settings row instead of inserting a duplicate', async () => {
@@ -104,9 +104,9 @@ describe('18. User Settings - Target Preferences', () => {
     const pool = getPool();
     const rowCountResult = await pool.request()
       .input('userId', sql.NVarChar, TEST_USER_ID)
-      .query('SELECT COUNT(*) AS rowCount FROM UserSettings WHERE userId = @userId');
+      .query('SELECT COUNT(*) AS settingsCount FROM UserSettings WHERE userId = @userId');
 
-    expect(Number(rowCountResult.recordset[0].rowCount)).toBe(1);
+    expect(Number(rowCountResult.recordset[0].settingsCount)).toBe(1);
   });
 
   it('rejects invalid target values', async () => {

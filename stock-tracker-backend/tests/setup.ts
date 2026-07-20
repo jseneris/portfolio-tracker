@@ -2,7 +2,7 @@ import { getPool } from '../src/db/connection.js';
 import sql from 'mssql';
 import { v4 as uuidv4 } from 'uuid';
 
-const TEST_USER_ID = 'test-user-' + uuidv4().substring(0, 8);
+const TEST_USER_ID = 'auth0|test-user-' + uuidv4().substring(0, 8);
 const TOLERANCE = 1e-6;
 
 export { TEST_USER_ID, TOLERANCE };
@@ -17,6 +17,7 @@ export async function clearUserData(): Promise<void> {
   // Delete in proper cascade order
   await request.query('DELETE FROM DisplayLotAllocations WHERE userId = @userId');
   await request.query('DELETE FROM DisplayLotComposition WHERE displayLotId IN (SELECT id FROM DisplayLots WHERE userId = @userId)');
+  await request.query('DELETE FROM DisplayLotComposition WHERE purchaseLotId IN (SELECT id FROM PurchaseLots WHERE userId = @userId)');
   await request.query('DELETE FROM DisplayLots WHERE userId = @userId');
   await request.query('DELETE FROM PurchaseLotAllocations WHERE userId = @userId');
   await request.query('DELETE FROM SplitAdjustments WHERE userId = @userId');
@@ -25,6 +26,7 @@ export async function clearUserData(): Promise<void> {
   await request.query('DELETE FROM StockSplits');
   await request.query('DELETE FROM CashTransactions WHERE userId = @userId');
   await request.query('DELETE FROM UserSettings WHERE userId = @userId');
+  await request.query('DELETE FROM Users WHERE id = @userId');
 }
 
 /**
@@ -429,6 +431,36 @@ export async function applySplit(ticker: string, numerator: number, denominator:
         FROM PurchaseLotAllocations pla
         JOIN StockTransactions st ON pla.saleTransactionId = st.id
         WHERE pla.userId = @userId AND st.ticker = @ticker AND st.transactionDate <= @splitDate
+      `);
+
+    // Record split audit rows for all affected entities
+    await new sql.Request(transaction)
+      .input('splitId', sql.UniqueIdentifier, splitId)
+      .input('userId', sql.NVarChar, TEST_USER_ID)
+      .input('ticker', sql.NVarChar, ticker.toUpperCase())
+      .input('splitDate', sql.DateTime2, splitDate)
+      .input('multiplier', sql.Decimal(18, 8), multiplier)
+      .query(`
+        INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
+        SELECT NEWID(), @splitId, @userId, 'lot', pl.id, @multiplier
+        FROM PurchaseLots pl
+        WHERE pl.userId = @userId AND pl.ticker = @ticker AND pl.purchaseDate <= @splitDate;
+
+        INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
+        SELECT NEWID(), @splitId, @userId, 'transaction', st.id, @multiplier
+        FROM StockTransactions st
+        WHERE st.userId = @userId
+          AND st.ticker = @ticker
+          AND st.transactionDate <= @splitDate
+          AND st.type IN ('buy', 'sell', 'div');
+
+        INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
+        SELECT NEWID(), @splitId, @userId, 'allocation', pla.id, @multiplier
+        FROM PurchaseLotAllocations pla
+        JOIN StockTransactions st ON pla.saleTransactionId = st.id
+        WHERE pla.userId = @userId
+          AND st.ticker = @ticker
+          AND st.transactionDate <= @splitDate;
       `);
 
     await transaction.commit();

@@ -206,6 +206,16 @@ async function createTablesIfNotExist() {
         updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
       );
 
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Users')
+      CREATE TABLE Users (
+        id NVARCHAR(255) PRIMARY KEY,
+        email NVARCHAR(320) NULL,
+        name NVARCHAR(255) NULL,
+        pictureUrl NVARCHAR(1000) NULL,
+        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+      );
+
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'UserSettings')
       CREATE TABLE UserSettings (
         id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
@@ -274,6 +284,9 @@ async function createTablesIfNotExist() {
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_HistoricalPrices_Ticker_Date_Source')
       CREATE UNIQUE INDEX UX_HistoricalPrices_Ticker_Date_Source
       ON HistoricalPrices(ticker, priceDate, source);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_Users_Id')
+      CREATE UNIQUE INDEX UX_Users_Id ON Users(id);
 
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_UserSettings_UserId')
       CREATE UNIQUE INDEX UX_UserSettings_UserId ON UserSettings(userId);

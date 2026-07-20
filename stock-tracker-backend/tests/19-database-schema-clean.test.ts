@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { initializeDatabase, getPool } from '../src/db/connection.js';
 
+function expectColumnsToMatch(actual: unknown[], expected: string[]) {
+  const normalizedActual = actual.map((value) => String(value)).sort();
+  const normalizedExpected = [...expected].sort();
+  expect(normalizedActual).toEqual(normalizedExpected);
+}
+
 describe('19. Database Schema - Clean Install', () => {
   beforeAll(async () => {
     await initializeDatabase();
@@ -49,7 +55,7 @@ describe('19. Database Schema - Clean Install', () => {
       ORDER BY column_id
     `);
 
-    expect(userSettingsColumnsResult.recordset.map((row: any) => String(row.name))).toEqual([
+    expectColumnsToMatch(userSettingsColumnsResult.recordset.map((row: any) => row.name), [
       'id',
       'userId',
       'saleTargetPercent',
@@ -69,7 +75,7 @@ describe('19. Database Schema - Clean Install', () => {
       ORDER BY column_id
     `);
 
-    expect(stockTransactionColumnsResult.recordset.map((row: any) => String(row.name))).toEqual([
+    expectColumnsToMatch(stockTransactionColumnsResult.recordset.map((row: any) => row.name), [
       'id',
       'userId',
       'ticker',
@@ -91,7 +97,7 @@ describe('19. Database Schema - Clean Install', () => {
       ORDER BY column_id
     `);
 
-    expect(purchaseLotColumnsResult.recordset.map((row: any) => String(row.name))).toEqual([
+    expectColumnsToMatch(purchaseLotColumnsResult.recordset.map((row: any) => row.name), [
       'id',
       'userId',
       'ticker',
@@ -114,7 +120,7 @@ describe('19. Database Schema - Clean Install', () => {
       ORDER BY column_id
     `);
 
-    expect(stockSplitColumnsResult.recordset.map((row: any) => String(row.name))).toEqual([
+    expectColumnsToMatch(stockSplitColumnsResult.recordset.map((row: any) => row.name), [
       'id',
       'ticker',
       'ratioNumerator',

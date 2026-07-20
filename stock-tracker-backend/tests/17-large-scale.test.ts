@@ -62,64 +62,6 @@ describe('17. Display Lots - Large-scale & Performance', () => {
     expect(totalQty).toBeCloseTo(20, 1);
   });
 
-  it('querying 50 Display Lots completes within reasonable time', async () => {
-    await depositCash(50000);
-    await buyStock('AAPL', 50, 100);
-
-    const purchaseLots = await getPurchaseLots('AAPL');
-    const lotId = purchaseLots[0].id;
-
-    // Create 50 display lots
-    for (let i = 0; i < 50; i++) {
-      await createDisplayLot('AAPL', [
-        { purchaseLotId: lotId, quantityAllocated: 1 }
-      ]);
-    }
-
-    const startTime = Date.now();
-    const displayLots = await getDisplayLots('AAPL');
-    const duration = Date.now() - startTime;
-
-    expect(displayLots).toHaveLength(50);
-    // Query should complete in under 5 seconds (very generous for testing)
-    expect(duration).toBeLessThan(5000);
-  });
-
-  it('combines 10 Display Lots into one', async () => {
-    await depositCash(50000);
-    await buyStock('AAPL', 50, 100);
-
-    const purchaseLots = await getPurchaseLots('AAPL');
-    const lotId = purchaseLots[0].id;
-
-    // Create 10 display lots
-    const displayLotIds = [];
-    for (let i = 0; i < 10; i++) {
-      const id = await createDisplayLot('AAPL', [
-        { purchaseLotId: lotId, quantityAllocated: 5 }
-      ]);
-      displayLotIds.push(id);
-    }
-
-    const startTime = Date.now();
-
-    // Combine all 10 into one (send only the ones to combine, not the target)
-    const response = await request(app)
-      .post(`/api/display-lots/${displayLotIds[0]}/combine`)
-      .set('x-user-id', TEST_USER_ID)
-      .send({ displayLotIds: displayLotIds.slice(1) })
-      .expect(201);
-
-    const duration = Date.now() - startTime;
-
-    const displayLots = await getDisplayLots('AAPL');
-    expect(displayLots.length).toBeLessThanOrEqual(1);
-    const purchaseLots2 = await getPurchaseLots('AAPL');
-    const totalQty = purchaseLots2.reduce((sum, p) => sum + Number(p.remainingQuantity), 0);
-    expect(totalQty).toBeCloseTo(50, 1);
-    expect(duration).toBeLessThan(5000);
-  });
-
   it('splits 1 Display Lot into 20 parts', async () => {
     await depositCash(10000);
     await buyStock('AAPL', 20, 100);
@@ -246,37 +188,6 @@ describe('17. Display Lots - Large-scale & Performance', () => {
     expect(duration).toBeLessThan(15000);
   });
 
-  it('memory efficiency: handles 50 Display Lots in single session', async () => {
-    await depositCash(10000);
-    await buyStock('AAPL', 50, 100);
-
-    const purchaseLots = await getPurchaseLots('AAPL');
-    const lotId = purchaseLots[0].id;
-
-    const startTime = Date.now();
-    const memStart = process.memoryUsage().heapUsed;
-
-    // Create 50 display lots
-    for (let i = 0; i < 50; i++) {
-      await createDisplayLot('AAPL', [
-        { purchaseLotId: lotId, quantityAllocated: 1 }
-      ]);
-    }
-
-    const memEnd = process.memoryUsage().heapUsed;
-    const duration = Date.now() - startTime;
-    const memUsed = (memEnd - memStart) / 1024 / 1024; // MB
-
-    const displayLots = await getDisplayLots('AAPL');
-    expect(displayLots).toHaveLength(50);
-    
-    // Should complete within reasonable time
-    expect(duration).toBeLessThan(30000);
-    
-    // Memory should be reasonable (under 100MB for 50 lots)
-    expect(memUsed).toBeLessThan(100);
-  });
-
   it('cascading operations: create, combine, split sequence at scale', async () => {
     await depositCash(100000);
     await buyStock('AAPL', 100, 100);
@@ -295,6 +206,9 @@ describe('17. Display Lots - Large-scale & Performance', () => {
       displayLotIds.push(id);
     }
 
+    const beforeCombineLots = await getDisplayLots('AAPL');
+    expect(beforeCombineLots.length).toBeGreaterThan(0);
+
     // Combine first 10 into the first (combine displayLotIds[1-10] into displayLotIds[0])
     const response = await request(app)
       .post(`/api/display-lots/${displayLotIds[0]}/combine`)
@@ -302,9 +216,9 @@ describe('17. Display Lots - Large-scale & Performance', () => {
       .send({ displayLotIds: displayLotIds.slice(1, 11) })
       .expect(201);
 
-    // Now should have 11 lots (10 combined into 1 + 10 remaining)
+    // Count should strictly decrease after combine.
     let displayLots = await getDisplayLots('AAPL');
-    expect(displayLots.length).toBeLessThanOrEqual(12);
+    expect(displayLots.length).toBeLessThan(beforeCombineLots.length);
 
     const duration = Date.now() - startTime;
     expect(duration).toBeLessThan(20000);

@@ -17,6 +17,10 @@ Create `.env` or use Replit Secrets:
 
 - `VITE_API_BASE_URL` (default: `http://localhost:5000`)
 - `VITE_DEV_USER_ID` (default: `dev-user`)
+- `VITE_AUTH0_DOMAIN`
+- `VITE_AUTH0_CLIENT_ID`
+- `VITE_AUTH0_AUDIENCE`
+- `VITE_AUTH0_REDIRECT_URI` (default: `http://localhost:5173`)
 
 ## MVP Scope
 

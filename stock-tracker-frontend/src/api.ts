@@ -1,5 +1,6 @@
+import { getRequestHeaders } from './auth'
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
-const DEV_USER_ID = import.meta.env.VITE_DEV_USER_ID || 'dev-user'
 export const PORTFOLIO_UPDATED_EVENT = 'portfolio:updated'
 
 export function emitPortfolioUpdated() {
@@ -275,16 +276,19 @@ type RequestOptions = {
 function getDefaultHeaders() {
   return {
     'Content-Type': 'application/json',
-    'x-user-id': DEV_USER_ID,
   }
 }
 
 async function requestApi<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body } = options
+  const authHeaders = await getRequestHeaders()
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method,
-    headers: getDefaultHeaders(),
+    headers: {
+      ...getDefaultHeaders(),
+      ...authHeaders,
+    },
     body: body == null ? undefined : JSON.stringify(body),
   })
 

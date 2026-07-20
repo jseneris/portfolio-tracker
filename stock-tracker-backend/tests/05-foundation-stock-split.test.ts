@@ -166,14 +166,14 @@ describe('05. Foundation - Stock Split Workflow', () => {
     const splitRows = await pool.request()
       .input('userId', sql.NVarChar, TEST_USER_ID)
       .query(`
-        SELECT entityType, COUNT(*) AS rowCount
+        SELECT entityType, COUNT(*) AS adjustmentCount
         FROM SplitAdjustments
         WHERE userId = @userId
         GROUP BY entityType
       `);
 
     const rowCounts = new Map<string, number>(
-      splitRows.recordset.map((row: any) => [String(row.entityType), Number(row.rowCount)])
+      splitRows.recordset.map((row: any) => [String(row.entityType), Number(row.adjustmentCount)])
     );
 
     expect(rowCounts.get('lot') || 0).toBeGreaterThan(0);
