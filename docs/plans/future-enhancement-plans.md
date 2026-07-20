@@ -66,3 +66,19 @@
         5. Add job observability with run logs, durations, error counts, and stale-data alerts.
         6. Keep manual refresh endpoint active as fallback until cron reliability is proven.
         7. Add tests for schedule windows, holiday handling, duplicate-run prevention, and recovery behavior.
+
+## DAILY CLOSE JOB FOR OPEN HOLDINGS
+### DESCRIPTION
+    -Run once per day after market close
+    -Get closing price for each ticker with open shares across all users
+    -Store closes idempotently and expose run status for troubleshooting
+### PLAN
+        1. Create a backend close-ingestion service that resolves the global set of open-holding tickers from PurchaseLots where remainingQuantity > 0.
+        2. Add a protected backend endpoint that executes one daily-close ingestion run and returns per-ticker results and totals.
+        3. Use market calendar/time window gating so runs occur only on valid US trading days after close, with optional grace period before execution.
+        4. Persist each close with MERGE/upsert semantics keyed by ticker + priceDate + source to guarantee idempotent reruns.
+        5. Add JobRuns/JobLocks tables (or equivalent) to enforce single-run execution and capture start/end time, outcome, and error summary.
+        6. Trigger the endpoint from an external scheduler (GitHub Actions cron, cloud scheduler, or host cron) rather than frontend or browser sessions.
+        7. Add retry and alerting behavior for partial failures, including stale-close detection when no successful run exists for the latest market date.
+        8. Add admin utility endpoints for backfill and replay by date range so missed days can be recovered safely.
+        9. Add tests for ticker selection correctness, market-day gating, idempotent writes, lock behavior, and recovery workflows.

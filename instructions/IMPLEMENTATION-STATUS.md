@@ -328,6 +328,58 @@ Based on current completion:
 
 ---
 
+## Daily Close Job - Sequenced Implementation Checklist
+
+Execution order is intentionally staged so each step unlocks the next.
+
+### Stage 1: Data and Safety Foundation (P1)
+- [ ] Add/confirm close-price uniqueness and idempotent write strategy (ticker + priceDate + source).
+- [ ] Add JobRuns table fields needed for lifecycle tracking (jobName, startedAt, completedAt, status, summary, error).
+- [ ] Add JobLocks table (or equivalent) for single-run protection.
+- [ ] Add migration tests for constraints, indexes, and rollback safety.
+
+### Stage 2: Backend Daily-Close Service (P1)
+- [ ] Create service to resolve open-holding tickers from PurchaseLots where remainingQuantity > 0.
+- [ ] Implement provider fetch for close values and normalize responses.
+- [ ] Implement idempotent persistence via MERGE/upsert.
+- [ ] Return structured per-ticker results (inserted/updated/skipped/failed + reason).
+
+### Stage 3: Protected Trigger Surface (P1)
+- [ ] Add protected endpoint for one daily-close run invocation.
+- [ ] Enforce single-run lock acquisition/release with failure-safe cleanup.
+- [ ] Write JobRuns start/success/failure records with run summary.
+- [ ] Add endpoint tests for auth, lock contention, and response schema.
+
+### Stage 4: Scheduler Integration (P1)
+- [ ] Configure external scheduler trigger (GitHub Actions cron, cloud scheduler, or host cron).
+- [ ] Add secure invocation mechanism (service credential/header).
+- [ ] Add runbook notes for schedule ownership, secret rotation, and failure response.
+
+### Stage 5: Market Gating and Reliability (P2)
+- [ ] Add market-day and after-close gating with configurable grace period.
+- [ ] Add explicit skip logging for weekends/holidays/non-trading dates.
+- [ ] Add retry/backoff for transient provider failures.
+- [ ] Add stale-data detection when latest market date close is missing.
+
+### Stage 6: Recovery and Replay (P2)
+- [ ] Add admin replay endpoint for a single date.
+- [ ] Add bounded backfill endpoint for date ranges.
+- [ ] Add safety limits to prevent unbounded replay runs.
+- [ ] Add replay tests for idempotency and partial-failure recovery.
+
+### Stage 7: Observability and Operations UX (P2/P3)
+- [ ] Add endpoint/query for recent runs, duration, ticker coverage, and last successful market date.
+- [ ] Add alert hooks for repeated failures and stale closes.
+- [ ] Add lightweight operations UI panel for run history and replay actions (P3).
+
+### Stage 8: Definition of Done
+- [ ] 10 consecutive scheduled runs succeed without manual intervention.
+- [ ] Replay/backfill tested in non-prod and documented.
+- [ ] Alerting paths tested end-to-end.
+- [ ] Documentation updated in status, endpoints, and schema docs.
+
+---
+
 ## Documentation
 
 **Current Documentation:**
