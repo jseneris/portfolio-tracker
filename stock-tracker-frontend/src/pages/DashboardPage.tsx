@@ -2,13 +2,16 @@ import { FormEvent, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   CreateStockInput,
+  getHistoricalPrices,
   PORTFOLIO_UPDATED_EVENT,
   PortfolioSummary,
+  PurchaseLot,
   StockTransaction,
   createStockTransaction,
   emitPortfolioUpdated,
   getDisplayLots,
   getPortfolioSummary,
+  getPurchaseLots,
   getStockTransactions,
   UserTargetSettings,
   getUserTargetSettings,
@@ -25,7 +28,10 @@ function formatMoney(value: number | null) {
   if (value == null || Number.isNaN(Number(value))) {
     return '--'
   }
-  return `$${value.toFixed(2)}`
+  return `$${Number(value).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
 }
 
 type AddStockFormState = {
@@ -55,6 +61,68 @@ function formatDateTime(value: Date | null) {
     return 'Never'
   }
   return value.toLocaleString()
+}
+
+function buildLatestHistoricalPriceByTicker(rows: Array<{ ticker: string; priceDate: string; closePrice: number }>): Record<string, number> {
+  const latestByTicker: Record<string, { date: string; price: number }> = {}
+
+  for (const row of rows) {
+    const ticker = String(row.ticker || '').toUpperCase()
+    const priceDate = String(row.priceDate || '')
+    const closePrice = Number(row.closePrice)
+
+    if (!ticker || !priceDate || !Number.isFinite(closePrice)) {
+      continue
+    }
+
+    const existing = latestByTicker[ticker]
+    if (!existing || priceDate > existing.date) {
+      latestByTicker[ticker] = { date: priceDate, price: closePrice }
+    }
+  }
+
+  const flattened: Record<string, number> = {}
+  for (const [ticker, row] of Object.entries(latestByTicker)) {
+    flattened[ticker] = row.price
+  }
+  return flattened
+}
+
+function calculateStockCostBasisExcludingDividends(lots: PurchaseLot[]): number {
+  return lots.reduce((sum, lot) => {
+    if (lot.sourceType !== 'purchase') {
+      return sum
+    }
+
+    const remaining = Number(lot.remainingQuantity)
+    const unitCost = Number(lot.unitCost)
+    if (!Number.isFinite(remaining) || !Number.isFinite(unitCost)) {
+      return sum
+    }
+
+    return sum + (remaining * unitCost)
+  }, 0)
+}
+
+function calculateHoldingsMarketValue(
+  summary: PortfolioSummary,
+  latestPriceByTicker: Record<string, number>
+): number | null {
+  let total = 0
+
+  for (const stock of summary.stocks) {
+    const ticker = String(stock.ticker || '').toUpperCase()
+    const shares = Number(stock.totalShares)
+    const latestPrice = Number(latestPriceByTicker[ticker])
+
+    if (!ticker || !Number.isFinite(shares) || !Number.isFinite(latestPrice)) {
+      return null
+    }
+
+    total += shares * latestPrice
+  }
+
+  return total
 }
 
 export default function DashboardPage() {
@@ -187,6 +255,15 @@ export default function DashboardPage() {
   const buyTotalCost = Number.isFinite(buyShares) && Number.isFinite(buyPrice)
     ? buyShares * buyPrice
     : NaN
+
+  const [holdingsMarketValue, setHoldingsMarketValue] = useState<number | null>(null)
+  const [stockCostBasisExcludingDividends, setStockCostBasisExcludingDividends] = useState<number | null>(null)
+  const [stockPerformance, setStockPerformance] = useState<number | null>(null)
+
+  const cashBasisExcludingDividends = data
+    ? Number(data.deposits || 0) - Number(data.withdrawals || 0)
+    : null
+
   const hasInsufficientCashForBuy = Boolean(
     data && Number.isFinite(buyTotalCost) && buyTotalCost > Number(data.availableCash)
   )
@@ -200,11 +277,14 @@ export default function DashboardPage() {
     setError(null)
 
     try {
-      const [summary, transactionsResult, settingsResult, displayLotsResult] = await Promise.all([
+      const today = new Date().toISOString().slice(0, 10)
+      const [summary, transactionsResult, settingsResult, displayLotsResult, purchaseLotsResult, historicalPricesResult] = await Promise.all([
         getPortfolioSummary(),
         getStockTransactions(),
         getUserTargetSettings(),
         getDisplayLots(),
+        getPurchaseLots(),
+        getHistoricalPrices('1980-01-01', today),
       ])
 
       const normalizedSettings = normalizeSettings(settingsResult)
@@ -221,6 +301,18 @@ export default function DashboardPage() {
       setData(summary)
       setSaleTargetsByTicker(calculateSaleTargetsByTicker(summary, latestByTicker, normalizedSettings.saleTargetPercent))
       setBuyTargetsByTicker(calculateBuyTargetsByTicker(summary, latestByTicker, displayLotCountsByTicker, normalizedSettings))
+
+      const latestHistoricalPriceByTicker = buildLatestHistoricalPriceByTicker(historicalPricesResult)
+      const nextHoldingsMarketValue = calculateHoldingsMarketValue(summary, latestHistoricalPriceByTicker)
+      const nextStockCostBasisExcludingDividends = calculateStockCostBasisExcludingDividends(purchaseLotsResult)
+      const nextStockPerformance = nextHoldingsMarketValue == null
+        ? null
+        : nextHoldingsMarketValue - nextStockCostBasisExcludingDividends
+
+      setHoldingsMarketValue(nextHoldingsMarketValue)
+      setStockCostBasisExcludingDividends(nextStockCostBasisExcludingDividends)
+      setStockPerformance(nextStockPerformance)
+
       setLastUpdatedAt(new Date())
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to load summary')
@@ -288,7 +380,7 @@ export default function DashboardPage() {
     if (selectedUtc > nowUtc) {
       return 'Date cannot be in the future.'
     }
-
+              <div className="stat"><div className="label">Cash Basis</div><div className="value">{formatMoney(cashBasisExcludingDividends)}</div></div>
     return null
   }
 
@@ -371,8 +463,10 @@ export default function DashboardPage() {
           <div className="panel stat-grid">
             <div className="stat"><div className="label">Available Cash</div><div className="value">{formatMoney(data.availableCash)}</div></div>
             <div className="stat"><div className="label">Cash Basis</div><div className="value">{formatMoney(data.cashBasis)}</div></div>
+            <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{formatMoney(holdingsMarketValue)}</div></div>
+            <div className="stat"><div className="label">Performance</div><div className="value">{formatMoney(stockPerformance)}</div></div>
             <div className="stat"><div className="label">Adjustments</div><div className="value">{formatMoney(data.adjustments)}</div></div>
-            <div className="stat"><div className="label">Stock Cost Basis</div><div className="value">{formatMoney(data.totalStockCostBasis)}</div></div>
+            <div className="stat"><div className="label">Stock Cost Basis (No Div)</div><div className="value">{formatMoney(stockCostBasisExcludingDividends)}</div></div>
             <div className="stat"><div className="label">Stock Count</div><div className="value">{data.stockCount}</div></div>
           </div>
 

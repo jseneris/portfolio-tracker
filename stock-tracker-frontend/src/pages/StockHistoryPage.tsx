@@ -237,6 +237,78 @@ export default function StockHistoryPage() {
     return totalShares * latestPrice
   }, [summary, latestHistoricalPrice])
 
+  const costBasisExcludingDividends = useMemo(() => {
+    return openLots.reduce((sum, lot) => {
+      const remaining = Number(lot.remainingQuantity)
+      const unitCost = Number(lot.unitCost)
+      if (!Number.isFinite(remaining) || !Number.isFinite(unitCost)) {
+        return sum
+      }
+      return sum + (remaining * unitCost)
+    }, 0)
+  }, [openLots])
+
+  const summaryPerformance = useMemo(() => {
+    if (currentValue == null) {
+      return null
+    }
+
+    return currentValue - costBasisExcludingDividends
+  }, [currentValue, costBasisExcludingDividends])
+
+  const salesSummary = useMemo(() => {
+    const activeShares = Number(summary?.totalShares)
+    const latestPrice = Number(latestHistoricalPrice)
+
+    const salesCostBasis = transactions
+      .filter((transaction) => transaction.type === 'sell')
+      .reduce((sum, transaction) => {
+        const amount = Number(transaction.amount)
+        return Number.isFinite(amount) ? sum + amount : sum
+      }, 0)
+
+    const totalConsumedPurchaseCostBasis = Object.values(saleAllocations)
+      .flat()
+      .filter((allocation) => allocation.sourceType === 'purchase')
+      .reduce((sum, allocation) => {
+        const unitCost = Number(allocation.unitCost)
+        const quantity = Number(allocation.quantity)
+        if (!Number.isFinite(unitCost) || !Number.isFinite(quantity)) {
+          return sum
+        }
+        return sum + (unitCost * quantity)
+      }, 0)
+
+    const consumedFromPartialOpenPurchaseLots = openLots.reduce((sum, lot) => {
+      const original = Number(lot.originalQuantity)
+      const remaining = Number(lot.remainingQuantity)
+      const unitCost = Number(lot.unitCost)
+      if (!Number.isFinite(original) || !Number.isFinite(remaining) || !Number.isFinite(unitCost)) {
+        return sum
+      }
+
+      const consumedQuantity = Math.max(0, original - remaining)
+      return sum + (consumedQuantity * unitCost)
+    }, 0)
+
+    const exhaustedPurchaseLotsCostBasis = Math.max(
+      0,
+      totalConsumedPurchaseCostBasis - consumedFromPartialOpenPurchaseLots
+    )
+
+    const hasValidPerformanceInputs = Number.isFinite(activeShares) && Number.isFinite(latestPrice)
+    const performance = hasValidPerformanceInputs
+      ? (activeShares * latestPrice) + salesCostBasis - exhaustedPurchaseLotsCostBasis
+      : null
+
+    return {
+      saleCount: transactions.filter((transaction) => transaction.type === 'sell').length,
+      salesCostBasis,
+      exhaustedPurchaseLotsCostBasis,
+      performance,
+    }
+  }, [summary, latestHistoricalPrice, transactions, saleAllocations, openLots])
+
   const transactionTimeline = useMemo(() => {
     type TimelineEntry =
       | { kind: 'transaction'; date: number; transaction: StockTransaction }
@@ -437,6 +509,15 @@ export default function StockHistoryPage() {
         getStockSplitsByTicker(ticker),
       ])
       setSummary(tickerSummaryData)
+
+      const sellTransactions = txData.filter((transaction) => transaction.type === 'sell')
+      const allocationEntries = await Promise.all(
+        sellTransactions.map(async (transaction) => {
+          const allocationRows = await getSaleAllocations(transaction.id)
+          return [transaction.id, allocationRows] as const
+        })
+      )
+      setSaleAllocations(Object.fromEntries(allocationEntries))
 
       const openBuyTransactionIds = new Set(
         tickerLots
@@ -816,9 +897,18 @@ export default function StockHistoryPage() {
               <div className="value">{displayLotSummary}</div>
               <div className="hint">click to manage</div>
             </button>
-            <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatMoney(summary.costBasis)}</div></div>
+            <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatMoney(costBasisExcludingDividends)}</div></div>
             <div className="stat"><div className="label">Current Value</div><div className="value">{formatMoney(currentValue)}</div></div>
+            <div className="stat"><div className="label">Performance</div><div className="value">{formatMoney(summaryPerformance)}</div></div>
           </div>
+
+          {salesSummary.saleCount > 0 ? (
+            <div className="panel stat-grid" style={{ marginTop: '0.75rem' }}>
+              <div className="stat"><div className="label">Sales Cost Basis</div><div className="value">{formatMoney(salesSummary.salesCostBasis)}</div></div>
+              <div className="stat"><div className="label">Exhausted Purchase Lots Cost Basis (No Div)</div><div className="value">{formatMoney(salesSummary.exhaustedPurchaseLotsCostBasis)}</div></div>
+              <div className="stat"><div className="label">Sales Performance</div><div className="value">{formatMoney(salesSummary.performance)}</div></div>
+            </div>
+          ) : null}
 
           {displayLotsOutOfSync ? (
             <div className="panel status status-warning">

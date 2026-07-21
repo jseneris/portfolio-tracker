@@ -124,6 +124,26 @@ function getUtcTodayDateOnly(): Date {
   return parseDateOnly(toIsoDate(new Date()));
 }
 
+function parseSupportedComparisonYear(rawYear: unknown): number | null {
+  const year = Number(rawYear);
+  if (!Number.isFinite(year) || !Number.isInteger(year)) {
+    return null;
+  }
+
+  if (year !== 2021 && year !== 2022) {
+    return null;
+  }
+
+  return year;
+}
+
+function getYearRange(year: number): { startDate: string; endDate: string } {
+  return {
+    startDate: `${year}-01-01`,
+    endDate: `${year}-12-31`
+  };
+}
+
 function parseSplitRatio(splitRow: any): { numerator: number; denominator: number } | null {
   const directNumerator = Number(splitRow?.numerator);
   const directDenominator = Number(splitRow?.denominator);
@@ -909,6 +929,211 @@ router.get('/', async (req: Request, res: Response) => {
 // 1) cash deposit/withdrawal dates, 2) 2021-12-31, 3) remaining 2021 dates.
 // Runs are capped so repeated clicks incrementally backfill without aggressive API usage.
 // HistoricalPrices are global (shared across users).
+router.post('/historical-prices/sync-year', async (req: Request, res: Response) => {
+  try {
+    const requestedYear = parseSupportedComparisonYear(req.query.year);
+    if (requestedYear == null) {
+      return res.status(400).json({ error: 'Query parameter year must be 2021 or 2022.' });
+    }
+
+    const userId = req.user?.id!;
+    const pool = getPool();
+    const { startDate: targetStartDate, endDate: targetEndDate } = getYearRange(requestedYear);
+
+    const dateRows = await pool.request()
+      .input('userId', sql.NVarChar, userId)
+      .input('targetStartDate', sql.Date, parseDateOnly(targetStartDate))
+      .input('targetEndDate', sql.Date, parseDateOnly(targetEndDate))
+      .query(`
+        SELECT DISTINCT CONVERT(VARCHAR(10), transactionDate, 23) AS priceDate
+        FROM CashTransactions
+        WHERE userId = @userId
+          AND type IN ('deposit', 'withdrawal')
+          AND transactionDate >= @targetStartDate
+          AND transactionDate <= @targetEndDate
+      `);
+
+    const cashPriorityDates = (dateRows.recordset ?? [])
+      .map((row: any) => String(row.priceDate))
+      .filter((d) => !!d)
+      .sort();
+
+    const firstAnchorDate = cashPriorityDates[0] ?? targetEndDate;
+
+    const priorityDateSet = new Set<string>(
+      (dateRows.recordset ?? [])
+        .map((row: any) => String(row.priceDate))
+        .filter((d) => !!d)
+    );
+    priorityDateSet.add(targetEndDate);
+
+    const remainingYearDates = buildDateRangeInclusive(firstAnchorDate, targetEndDate)
+      .filter((d) => !priorityDateSet.has(d));
+
+    const prioritizedDates: string[] = [];
+    const seenPriorityDates = new Set<string>();
+    const pushPriorityDate = (dateText: string) => {
+      if (!seenPriorityDates.has(dateText)) {
+        prioritizedDates.push(dateText);
+        seenPriorityDates.add(dateText);
+      }
+    };
+
+    for (const dateText of cashPriorityDates) {
+      pushPriorityDate(dateText);
+    }
+    pushPriorityDate(targetEndDate);
+    for (const dateText of remainingYearDates) {
+      pushPriorityDate(dateText);
+    }
+
+    const tickerRows = await pool.request()
+      .input('userId', sql.NVarChar, userId)
+      .input('targetEndDate', sql.Date, parseDateOnly(targetEndDate))
+      .query(`
+        SELECT DISTINCT ticker
+        FROM StockTransactions
+        WHERE userId = @userId
+          AND transactionDate <= @targetEndDate
+        ORDER BY ticker ASC
+      `);
+
+    const userTickers = (tickerRows.recordset ?? [])
+      .map((row: any) => String(row.ticker || '').toUpperCase())
+      .filter((t) => !!t);
+
+    const tickers = Array.from(new Set([
+      ...userTickers,
+      DOW_BENCHMARK_TICKER,
+      NASDAQ_BENCHMARK_TICKER,
+      SP500_BENCHMARK_TICKER
+    ])).sort();
+
+    if (tickers.length === 0 || prioritizedDates.length === 0) {
+      return res.json({
+        source: HISTORICAL_PRICE_SOURCE,
+        year: requestedYear,
+        targetEndDate,
+        requestedDates: [],
+        syncedDates: [],
+        remainingDates: 0,
+        tickers,
+        storedRows: 0,
+        missingPrices: []
+      });
+    }
+
+    const existingRows = await pool.request()
+      .input('startDate', sql.Date, parseDateOnly(firstAnchorDate))
+      .input('endDate', sql.Date, parseDateOnly(targetEndDate))
+      .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
+      .query(`
+        SELECT
+          CONVERT(VARCHAR(10), priceDate, 23) AS priceDate,
+          ticker
+        FROM HistoricalPrices
+        WHERE source = @source
+          AND priceDate >= @startDate
+          AND priceDate <= @endDate
+      `);
+
+    const tickerSet = new Set(tickers);
+    const coverageByDate = new Map<string, Set<string>>();
+    for (const row of existingRows.recordset ?? []) {
+      const priceDate = String((row as any).priceDate || '');
+      const ticker = String((row as any).ticker || '').toUpperCase();
+      if (!priceDate || !tickerSet.has(ticker)) {
+        continue;
+      }
+      const coveredTickers = coverageByDate.get(priceDate) ?? new Set<string>();
+      coveredTickers.add(ticker);
+      coverageByDate.set(priceDate, coveredTickers);
+    }
+
+    const unsyncedDates = prioritizedDates.filter((priceDate) => {
+      const coveredTickers = coverageByDate.get(priceDate);
+      return !coveredTickers || coveredTickers.size < tickers.length;
+    });
+
+    const maxDatesPerRun = Math.max(1, Math.floor(HISTORICAL_SYNC_2021_MAX_ROWS_PER_RUN / tickers.length));
+    const requestedDates = unsyncedDates.slice(0, maxDatesPerRun);
+
+    if (requestedDates.length === 0) {
+      return res.json({
+        source: HISTORICAL_PRICE_SOURCE,
+        year: requestedYear,
+        targetEndDate,
+        requestedDates: [],
+        syncedDates: [],
+        remainingDates: 0,
+        tickers,
+        storedRows: 0,
+        missingPrices: []
+      });
+    }
+
+    const earliestRequestedDate = requestedDates[0];
+    const latestRequestedDate = requestedDates[requestedDates.length - 1];
+    const missingPrices: Array<{ ticker: string; priceDate: string }> = [];
+    let storedRows = 0;
+
+    for (const ticker of tickers) {
+      const quotes = await fetchYahooDailyCloses(ticker, earliestRequestedDate, latestRequestedDate);
+
+      for (const priceDate of requestedDates) {
+        const matched = resolveClosestPriceOnOrBefore(quotes, priceDate);
+        if (!matched) {
+          missingPrices.push({ ticker, priceDate });
+          continue;
+        }
+
+        await pool.request()
+          .input('ticker', sql.NVarChar, ticker)
+          .input('priceDate', sql.Date, parseDateOnly(priceDate))
+          .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
+          .input('closePrice', sql.Decimal(18, 8), matched.close)
+          .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
+          .query(`
+            MERGE HistoricalPrices AS target
+            USING (
+              SELECT
+                @ticker AS ticker,
+                @priceDate AS priceDate,
+                @source AS source
+            ) AS sourceRow
+            ON target.ticker = sourceRow.ticker
+               AND target.priceDate = sourceRow.priceDate
+               AND target.source = sourceRow.source
+            WHEN MATCHED THEN
+              UPDATE SET
+                marketDate = @marketDate,
+                closePrice = @closePrice,
+                updatedAt = GETUTCDATE()
+            WHEN NOT MATCHED THEN
+              INSERT (id, ticker, priceDate, marketDate, closePrice, source)
+              VALUES (NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source);
+          `);
+
+        storedRows += 1;
+      }
+    }
+
+    res.json({
+      source: HISTORICAL_PRICE_SOURCE,
+      year: requestedYear,
+      targetEndDate,
+      requestedDates,
+      syncedDates: requestedDates,
+      remainingDates: Math.max(0, unsyncedDates.length - requestedDates.length),
+      tickers,
+      storedRows,
+      missingPrices
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 router.post('/historical-prices/sync-2021', async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id!;
@@ -1147,6 +1372,287 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
 // Build chart points for 2021 using stored historical prices.
 // X-axis dates are whatever was synced into HistoricalPrices
 // (deposit/withdrawal dates + 2021-12-31).
+router.get('/portfolio/comparison', async (req: Request, res: Response) => {
+  try {
+    const requestedYear = parseSupportedComparisonYear(req.query.year);
+    if (requestedYear == null) {
+      return res.status(400).json({ error: 'Query parameter year must be 2021 or 2022.' });
+    }
+
+    const userId = req.user?.id!;
+    const pool = getPool();
+    const { startDate: targetStartDate, endDate: targetEndDate } = getYearRange(requestedYear);
+
+    const dateRows = await pool.request()
+      .input('startDate', sql.Date, parseDateOnly(targetStartDate))
+      .input('endDate', sql.Date, parseDateOnly(targetEndDate))
+      .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
+      .query(`
+        SELECT DISTINCT CONVERT(VARCHAR(10), priceDate, 23) AS priceDate
+        FROM HistoricalPrices
+        WHERE source = @source
+          AND priceDate >= @startDate
+          AND priceDate <= @endDate
+        ORDER BY priceDate ASC
+      `);
+
+    const dates = (dateRows.recordset ?? [])
+      .map((row: any) => String(row.priceDate || ''))
+      .filter((d) => !!d);
+
+    if (dates.length === 0) {
+      return res.json({
+        source: HISTORICAL_PRICE_SOURCE,
+        year: requestedYear,
+        points: [] as ComparisonPoint[]
+      });
+    }
+
+    const earliestDate = dates[0];
+    const latestDate = dates[dates.length - 1];
+
+    const cashRows = await pool.request()
+      .input('userId', sql.NVarChar, userId)
+      .input('endDate', sql.Date, parseDateOnly(latestDate))
+      .query(`
+        SELECT type, amount, transactionDate
+        FROM CashTransactions
+        WHERE userId = @userId
+          AND transactionDate <= DATEADD(day, 1, @endDate)
+        ORDER BY transactionDate ASC
+      `);
+
+    const stockRows = await pool.request()
+      .input('userId', sql.NVarChar, userId)
+      .input('endDate', sql.Date, parseDateOnly(latestDate))
+      .query(`
+        SELECT ticker, type, quantity, amount, transactionDate
+        FROM StockTransactions
+        WHERE userId = @userId
+          AND transactionDate <= DATEADD(day, 1, @endDate)
+        ORDER BY transactionDate ASC
+      `);
+
+    const priceRows = await pool.request()
+      .input('startDate', sql.Date, parseDateOnly(earliestDate))
+      .input('endDate', sql.Date, parseDateOnly(latestDate))
+      .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
+      .query(`
+        SELECT
+          ticker,
+          CONVERT(VARCHAR(10), priceDate, 23) AS priceDate,
+          closePrice
+        FROM HistoricalPrices
+        WHERE source = @source
+          AND priceDate >= @startDate
+          AND priceDate <= @endDate
+      `);
+
+    const cashEvents = (cashRows.recordset ?? []).map((row: any) => ({
+      date: toIsoDate(new Date(row.transactionDate)),
+      type: String(row.type || '').toLowerCase(),
+      amount: Number(row.amount || 0)
+    }));
+
+    const stockEvents = (stockRows.recordset ?? []).map((row: any) => ({
+      date: toIsoDate(new Date(row.transactionDate)),
+      ticker: String(row.ticker || '').toUpperCase(),
+      type: String(row.type || '').toLowerCase(),
+      quantity: Number(row.quantity || 0),
+      amount: Number(row.amount || 0)
+    }));
+
+    const pricesByDate = new Map<string, Map<string, number>>();
+    for (const row of priceRows.recordset ?? []) {
+      const date = String((row as any).priceDate || '');
+      const ticker = String((row as any).ticker || '').toUpperCase();
+      const closePrice = Number((row as any).closePrice || 0);
+      if (!date || !ticker || !Number.isFinite(closePrice) || closePrice <= 0) {
+        continue;
+      }
+      const byTicker = pricesByDate.get(date) ?? new Map<string, number>();
+      byTicker.set(ticker, closePrice);
+      pricesByDate.set(date, byTicker);
+    }
+
+    let cashIndex = 0;
+    let stockIndex = 0;
+
+    let deposits = 0;
+    let withdrawals = 0;
+    let interest = 0;
+    let fees = 0;
+    let buys = 0;
+    let sells = 0;
+
+    type BenchmarkLot = { shares: number };
+    const dowBenchmarkLots: BenchmarkLot[] = [];
+    const nasdaqBenchmarkLots: BenchmarkLot[] = [];
+    const sp500BenchmarkLots: BenchmarkLot[] = [];
+
+    const holdings = new Map<string, number>();
+    const points: ComparisonPoint[] = [];
+
+    for (const pointDate of dates) {
+      let hasCashFlowEvent = false;
+
+      while (cashIndex < cashEvents.length && cashEvents[cashIndex].date <= pointDate) {
+        const event = cashEvents[cashIndex];
+
+        if ((event.type === 'deposit' || event.type === 'withdrawal') && event.date >= targetStartDate) {
+          hasCashFlowEvent = true;
+        }
+
+        const pricesForEventDate = pricesByDate.get(event.date) ?? new Map<string, number>();
+        const dowBenchmarkPrice = Number(pricesForEventDate.get(DOW_BENCHMARK_TICKER));
+        const nasdaqBenchmarkPrice = Number(pricesForEventDate.get(NASDAQ_BENCHMARK_TICKER));
+        const sp500BenchmarkPrice = Number(pricesForEventDate.get(SP500_BENCHMARK_TICKER));
+
+        if (event.type === 'deposit') deposits += event.amount;
+        else if (event.type === 'withdrawal') withdrawals += event.amount;
+        else if (event.type === 'interest') interest += event.amount;
+        else if (event.type === 'fee') fees += event.amount;
+
+        if (Number.isFinite(dowBenchmarkPrice) && dowBenchmarkPrice > 0) {
+          if (event.type === 'deposit') {
+            const purchasedShares = Number(event.amount || 0) / dowBenchmarkPrice;
+            if (purchasedShares > ALLOCATION_TOLERANCE) {
+              dowBenchmarkLots.push({ shares: purchasedShares });
+            }
+          } else if (event.type === 'withdrawal') {
+            let sharesToSell = Number(event.amount || 0) / dowBenchmarkPrice;
+            while (sharesToSell > ALLOCATION_TOLERANCE && dowBenchmarkLots.length > 0) {
+              const lot = dowBenchmarkLots[0];
+              const consumedShares = Math.min(lot.shares, sharesToSell);
+              lot.shares -= consumedShares;
+              sharesToSell -= consumedShares;
+              if (lot.shares <= ALLOCATION_TOLERANCE) {
+                dowBenchmarkLots.shift();
+              }
+            }
+          }
+        }
+
+        if (Number.isFinite(nasdaqBenchmarkPrice) && nasdaqBenchmarkPrice > 0) {
+          if (event.type === 'deposit') {
+            const purchasedShares = Number(event.amount || 0) / nasdaqBenchmarkPrice;
+            if (purchasedShares > ALLOCATION_TOLERANCE) {
+              nasdaqBenchmarkLots.push({ shares: purchasedShares });
+            }
+          } else if (event.type === 'withdrawal') {
+            let sharesToSell = Number(event.amount || 0) / nasdaqBenchmarkPrice;
+            while (sharesToSell > ALLOCATION_TOLERANCE && nasdaqBenchmarkLots.length > 0) {
+              const lot = nasdaqBenchmarkLots[0];
+              const consumedShares = Math.min(lot.shares, sharesToSell);
+              lot.shares -= consumedShares;
+              sharesToSell -= consumedShares;
+              if (lot.shares <= ALLOCATION_TOLERANCE) {
+                nasdaqBenchmarkLots.shift();
+              }
+            }
+          }
+        }
+
+        if (Number.isFinite(sp500BenchmarkPrice) && sp500BenchmarkPrice > 0) {
+          if (event.type === 'deposit') {
+            const purchasedShares = Number(event.amount || 0) / sp500BenchmarkPrice;
+            if (purchasedShares > ALLOCATION_TOLERANCE) {
+              sp500BenchmarkLots.push({ shares: purchasedShares });
+            }
+          } else if (event.type === 'withdrawal') {
+            let sharesToSell = Number(event.amount || 0) / sp500BenchmarkPrice;
+            while (sharesToSell > ALLOCATION_TOLERANCE && sp500BenchmarkLots.length > 0) {
+              const lot = sp500BenchmarkLots[0];
+              const consumedShares = Math.min(lot.shares, sharesToSell);
+              lot.shares -= consumedShares;
+              sharesToSell -= consumedShares;
+              if (lot.shares <= ALLOCATION_TOLERANCE) {
+                sp500BenchmarkLots.shift();
+              }
+            }
+          }
+        }
+
+        cashIndex += 1;
+      }
+
+      while (stockIndex < stockEvents.length && stockEvents[stockIndex].date <= pointDate) {
+        const event = stockEvents[stockIndex];
+        const currentShares = Number(holdings.get(event.ticker) ?? 0);
+        if (event.type === 'buy' || event.type === 'div') {
+          holdings.set(event.ticker, currentShares + Number(event.quantity || 0));
+          if (event.type === 'buy') buys += Number(event.amount || 0);
+        } else if (event.type === 'sell') {
+          holdings.set(event.ticker, currentShares - Number(event.quantity || 0));
+          sells += Number(event.amount || 0);
+        }
+        stockIndex += 1;
+      }
+
+      const pricesForDate = pricesByDate.get(pointDate) ?? new Map<string, number>();
+      let stockValue = 0;
+      const missingTickers: string[] = [];
+
+      for (const [ticker, shares] of holdings.entries()) {
+        const normalizedShares = Number(shares || 0);
+        if (!Number.isFinite(normalizedShares) || normalizedShares <= ALLOCATION_TOLERANCE) {
+          continue;
+        }
+        const closePrice = pricesForDate.get(ticker);
+        if (!Number.isFinite(closePrice)) {
+          missingTickers.push(ticker);
+          continue;
+        }
+        stockValue += normalizedShares * Number(closePrice);
+      }
+
+      const availableCash = deposits - withdrawals + interest - fees - buys + sells;
+      const cashCostBasis = deposits - withdrawals;
+      const dowBenchmarkShares = dowBenchmarkLots.reduce((sum, lot) => sum + lot.shares, 0);
+      const dowPriceOnPointDate = Number(pricesForDate.get(DOW_BENCHMARK_TICKER));
+      const dowBenchmarkValue = Number.isFinite(dowPriceOnPointDate)
+        ? dowBenchmarkShares * dowPriceOnPointDate
+        : 0;
+
+      const nasdaqBenchmarkShares = nasdaqBenchmarkLots.reduce((sum, lot) => sum + lot.shares, 0);
+      const nasdaqPriceOnPointDate = Number(pricesForDate.get(NASDAQ_BENCHMARK_TICKER));
+      const nasdaqBenchmarkValue = Number.isFinite(nasdaqPriceOnPointDate)
+        ? nasdaqBenchmarkShares * nasdaqPriceOnPointDate
+        : 0;
+
+      const sp500BenchmarkShares = sp500BenchmarkLots.reduce((sum, lot) => sum + lot.shares, 0);
+      const sp500PriceOnPointDate = Number(pricesForDate.get(SP500_BENCHMARK_TICKER));
+      const sp500BenchmarkValue = Number.isFinite(sp500PriceOnPointDate)
+        ? sp500BenchmarkShares * sp500PriceOnPointDate
+        : 0;
+
+      points.push({
+        date: pointDate,
+        hasCashFlowEvent,
+        availableCash,
+        cashCostBasis,
+        stockValue,
+        portfolioValue: availableCash + stockValue,
+        dowBenchmarkValue,
+        dowBenchmarkShares,
+        nasdaqBenchmarkValue,
+        nasdaqBenchmarkShares,
+        sp500BenchmarkValue,
+        sp500BenchmarkShares,
+        missingTickers: Array.from(new Set(missingTickers)).sort()
+      });
+    }
+
+    res.json({
+      source: HISTORICAL_PRICE_SOURCE,
+      year: requestedYear,
+      points
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 router.get('/portfolio/comparison-2021', async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id!;

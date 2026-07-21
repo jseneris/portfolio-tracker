@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  getPortfolioComparisonByYear,
   PortfolioComparisonPoint,
-  getPortfolioComparison2021,
-  syncHistoricalPrices2021,
+  syncHistoricalPricesByYear,
 } from '../api'
+
+const SUPPORTED_YEARS = [2021, 2022] as const
 
 function formatMoney(value: number | null) {
   if (value == null || Number.isNaN(Number(value))) {
@@ -65,6 +67,7 @@ function buildPath(
 }
 
 export default function Comparison2021Page() {
+  const [selectedYear, setSelectedYear] = useState<number>(2021)
   const [points, setPoints] = useState<PortfolioComparisonPoint[]>([])
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
@@ -216,15 +219,15 @@ export default function Comparison2021Page() {
     }
   }, [points])
 
-  async function loadComparison() {
+  async function loadComparison(year: number) {
     setLoading(true)
     setError(null)
     setSuccess(null)
     try {
-      const response = await getPortfolioComparison2021()
+      const response = await getPortfolioComparisonByYear(year)
       setPoints(response.points)
       if (response.points.length === 0) {
-        setSuccess('No comparison points found yet. Run sync first.')
+        setSuccess(`No comparison points found yet for ${year}. Run sync first.`)
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to load comparison data.')
@@ -238,14 +241,14 @@ export default function Comparison2021Page() {
     setError(null)
     setSuccess(null)
     try {
-      const syncResult = await syncHistoricalPrices2021()
-      await loadComparison()
+      const syncResult = await syncHistoricalPricesByYear(selectedYear)
+      await loadComparison(selectedYear)
       const processedDateCount = syncResult.syncedDates?.length ?? syncResult.requestedDates.length
       const remainingDates = Number(syncResult.remainingDates ?? 0)
       setSuccess(
         remainingDates > 0
-          ? `Synced ${syncResult.storedRows} price points across ${syncResult.tickers.length} tickers and ${processedDateCount} dates. ${remainingDates} dates remain to backfill.`
-          : `Synced ${syncResult.storedRows} price points across ${syncResult.tickers.length} tickers and ${processedDateCount} dates. Backfill is complete.`
+          ? `Synced ${syncResult.storedRows} price points for ${selectedYear} across ${syncResult.tickers.length} tickers and ${processedDateCount} dates. ${remainingDates} dates remain to backfill.`
+          : `Synced ${syncResult.storedRows} price points for ${selectedYear} across ${syncResult.tickers.length} tickers and ${processedDateCount} dates. Backfill is complete.`
       )
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to sync historical prices.')
@@ -255,17 +258,29 @@ export default function Comparison2021Page() {
   }
 
   useEffect(() => {
-    void loadComparison()
-  }, [])
+    void loadComparison(selectedYear)
+  }, [selectedYear])
 
   return (
     <section>
       <div className="panel row-between">
         <div>
-          <h2>Portfolio vs Cash Basis (2021)</h2>
-          <p>Uses Yahoo closes on cash deposit/withdrawal dates plus 12/31/2021.</p>
+          <h2>Portfolio vs Cash Basis ({selectedYear})</h2>
+          <p>Uses Yahoo closes on cash deposit/withdrawal dates plus the year-end date for the selected year.</p>
         </div>
         <div className="inline-actions">
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+            Year
+            <select
+              value={selectedYear}
+              onChange={(event) => setSelectedYear(Number(event.target.value))}
+              disabled={loading || syncing}
+            >
+              {SUPPORTED_YEARS.map((year) => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+          </label>
           <button className="button button-primary" type="button" onClick={syncAndLoad} disabled={loading || syncing}>
             {syncing ? 'Syncing...' : 'Recalculate'}
           </button>

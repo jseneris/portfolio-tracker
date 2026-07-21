@@ -82,3 +82,21 @@
         7. Add retry and alerting behavior for partial failures, including stale-close detection when no successful run exists for the latest market date.
         8. Add admin utility endpoints for backfill and replay by date range so missed days can be recovered safely.
         9. Add tests for ticker selection correctness, market-day gating, idempotent writes, lock behavior, and recovery workflows.
+
+## BASE TRANSACTIONS BY TICKER (FROZEN BENCHMARK)
+### DESCRIPTION
+    -Each ticker can have one or more transactions marked as Base
+    -Only Buy transactions are eligible to be marked as Base
+    -Base performance is frozen: if base shares are later sold in actual activity, base comparison still acts as if those base shares were never sold
+    -Stock History summary should compare Actual performance versus Base performance for that ticker
+### PLAN
+        1. Add StockTransactions.isBase boolean column (default false) with migration and backfill for existing rows.
+        2. Enforce server-side rule that only buy transactions can be set isBase=true; reject sell/div updates.
+        3. Add endpoint to toggle base state per transaction (for example PUT /api/stocks/:id/base) with ownership checks.
+        4. Update stock transaction API responses to include isBase so frontend can render and persist base flags.
+        5. In Stock History UI, add Base toggle action on buy rows only and display clear state (base or non-base).
+        6. Compute base metrics per ticker from base buys only: baseShares, baseCost, baseCurrentValue (baseShares * latest historical close), baseGainLoss, baseReturnPercent.
+        7. Keep base track frozen by design: ignore all sells/div adjustments when calculating baseShares and baseCost.
+        8. Extend Stock History summary cards to show Actual vs Base values plus deltas (value delta and return delta).
+        9. Add validation and UX messaging for no-base-selected and no-historical-price scenarios.
+        10. Add backend and frontend tests covering eligibility rules, frozen-benchmark behavior, calculations, and summary rendering.

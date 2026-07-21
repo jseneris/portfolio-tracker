@@ -62,7 +62,7 @@ export default function App() {
             <NavLink to="/stocks">Stocks</NavLink>
             <NavLink to="/holdings">Holdings</NavLink>
             <NavLink to="/splits">Splits</NavLink>
-            <NavLink to="/comparison-2021">2021 Compare</NavLink>
+            <NavLink to="/comparison">Compare</NavLink>
             <NavLink to="/user-settings">User</NavLink>
           </nav>
           {auth.isConfigured ? (
@@ -81,6 +81,7 @@ export default function App() {
           <Route path="/stocks/:ticker" element={<StockHistoryPage />} />
           <Route path="/holdings" element={<HoldingsPage />} />
           <Route path="/splits" element={<StockSplitsPage />} />
+          <Route path="/comparison" element={<Comparison2021Page />} />
           <Route path="/comparison-2021" element={<Comparison2021Page />} />
           <Route path="/user-settings" element={<UserSettingsPage />} />
         </Routes>
