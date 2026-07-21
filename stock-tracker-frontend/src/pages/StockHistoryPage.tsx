@@ -16,6 +16,7 @@ import {
   deleteStockTransaction,
   emitPortfolioUpdated,
   getDisplayLotsByTicker,
+  getHistoricalPrices,
   getOpenPurchaseLots,
   getPurchaseLotsByTicker,
   getSaleAllocations,
@@ -51,14 +52,20 @@ function formatMoney(value: number | null) {
   if (value == null || Number.isNaN(Number(value))) {
     return '--'
   }
-  return `$${Number(value).toFixed(2)}`
+  return `$${Number(value).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
 }
 
 function formatMoney4(value: number | null) {
   if (value == null || Number.isNaN(Number(value))) {
     return '--'
   }
-  return `$${Number(value).toFixed(4)}`
+  return `$${Number(value).toLocaleString(undefined, {
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 4,
+  })}`
 }
 
 function formatNumber(value: number | null, digits = 6) {
@@ -121,6 +128,7 @@ export default function StockHistoryPage() {
   const [openLots, setOpenLots] = useState<PurchaseLot[]>([])
   const [displayLots, setDisplayLots] = useState<DisplayLot[]>([])
   const [positiveTransactionStates, setPositiveTransactionStates] = useState<Record<string, PositiveTransactionState>>({})
+  const [remainingSharesByTransactionId, setRemainingSharesByTransactionId] = useState<Record<string, number>>({})
   const [allocations, setAllocations] = useState<Record<string, string>>({})
   const [selectedDisplayLotIds, setSelectedDisplayLotIds] = useState<string[]>([])
   const [splitInputs, setSplitInputs] = useState<Record<string, string>>({})
@@ -129,6 +137,7 @@ export default function StockHistoryPage() {
   const [splitEvents, setSplitEvents] = useState<StockSplitEvent[]>([])
   const [showOriginalPreSplit, setShowOriginalPreSplit] = useState(false)
   const [availableCash, setAvailableCash] = useState<number | null>(null)
+  const [latestHistoricalPrice, setLatestHistoricalPrice] = useState<number | null>(null)
   const [loadingAllocations, setLoadingAllocations] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingLots, setLoadingLots] = useState(false)
@@ -149,6 +158,9 @@ export default function StockHistoryPage() {
   }, [allocations])
 
   const quantityValue = Number(form.quantity)
+  const sharesLeftToAllocate = Number.isFinite(quantityValue)
+    ? Math.max(0, quantityValue - allocationTotal)
+    : 0
   const allocationMatches = Number.isFinite(quantityValue)
     ? Math.abs(allocationTotal - quantityValue) <= ALLOCATION_TOLERANCE
     : false
@@ -209,6 +221,21 @@ export default function StockHistoryPage() {
 
   const displayLotShareDelta = totalDisplayLotShares - totalOpenPurchaseShares
   const displayLotsOutOfSync = Math.abs(displayLotShareDelta) > ALLOCATION_TOLERANCE
+
+  const currentValue = useMemo(() => {
+    if (!summary || latestHistoricalPrice == null) {
+      return null
+    }
+
+    const totalShares = Number(summary.totalShares)
+    const latestPrice = Number(latestHistoricalPrice)
+
+    if (!Number.isFinite(totalShares) || !Number.isFinite(latestPrice)) {
+      return null
+    }
+
+    return totalShares * latestPrice
+  }, [summary, latestHistoricalPrice])
 
   const transactionTimeline = useMemo(() => {
     type TimelineEntry =
@@ -440,10 +467,17 @@ export default function StockHistoryPage() {
       setSplitEvents(splitEventsData)
 
       const nextStates: Record<string, PositiveTransactionState> = {}
+      const nextRemainingShares: Record<string, number> = {}
       for (const lot of tickerLots) {
         nextStates[lot.transactionId] = getPositiveTransactionState(lot)
+
+        const remaining = Number(lot.remainingQuantity)
+        if (Number.isFinite(remaining)) {
+          nextRemainingShares[lot.transactionId] = (nextRemainingShares[lot.transactionId] ?? 0) + remaining
+        }
       }
       setPositiveTransactionStates(nextStates)
+      setRemainingSharesByTransactionId(nextRemainingShares)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to load transaction history.')
     } finally {
@@ -466,6 +500,55 @@ export default function StockHistoryPage() {
     }
 
     loadTransactions()
+  }, [ticker])
+
+  useEffect(() => {
+    if (!ticker) {
+      setLatestHistoricalPrice(null)
+      return
+    }
+
+    let cancelled = false
+
+    async function loadLatestHistoricalPrice() {
+      try {
+        const today = new Date().toISOString().slice(0, 10)
+        const historicalPrices = await getHistoricalPrices('1980-01-01', today)
+
+        let latestPriceDate = ''
+        let latestPriceValue: number | null = null
+
+        for (const row of historicalPrices) {
+          if (String(row.ticker).toUpperCase() !== ticker) {
+            continue
+          }
+
+          const close = Number(row.closePrice)
+          if (!Number.isFinite(close)) {
+            continue
+          }
+
+          if (row.priceDate > latestPriceDate) {
+            latestPriceDate = row.priceDate
+            latestPriceValue = close
+          }
+        }
+
+        if (!cancelled) {
+          setLatestHistoricalPrice(latestPriceValue)
+        }
+      } catch {
+        if (!cancelled) {
+          setLatestHistoricalPrice(null)
+        }
+      }
+    }
+
+    loadLatestHistoricalPrice()
+
+    return () => {
+      cancelled = true
+    }
   }, [ticker])
 
   useEffect(() => {
@@ -734,6 +817,7 @@ export default function StockHistoryPage() {
               <div className="hint">click to manage</div>
             </button>
             <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatMoney(summary.costBasis)}</div></div>
+            <div className="stat"><div className="label">Current Value</div><div className="value">{formatMoney(currentValue)}</div></div>
           </div>
 
           {displayLotsOutOfSync ? (
@@ -795,16 +879,30 @@ export default function StockHistoryPage() {
                   const originalValues = originalTransactionValuesById[transaction.id]
                   const displayQuantity = showOriginalPreSplit ? (originalValues?.quantity ?? transaction.quantity) : transaction.quantity
                   const displayPrice = showOriginalPreSplit ? (originalValues?.price ?? transaction.price) : transaction.price
+                  const lotState = positiveTransactionStates[transaction.id]
+                  const partialRemainingShares = remainingSharesByTransactionId[transaction.id]
+                  const isPartialLotRow =
+                    (transaction.type === 'buy' || transaction.type === 'div') &&
+                    lotState === 'partial' &&
+                    Number.isFinite(partialRemainingShares)
+                  const quantityToDisplay = isPartialLotRow ? partialRemainingShares : displayQuantity
                   return [
                       <tr key={transaction.id}>
                         <td>{formatDate(transaction.transactionDate)}</td>
                         <td>{transaction.type}</td>
                         <td>
                           {transaction.type === 'buy' || transaction.type === 'div' ? (
-                            positiveTransactionStates[transaction.id] ? (
-                              <span className={getStatePillClassName(positiveTransactionStates[transaction.id])}>
-                                {positiveTransactionStates[transaction.id]}
-                              </span>
+                            lotState ? (
+                              <>
+                                <span className={getStatePillClassName(lotState)}>
+                                  {lotState}
+                                </span>
+                                {lotState === 'partial' && Number.isFinite(partialRemainingShares) ? (
+                                  <div style={{ fontSize: '0.75rem', color: '#6b7280', marginTop: '0.25rem' }}>
+                                    {formatNumber(displayQuantity, 6)} original shares
+                                  </div>
+                                ) : null}
+                              </>
                             ) : (
                               <span className="pill pill-muted">--</span>
                             )
@@ -813,8 +911,8 @@ export default function StockHistoryPage() {
                           )}
                         </td>
                         <td>
-                          {formatNumber(displayQuantity)}
-                          {showOriginalPreSplit && originalValues?.hadSplitAdjustments ? (
+                          {formatNumber(quantityToDisplay)}
+                          {showOriginalPreSplit && originalValues?.hadSplitAdjustments && !isPartialLotRow ? (
                             <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>pre-split</div>
                           ) : null}
                         </td>
@@ -980,7 +1078,7 @@ export default function StockHistoryPage() {
                 <div className="allocation-header">
                   <h4>Lot Allocation</h4>
                   <span className={allocationMatches ? 'pill pill-good' : 'pill pill-warn'}>
-                    Allocated {allocationTotal.toFixed(6)} / {Number.isFinite(quantityValue) ? quantityValue.toFixed(6) : '0.000000'}
+                    Shares left to be allocated: {sharesLeftToAllocate.toFixed(6)}
                   </span>
                 </div>
 

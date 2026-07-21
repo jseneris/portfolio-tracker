@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   PortfolioComparisonPoint,
   getPortfolioComparison2021,
@@ -71,10 +71,19 @@ export default function Comparison2021Page() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
-  const cashFlowTablePoints = useMemo(
-    () => points.filter((point) => point.hasCashFlowEvent),
-    [points]
-  )
+  const comparisonSummary = useMemo(() => {
+    if (points.length === 0) {
+      return null
+    }
+
+    const startPoint = points[0]
+    const endPoint = points[points.length - 1]
+
+    return {
+      startPoint,
+      endPoint,
+    }
+  }, [points])
 
   const chart = useMemo(() => {
     if (points.length === 0) {
@@ -122,7 +131,7 @@ export default function Comparison2021Page() {
         const yRange = Math.max(maxY - minY, 1)
         const pointY = margin.top + plotHeight - ((point.cashCostBasis - minY) / yRange) * plotHeight
         const baselineY = margin.top + plotHeight
-        const width = Math.max(6, Math.min(20, plotWidth / Math.max(points.length, 1) / 1.8))
+        const width = Math.max(12, Math.min(40, plotWidth / Math.max(points.length, 1) / 0.9))
         const y = Math.min(pointY, baselineY)
         const height = Math.max(1, Math.abs(baselineY - pointY))
 
@@ -245,6 +254,10 @@ export default function Comparison2021Page() {
     }
   }
 
+  useEffect(() => {
+    void loadComparison()
+  }, [])
+
   return (
     <section>
       <div className="panel row-between">
@@ -253,11 +266,8 @@ export default function Comparison2021Page() {
           <p>Uses Yahoo closes on cash deposit/withdrawal dates plus 12/31/2021.</p>
         </div>
         <div className="inline-actions">
-          <button className="button" type="button" onClick={loadComparison} disabled={loading || syncing}>
-            {loading ? 'Loading...' : 'Load Data'}
-          </button>
           <button className="button button-primary" type="button" onClick={syncAndLoad} disabled={loading || syncing}>
-            {syncing ? 'Syncing...' : 'Sync + Refresh'}
+            {syncing ? 'Syncing...' : 'Recalculate'}
           </button>
         </div>
       </div>
@@ -348,9 +358,9 @@ export default function Comparison2021Page() {
                   opacity="0.35"
                 />
               ))}
-              <path d={chart.nasdaqPath} fill="none" stroke="#2563eb" strokeWidth="3" strokeLinecap="round" />
-              <path d={chart.sp500Path} fill="none" stroke="#ef4444" strokeWidth="3" strokeLinecap="round" />
-              <path d={chart.dowPath} fill="none" stroke="#f59e0b" strokeWidth="3" strokeLinecap="round" />
+              <path d={chart.nasdaqPath} fill="none" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
+              <path d={chart.sp500Path} fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
+              <path d={chart.dowPath} fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
               <path d={chart.portfolioPath} fill="none" stroke="#16a34a" strokeWidth="3" strokeLinecap="round" />
             </svg>
             <div className="comparison-legend">
@@ -366,35 +376,37 @@ export default function Comparison2021Page() {
       </div>
 
       <div className="panel">
-        {cashFlowTablePoints.length === 0 ? (
-          <p>No cash deposit/withdrawal dates to display.</p>
+        {comparisonSummary == null ? (
+          <p>No comparison summary available yet.</p>
         ) : (
           <table className="table">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>Portfolio Value</th>
-                <th>Cash Cost Basis</th>
-                <th>DOW Benchmark</th>
-                <th>Nasdaq Benchmark</th>
-                <th>S&amp;P 500 Benchmark</th>
-                <th>Available Cash</th>
-                <th>Stock Value</th>
+                <th>Metric</th>
+                <th>Value</th>
               </tr>
             </thead>
             <tbody>
-              {cashFlowTablePoints.map((point) => (
-                <tr key={point.date}>
-                  <td>{formatDate(point.date)}</td>
-                  <td>{formatMoney(point.portfolioValue)}</td>
-                  <td>{formatMoney(point.cashCostBasis)}</td>
-                  <td>{formatMoney(point.dowBenchmarkValue)}</td>
-                  <td>{formatMoney(point.nasdaqBenchmarkValue)}</td>
-                  <td>{formatMoney(point.sp500BenchmarkValue)}</td>
-                  <td>{formatMoney(point.availableCash)}</td>
-                  <td>{formatMoney(point.stockValue)}</td>
-                </tr>
-              ))}
+              <tr>
+                <td>Portfolio Starting Value ({formatDate(comparisonSummary.startPoint.date)})</td>
+                <td>{formatMoney(comparisonSummary.startPoint.portfolioValue)}</td>
+              </tr>
+              <tr>
+                <td>Portfolio Ending Value ({formatDate(comparisonSummary.endPoint.date)})</td>
+                <td>{formatMoney(comparisonSummary.endPoint.portfolioValue)}</td>
+              </tr>
+              <tr>
+                <td>Cash Basis in DOW Benchmark ({formatDate(comparisonSummary.endPoint.date)})</td>
+                <td>{formatMoney(comparisonSummary.endPoint.dowBenchmarkValue)}</td>
+              </tr>
+              <tr>
+                <td>Cash Basis in Nasdaq Benchmark ({formatDate(comparisonSummary.endPoint.date)})</td>
+                <td>{formatMoney(comparisonSummary.endPoint.nasdaqBenchmarkValue)}</td>
+              </tr>
+              <tr>
+                <td>Cash Basis in S&amp;P 500 Benchmark ({formatDate(comparisonSummary.endPoint.date)})</td>
+                <td>{formatMoney(comparisonSummary.endPoint.sp500BenchmarkValue)}</td>
+              </tr>
             </tbody>
           </table>
         )}

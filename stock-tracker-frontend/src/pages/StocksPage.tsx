@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   StockTransaction,
@@ -6,6 +6,8 @@ import {
   emitPortfolioUpdated,
   getStockTransactions,
 } from '../api'
+
+const SHARE_TOLERANCE = 1e-6
 
 function formatMoney(value: number | null) {
   if (value == null || Number.isNaN(Number(value))) {
@@ -30,16 +32,38 @@ function formatDate(value: string) {
 }
 
 export default function StocksPage() {
+  const [allTransactions, setAllTransactions] = useState<StockTransaction[]>([])
   const [transactions, setTransactions] = useState<StockTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+
+  const closedHoldings = useMemo(() => {
+    const sharesByTicker = new Map<string, number>()
+
+    for (const transaction of allTransactions) {
+      const quantity = Number(transaction.quantity)
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        continue
+      }
+
+      const previous = sharesByTicker.get(transaction.ticker) ?? 0
+      const next = transaction.type === 'sell' ? previous - quantity : previous + quantity
+      sharesByTicker.set(transaction.ticker, next)
+    }
+
+    return Array.from(sharesByTicker.entries())
+      .filter(([, shares]) => Math.abs(shares) <= SHARE_TOLERANCE)
+      .map(([ticker]) => ticker)
+      .sort((a, b) => a.localeCompare(b))
+  }, [allTransactions])
 
   async function loadTransactions() {
     setLoading(true)
     setError(null)
     try {
       const result = await getStockTransactions()
+      setAllTransactions(result)
       setTransactions(result.slice(0, 10))
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to load stock transactions.')
@@ -77,6 +101,26 @@ export default function StocksPage() {
 
       {success ? <div className="panel status status-success">{success}</div> : null}
       {error ? <div className="panel status status-error">{error}</div> : null}
+
+      <div className="panel">
+        <h3>Closed Holdings (0 Shares)</h3>
+        <p>Tickers you no longer hold. Use links below to view full stock history.</p>
+        {loading ? (
+          <p>Loading closed holdings...</p>
+        ) : closedHoldings.length === 0 ? (
+          <p>No closed holdings yet.</p>
+        ) : (
+          <ul>
+            {closedHoldings.map((ticker) => (
+              <li key={ticker}>
+                <Link className="link-button" to={`/stocks/${encodeURIComponent(ticker)}`}>
+                  {ticker}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <div className="panel">
         {loading ? (
