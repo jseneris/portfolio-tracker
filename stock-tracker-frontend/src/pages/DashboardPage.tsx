@@ -104,6 +104,27 @@ function calculateStockCostBasisExcludingDividends(lots: PurchaseLot[]): number 
   }, 0)
 }
 
+function calculateStockCostBasisExcludingDividendsByTicker(lots: PurchaseLot[]): Record<string, number> {
+  const byTicker: Record<string, number> = {}
+
+  for (const lot of lots) {
+    if (lot.sourceType !== 'purchase') {
+      continue
+    }
+
+    const ticker = String(lot.ticker || '').toUpperCase()
+    const remaining = Number(lot.remainingQuantity)
+    const unitCost = Number(lot.unitCost)
+    if (!ticker || !Number.isFinite(remaining) || !Number.isFinite(unitCost)) {
+      continue
+    }
+
+    byTicker[ticker] = Number(byTicker[ticker] || 0) + (remaining * unitCost)
+  }
+
+  return byTicker
+}
+
 function calculateHoldingsMarketValue(
   summary: PortfolioSummary,
   latestPriceByTicker: Record<string, number>
@@ -258,6 +279,7 @@ export default function DashboardPage() {
 
   const [holdingsMarketValue, setHoldingsMarketValue] = useState<number | null>(null)
   const [stockCostBasisExcludingDividends, setStockCostBasisExcludingDividends] = useState<number | null>(null)
+  const [stockCostBasisExcludingDividendsByTicker, setStockCostBasisExcludingDividendsByTicker] = useState<Record<string, number>>({})
   const [stockPerformance, setStockPerformance] = useState<number | null>(null)
 
   const cashBasisExcludingDividends = data
@@ -305,12 +327,14 @@ export default function DashboardPage() {
       const latestHistoricalPriceByTicker = buildLatestHistoricalPriceByTicker(historicalPricesResult)
       const nextHoldingsMarketValue = calculateHoldingsMarketValue(summary, latestHistoricalPriceByTicker)
       const nextStockCostBasisExcludingDividends = calculateStockCostBasisExcludingDividends(purchaseLotsResult)
+      const nextStockCostBasisExcludingDividendsByTicker = calculateStockCostBasisExcludingDividendsByTicker(purchaseLotsResult)
       const nextStockPerformance = nextHoldingsMarketValue == null
         ? null
         : nextHoldingsMarketValue - nextStockCostBasisExcludingDividends
 
       setHoldingsMarketValue(nextHoldingsMarketValue)
       setStockCostBasisExcludingDividends(nextStockCostBasisExcludingDividends)
+      setStockCostBasisExcludingDividendsByTicker(nextStockCostBasisExcludingDividendsByTicker)
       setStockPerformance(nextStockPerformance)
 
       setLastUpdatedAt(new Date())
@@ -380,7 +404,7 @@ export default function DashboardPage() {
     if (selectedUtc > nowUtc) {
       return 'Date cannot be in the future.'
     }
-              <div className="stat"><div className="label">Cash Basis</div><div className="value">{formatMoney(cashBasisExcludingDividends)}</div></div>
+
     return null
   }
 
@@ -492,7 +516,7 @@ export default function DashboardPage() {
                       </Link>
                     </td>
                     <td>{formatShares(row.totalShares)}</td>
-                    <td>{formatMoney(row.costBasis)}</td>
+                    <td>{formatMoney(stockCostBasisExcludingDividendsByTicker[row.ticker] ?? 0)}</td>
                     <td>{formatMoney(buyTargetsByTicker[row.ticker] ?? null)}</td>
                     <td>{formatMoney(saleTargetsByTicker[row.ticker] ?? null)}</td>
                     <td>{row.lotCount}</td>

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   getPortfolioComparisonByYear,
   PortfolioComparisonPoint,
+  StockTransaction,
+  getStockTransactions,
   syncHistoricalPricesByYear,
 } from '../api'
 
@@ -11,7 +13,10 @@ function formatMoney(value: number | null) {
   if (value == null || Number.isNaN(Number(value))) {
     return '--'
   }
-  return `$${Number(value).toFixed(2)}`
+  return `$${Number(value).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`
 }
 
 function formatDate(value: string) {
@@ -69,10 +74,37 @@ function buildPath(
 export default function Comparison2021Page() {
   const [selectedYear, setSelectedYear] = useState<number>(2021)
   const [points, setPoints] = useState<PortfolioComparisonPoint[]>([])
+  const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([])
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+
+  const yearlyStockTransactionSummary = useMemo(() => {
+    const summary = {
+      buy: { count: 0, amount: 0 },
+      sell: { count: 0, amount: 0 },
+      div: { count: 0, amount: 0 },
+    }
+
+    for (const transaction of stockTransactions) {
+      const date = new Date(transaction.transactionDate)
+      if (Number.isNaN(date.getTime()) || date.getUTCFullYear() !== selectedYear) {
+        continue
+      }
+
+      const type = String(transaction.type || '').toLowerCase()
+      const amount = Number(transaction.amount)
+      const safeAmount = Number.isFinite(amount) ? amount : 0
+
+      if (type === 'buy' || type === 'sell' || type === 'div') {
+        summary[type].count += 1
+        summary[type].amount += safeAmount
+      }
+    }
+
+    return summary
+  }, [stockTransactions, selectedYear])
 
   const comparisonSummary = useMemo(() => {
     if (points.length === 0) {
@@ -224,8 +256,12 @@ export default function Comparison2021Page() {
     setError(null)
     setSuccess(null)
     try {
-      const response = await getPortfolioComparisonByYear(year)
+      const [response, transactions] = await Promise.all([
+        getPortfolioComparisonByYear(year),
+        getStockTransactions(),
+      ])
       setPoints(response.points)
+      setStockTransactions(transactions)
       if (response.points.length === 0) {
         setSuccess(`No comparison points found yet for ${year}. Run sync first.`)
       }
@@ -388,6 +424,36 @@ export default function Comparison2021Page() {
             </div>
           </div>
         )}
+      </div>
+
+      <div className="panel">
+        <h3>{selectedYear} Stock Transaction Summary</h3>
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Count</th>
+              <th>Total Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Purchases</td>
+              <td>{yearlyStockTransactionSummary.buy.count}</td>
+              <td>{formatMoney(yearlyStockTransactionSummary.buy.amount)}</td>
+            </tr>
+            <tr>
+              <td>Sales</td>
+              <td>{yearlyStockTransactionSummary.sell.count}</td>
+              <td>{formatMoney(yearlyStockTransactionSummary.sell.amount)}</td>
+            </tr>
+            <tr>
+              <td>Dividends</td>
+              <td>{yearlyStockTransactionSummary.div.count}</td>
+              <td>{formatMoney(yearlyStockTransactionSummary.div.amount)}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <div className="panel">
