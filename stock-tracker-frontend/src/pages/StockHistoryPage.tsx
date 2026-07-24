@@ -116,6 +116,38 @@ function getStatePillClassName(state: PositiveTransactionState) {
   return 'pill pill-empty'
 }
 
+function getSalePriceComparisonClassName(unitCost: number, salePrice: number | null) {
+  if (salePrice == null || !Number.isFinite(salePrice) || !Number.isFinite(unitCost)) {
+    return 'pill pill-muted'
+  }
+
+  if (unitCost < salePrice - ALLOCATION_TOLERANCE) {
+    return 'pill pill-profit'
+  }
+
+  if (unitCost > salePrice + ALLOCATION_TOLERANCE) {
+    return 'pill pill-loss'
+  }
+
+  return 'pill pill-muted'
+}
+
+function getSalePriceComparisonLabel(unitCost: number, salePrice: number | null) {
+  if (salePrice == null || !Number.isFinite(salePrice) || !Number.isFinite(unitCost)) {
+    return 'No comparison'
+  }
+
+  if (unitCost < salePrice - ALLOCATION_TOLERANCE) {
+    return 'Profit'
+  }
+
+  if (unitCost > salePrice + ALLOCATION_TOLERANCE) {
+    return 'Loss'
+  }
+
+  return 'Even'
+}
+
 export default function StockHistoryPage() {
   const { ticker: tickerParam } = useParams<{ ticker: string }>()
   const ticker = useMemo(() => decodeURIComponent(tickerParam ?? '').trim().toUpperCase(), [tickerParam])
@@ -186,6 +218,8 @@ export default function StockHistoryPage() {
     hasRequiredValues &&
     hasValidNumericValues &&
     (!isSell || (!loadingLots && availableLots.length > 0 && hasSellAllocationInput && allocationMatches))
+
+  const salePriceValue = isSell ? Number(form.price) : null
 
   const buyCost = Number(form.quantity) * Number(form.price)
   const hasInsufficientCashForBuy = form.type === 'buy'
@@ -1050,7 +1084,14 @@ export default function StockHistoryPage() {
                                       <tr key={index} style={{ borderBottom: '1px solid #eee' }}>
                                         <td style={{ padding: '0.5rem' }}>{alloc.sourceType === 'purchase' ? 'buy' : 'div'}</td>
                                         <td style={{ padding: '0.5rem' }}>{formatDate(alloc.purchaseDate)}</td>
-                                        <td style={{ padding: '0.5rem' }}>{formatMoney4(alloc.unitCost)}</td>
+                                        <td style={{ padding: '0.5rem' }}>
+                                          <div className="sale-lot-cost-cell">
+                                            <span>{formatMoney4(alloc.unitCost)}</span>
+                                            <span className={getSalePriceComparisonClassName(Number(alloc.unitCost), Number(transaction.price))}>
+                                              {getSalePriceComparisonLabel(Number(alloc.unitCost), Number(transaction.price))}
+                                            </span>
+                                          </div>
+                                        </td>
                                         <td style={{ padding: '0.5rem' }}>{formatNumber(alloc.quantity)}</td>
                                         <td style={{ padding: '0.5rem' }}>{formatMoney(alloc.unitCost * alloc.quantity)}</td>
                                       </tr>
@@ -1210,7 +1251,14 @@ export default function StockHistoryPage() {
                             <td>{lot.sourceType === 'purchase' ? 'Buy' : 'Dividend'}</td>
                             <td>{formatDate(lot.purchaseDate)}</td>
                             <td>{formatNumber(displayRemaining, 6)}</td>
-                            <td>{formatMoney(displayUnitCost)}</td>
+                            <td>
+                              <div className="sale-lot-cost-cell">
+                                <span>{formatMoney(displayUnitCost)}</span>
+                                <span className={getSalePriceComparisonClassName(displayUnitCost, salePriceValue)}>
+                                  {getSalePriceComparisonLabel(displayUnitCost, salePriceValue)}
+                                </span>
+                              </div>
+                            </td>
                             <td>
                               <input
                                 type="number"
