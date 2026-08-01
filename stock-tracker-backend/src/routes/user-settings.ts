@@ -10,11 +10,6 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25;
 
-function normalizeTargetPercent(value: unknown, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
 router.get('/targets', async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id!;
@@ -166,5 +161,10 @@ router.put('/targets', async (req: Request, res: Response) => {
     res.status(500).json({ error: String(error) });
   }
 });
+
+function normalizeTargetPercent(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 export default router;

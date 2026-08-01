@@ -34,6 +34,8 @@ The system tracks stock holdings using two complementary lot types:
 - Invariant: sum of all display lot shares = sum of all purchase lot remaining shares (dividend lots excluded)
 - Consumption order: smallest-first (ascending quantity order)
 
+- new simplified paradigm for display lots.  Assume fresh dataset, no migrations necessary.  No need for historical record, just one table with user, ticker, lots (comma seperated list), (optional) number of lots.  
+
 ### Why This Design?
 
 Users want flexibility in how they organize their portfolio:

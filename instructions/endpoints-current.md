@@ -11,6 +11,12 @@ Authentication accepted by middleware:
 - `x-user-id: <user-id>`
 - `Authorization: Bearer <token>` (uses `x-user-id` when provided, otherwise falls back to `dev-user`)
 
+Endpoint files should follow this fomatting order, but better readability
+- Constants
+- Interfaces (All interfaces start with letter "I")
+- Endpoints
+- Functions
+
 ## Cash Endpoints
 
 ### GET /api/cash

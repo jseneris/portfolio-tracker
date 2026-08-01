@@ -6,169 +6,23 @@ import sql from 'mssql';
 const router = Router();
 const SPLIT_TOLERANCE = 1e-6;
 
-interface CombineLotsRequestBody {
-  lotIds?: string[];
-}
-
-interface DisplayLotReconciliationUserSummary {
+interface IDisplayLotReconciliationUserSummary {
   userId: string;
   createdLots: number;
   createdShares: number;
   trimmedShares: number;
 }
 
-interface DisplayLotReconciliationSummary {
+interface IDisplayLotReconciliationSummary {
   usersProcessed: number;
   usersWithForwardFill: number;
   usersWithReverseTrim: number;
   totalCreatedLots: number;
   totalCreatedShares: number;
   totalTrimmedShares: number;
-  users: DisplayLotReconciliationUserSummary[];
+  users: IDisplayLotReconciliationUserSummary[];
 }
 
-async function reconcileDisplayLotsAfterSplit(
-  tx: sql.Transaction,
-  ticker: string
-): Promise<DisplayLotReconciliationSummary> {
-  const summary: DisplayLotReconciliationSummary = {
-    usersProcessed: 0,
-    usersWithForwardFill: 0,
-    usersWithReverseTrim: 0,
-    totalCreatedLots: 0,
-    totalCreatedShares: 0,
-    totalTrimmedShares: 0,
-    users: [],
-  };
-
-  const userRows = await new sql.Request(tx)
-    .input('ticker', sql.NVarChar, ticker)
-    .query(`
-      SELECT DISTINCT userId
-      FROM PurchaseLots
-      WHERE ticker = @ticker AND sourceType = 'purchase'
-      UNION
-      SELECT DISTINCT userId
-      FROM DisplayLots
-      WHERE ticker = @ticker
-    `);
-
-  for (const userRow of userRows.recordset as any[]) {
-    const userId = String(userRow.userId || '');
-    if (!userId) {
-      continue;
-    }
-
-    summary.usersProcessed += 1;
-    const userSummary: DisplayLotReconciliationUserSummary = {
-      userId,
-      createdLots: 0,
-      createdShares: 0,
-      trimmedShares: 0,
-    };
-
-    const openPurchaseTotalRow = await new sql.Request(tx)
-      .input('userId', sql.NVarChar, userId)
-      .input('ticker', sql.NVarChar, ticker)
-      .query(`
-        SELECT COALESCE(SUM(remainingQuantity), 0) AS total
-        FROM PurchaseLots
-        WHERE userId = @userId
-          AND ticker = @ticker
-          AND sourceType = 'purchase'
-          AND remainingQuantity > 0
-      `);
-
-    const targetTotal = Number(openPurchaseTotalRow.recordset[0]?.total || 0);
-
-    const displayLotsResult = await new sql.Request(tx)
-      .input('userId', sql.NVarChar, userId)
-      .input('ticker', sql.NVarChar, ticker)
-      .query(`
-        SELECT id, totalQuantity
-        FROM DisplayLots
-        WHERE userId = @userId
-          AND ticker = @ticker
-          AND totalQuantity > 0
-        ORDER BY totalQuantity ASC, createdAt ASC
-      `);
-
-    const displayRows = displayLotsResult.recordset as any[];
-    const displayTotal = displayRows.reduce((sum, row) => {
-      const qty = Number(row.totalQuantity);
-      return Number.isFinite(qty) ? sum + qty : sum;
-    }, 0);
-
-    const delta = targetTotal - displayTotal;
-
-    // Forward split behavior: add a single synthetic display lot for any missing shares.
-    if (delta > SPLIT_TOLERANCE) {
-      await new sql.Request(tx)
-        .input('id', sql.UniqueIdentifier, uuidv4())
-        .input('userId', sql.NVarChar, userId)
-        .input('ticker', sql.NVarChar, ticker)
-        .input('totalQuantity', sql.Decimal(18, 8), delta)
-        .query(`
-          INSERT INTO DisplayLots (id, userId, ticker, totalQuantity)
-          VALUES (@id, @userId, @ticker, @totalQuantity)
-        `);
-
-      userSummary.createdLots = 1;
-      userSummary.createdShares = delta;
-      summary.usersWithForwardFill += 1;
-      summary.totalCreatedLots += 1;
-      summary.totalCreatedShares += delta;
-      summary.users.push(userSummary);
-      continue;
-    }
-
-    // Reverse split behavior: consume display lots from smallest to largest.
-    if (delta < -SPLIT_TOLERANCE) {
-      let toExhaust = Math.abs(delta);
-
-      for (const row of displayRows) {
-        if (toExhaust <= SPLIT_TOLERANCE) {
-          break;
-        }
-
-        const lotId = String(row.id);
-        const lotQty = Number(row.totalQuantity);
-        if (!Number.isFinite(lotQty) || lotQty <= SPLIT_TOLERANCE) {
-          continue;
-        }
-
-        const reduceBy = Math.min(lotQty, toExhaust);
-        toExhaust -= reduceBy;
-        userSummary.trimmedShares += reduceBy;
-
-        await new sql.Request(tx)
-          .input('displayLotId', sql.UniqueIdentifier, lotId)
-          .input('userId', sql.NVarChar, userId)
-          .input('reduceBy', sql.Decimal(18, 8), reduceBy)
-          .query(`
-            UPDATE DisplayLots
-            SET totalQuantity = CASE
-              WHEN totalQuantity - @reduceBy < 0 THEN 0
-              ELSE totalQuantity - @reduceBy
-            END,
-            updatedAt = GETUTCDATE()
-            WHERE id = @displayLotId AND userId = @userId
-          `);
-      }
-
-      if (userSummary.trimmedShares > SPLIT_TOLERANCE) {
-        summary.usersWithReverseTrim += 1;
-        summary.totalTrimmedShares += userSummary.trimmedShares;
-      }
-      summary.users.push(userSummary);
-      continue;
-    }
-
-    summary.users.push(userSummary);
-  }
-
-  return summary;
-}
 
 // GET all purchase-lot attribution rows for user
 router.get('/', async (req: Request, res: Response) => {
@@ -568,5 +422,148 @@ router.post('/ticker/:ticker/split', async (req: Request, res: Response) => {
     res.status(500).json({ error: String(error) });
   }
 });
+
+async function reconcileDisplayLotsAfterSplit(
+  tx: sql.Transaction,
+  ticker: string
+): Promise<IDisplayLotReconciliationSummary> {
+  const summary: IDisplayLotReconciliationSummary = {
+    usersProcessed: 0,
+    usersWithForwardFill: 0,
+    usersWithReverseTrim: 0,
+    totalCreatedLots: 0,
+    totalCreatedShares: 0,
+    totalTrimmedShares: 0,
+    users: [],
+  };
+
+  const userRows = await new sql.Request(tx)
+    .input('ticker', sql.NVarChar, ticker)
+    .query(`
+      SELECT DISTINCT userId
+      FROM PurchaseLots
+      WHERE ticker = @ticker AND sourceType = 'purchase'
+      UNION
+      SELECT DISTINCT userId
+      FROM DisplayLots
+      WHERE ticker = @ticker
+    `);
+
+  for (const userRow of userRows.recordset as any[]) {
+    const userId = String(userRow.userId || '');
+    if (!userId) {
+      continue;
+    }
+
+    summary.usersProcessed += 1;
+    const userSummary: IDisplayLotReconciliationUserSummary = {
+      userId,
+      createdLots: 0,
+      createdShares: 0,
+      trimmedShares: 0,
+    };
+
+    const openPurchaseTotalRow = await new sql.Request(tx)
+      .input('userId', sql.NVarChar, userId)
+      .input('ticker', sql.NVarChar, ticker)
+      .query(`
+        SELECT COALESCE(SUM(remainingQuantity), 0) AS total
+        FROM PurchaseLots
+        WHERE userId = @userId
+          AND ticker = @ticker
+          AND sourceType = 'purchase'
+          AND remainingQuantity > 0
+      `);
+
+    const targetTotal = Number(openPurchaseTotalRow.recordset[0]?.total || 0);
+
+    const displayLotsResult = await new sql.Request(tx)
+      .input('userId', sql.NVarChar, userId)
+      .input('ticker', sql.NVarChar, ticker)
+      .query(`
+        SELECT id, totalQuantity
+        FROM DisplayLots
+        WHERE userId = @userId
+          AND ticker = @ticker
+          AND totalQuantity > 0
+        ORDER BY totalQuantity ASC, createdAt ASC
+      `);
+
+    const displayRows = displayLotsResult.recordset as any[];
+    const displayTotal = displayRows.reduce((sum, row) => {
+      const qty = Number(row.totalQuantity);
+      return Number.isFinite(qty) ? sum + qty : sum;
+    }, 0);
+
+    const delta = targetTotal - displayTotal;
+
+    // Forward split behavior: add a single synthetic display lot for any missing shares.
+    if (delta > SPLIT_TOLERANCE) {
+      await new sql.Request(tx)
+        .input('id', sql.UniqueIdentifier, uuidv4())
+        .input('userId', sql.NVarChar, userId)
+        .input('ticker', sql.NVarChar, ticker)
+        .input('totalQuantity', sql.Decimal(18, 8), delta)
+        .query(`
+          INSERT INTO DisplayLots (id, userId, ticker, totalQuantity)
+          VALUES (@id, @userId, @ticker, @totalQuantity)
+        `);
+
+      userSummary.createdLots = 1;
+      userSummary.createdShares = delta;
+      summary.usersWithForwardFill += 1;
+      summary.totalCreatedLots += 1;
+      summary.totalCreatedShares += delta;
+      summary.users.push(userSummary);
+      continue;
+    }
+
+    // Reverse split behavior: consume display lots from smallest to largest.
+    if (delta < -SPLIT_TOLERANCE) {
+      let toExhaust = Math.abs(delta);
+
+      for (const row of displayRows) {
+        if (toExhaust <= SPLIT_TOLERANCE) {
+          break;
+        }
+
+        const lotId = String(row.id);
+        const lotQty = Number(row.totalQuantity);
+        if (!Number.isFinite(lotQty) || lotQty <= SPLIT_TOLERANCE) {
+          continue;
+        }
+
+        const reduceBy = Math.min(lotQty, toExhaust);
+        toExhaust -= reduceBy;
+        userSummary.trimmedShares += reduceBy;
+
+        await new sql.Request(tx)
+          .input('displayLotId', sql.UniqueIdentifier, lotId)
+          .input('userId', sql.NVarChar, userId)
+          .input('reduceBy', sql.Decimal(18, 8), reduceBy)
+          .query(`
+            UPDATE DisplayLots
+            SET totalQuantity = CASE
+              WHEN totalQuantity - @reduceBy < 0 THEN 0
+              ELSE totalQuantity - @reduceBy
+            END,
+            updatedAt = GETUTCDATE()
+            WHERE id = @displayLotId AND userId = @userId
+          `);
+      }
+
+      if (userSummary.trimmedShares > SPLIT_TOLERANCE) {
+        summary.usersWithReverseTrim += 1;
+        summary.totalTrimmedShares += userSummary.trimmedShares;
+      }
+      summary.users.push(userSummary);
+      continue;
+    }
+
+    summary.users.push(userSummary);
+  }
+
+  return summary;
+}
 
 export default router;

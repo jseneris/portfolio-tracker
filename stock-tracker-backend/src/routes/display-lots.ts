@@ -6,7 +6,7 @@ import sql from 'mssql';
 const router = Router();
 const QUANTITY_TOLERANCE = 1e-6;
 
-interface DisplayLotCompositionItem {
+interface IDisplayLotCompositionItem {
   purchaseLotId: string;
   quantityAllocated: number;
 }
@@ -117,7 +117,7 @@ router.get('/:id/composition', async (req: Request, res: Response) => {
 router.post('/:ticker', async (req: Request, res: Response) => {
   try {
     const { ticker } = req.params;
-    const { composition } = req.body as { composition: DisplayLotCompositionItem[] };
+    const { composition } = req.body as { composition: IDisplayLotCompositionItem[] };
     const userId = req.user?.id!;
     const pool = getPool();
     const tx = new sql.Transaction(pool);
