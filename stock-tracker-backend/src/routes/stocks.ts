@@ -77,6 +77,140 @@ interface IComparisonPoint {
   missingTickers: string[];
 }
 
+function parseDisplayLotsCsv(lotsCsv: string): number[] {
+  if (!lotsCsv || !lotsCsv.trim()) {
+    return [];
+  }
+
+  return lotsCsv
+    .split(',')
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value) && value > ALLOCATION_TOLERANCE);
+}
+
+function serializeDisplayLotsCsv(lots: number[]): string {
+  return lots.map((value) => Number(value.toFixed(8))).join(',');
+}
+
+async function getDisplayLotsCsvForTicker(
+  tx: sql.Transaction,
+  userId: string,
+  ticker: string
+): Promise<{ id: string; lots: number[] } | null> {
+  const result = await new sql.Request(tx)
+    .input('userId', sql.NVarChar, userId)
+    .input('ticker', sql.NVarChar, ticker)
+    .query(`
+      SELECT TOP 1 id, lotsCsv
+      FROM DisplayLots
+      WHERE userId = @userId AND ticker = @ticker
+    `);
+
+  if (result.recordset.length === 0) {
+    return null;
+  }
+
+  const row = result.recordset[0] as any;
+  return {
+    id: String(row.id),
+    lots: parseDisplayLotsCsv(String(row.lotsCsv || '')),
+  };
+}
+
+async function persistDisplayLotsCsvForTicker(
+  tx: sql.Transaction,
+  userId: string,
+  ticker: string,
+  lots: number[]
+): Promise<void> {
+  const existing = await getDisplayLotsCsvForTicker(tx, userId, ticker);
+  const normalizedLots = lots.filter((value) => value > ALLOCATION_TOLERANCE);
+
+  if (normalizedLots.length === 0) {
+    if (existing) {
+      await new sql.Request(tx)
+        .input('id', sql.UniqueIdentifier, existing.id)
+        .input('userId', sql.NVarChar, userId)
+        .query('DELETE FROM DisplayLots WHERE id = @id AND userId = @userId');
+    }
+    return;
+  }
+
+  const lotsCsv = serializeDisplayLotsCsv(normalizedLots);
+  if (existing) {
+    await new sql.Request(tx)
+      .input('id', sql.UniqueIdentifier, existing.id)
+      .input('userId', sql.NVarChar, userId)
+      .input('lotsCsv', sql.NVarChar(sql.MAX), lotsCsv)
+      .query(`
+        UPDATE DisplayLots
+        SET lotsCsv = @lotsCsv, updatedAt = GETUTCDATE()
+        WHERE id = @id AND userId = @userId
+      `);
+    return;
+  }
+
+  await new sql.Request(tx)
+    .input('id', sql.UniqueIdentifier, uuidv4())
+    .input('userId', sql.NVarChar, userId)
+    .input('ticker', sql.NVarChar, ticker)
+    .input('lotsCsv', sql.NVarChar(sql.MAX), lotsCsv)
+    .query(`
+      INSERT INTO DisplayLots (id, userId, ticker, lotsCsv)
+      VALUES (@id, @userId, @ticker, @lotsCsv)
+    `);
+}
+
+async function appendDisplayLotQuantity(
+  tx: sql.Transaction,
+  userId: string,
+  ticker: string,
+  quantity: number
+): Promise<void> {
+  if (!Number.isFinite(quantity) || quantity <= ALLOCATION_TOLERANCE) {
+    return;
+  }
+  const existing = await getDisplayLotsCsvForTicker(tx, userId, ticker);
+  const nextLots = [...(existing?.lots ?? []), Number(quantity.toFixed(8))];
+  await persistDisplayLotsCsvForTicker(tx, userId, ticker, nextLots);
+}
+
+async function consumeDisplayLotQuantitySmallestFirst(
+  tx: sql.Transaction,
+  userId: string,
+  ticker: string,
+  quantityToConsume: number
+): Promise<void> {
+  if (!Number.isFinite(quantityToConsume) || quantityToConsume <= ALLOCATION_TOLERANCE) {
+    return;
+  }
+
+  const existing = await getDisplayLotsCsvForTicker(tx, userId, ticker);
+  if (!existing) {
+    return;
+  }
+
+  const lots = [...existing.lots].sort((a, b) => a - b);
+  let remaining = quantityToConsume;
+  const nextLots: number[] = [];
+
+  for (const lot of lots) {
+    if (remaining <= ALLOCATION_TOLERANCE) {
+      nextLots.push(lot);
+      continue;
+    }
+
+    const consumed = Math.min(lot, remaining);
+    const leftover = lot - consumed;
+    remaining -= consumed;
+    if (leftover > ALLOCATION_TOLERANCE) {
+      nextLots.push(Number(leftover.toFixed(8)));
+    }
+  }
+
+  await persistDisplayLotsCsvForTicker(tx, userId, ticker, nextLots);
+}
+
 
 // GET portfolio summary in one database call (cash summary + stock rollup)
 router.get('/portfolio/summary', async (req: Request, res: Response) => {
@@ -101,12 +235,31 @@ router.get('/portfolio/summary', async (req: Request, res: Response) => {
           FROM StockTransactions
           WHERE userId = @userId
         ),
+        ActivatedSplits AS (
+          SELECT usa.userId, ss.ticker, ss.splitDate, CAST(ss.multiplier AS FLOAT) AS multiplier
+          FROM UserSplitActivations usa
+          JOIN StockSplits ss ON ss.id = usa.splitId
+          WHERE usa.userId = @userId
+        ),
+        LotFactors AS (
+          SELECT
+            pl.id,
+            COALESCE(EXP(SUM(LOG(NULLIF(a.multiplier, 0)))), 1.0) AS factor
+          FROM PurchaseLots pl
+          LEFT JOIN ActivatedSplits a
+            ON a.userId = pl.userId
+            AND a.ticker = pl.ticker
+            AND a.splitDate >= pl.purchaseDate
+          WHERE pl.userId = @userId
+          GROUP BY pl.id
+        ),
         StockTotals AS (
           SELECT
-            SUM(remainingQuantity * unitCost) AS totalStockCostBasis,
+            SUM((pl.remainingQuantity * lf.factor) * (pl.unitCost / lf.factor)) AS totalStockCostBasis,
             COUNT(DISTINCT ticker) AS stockCount
-          FROM PurchaseLots
-          WHERE userId = @userId AND remainingQuantity > 0
+          FROM PurchaseLots pl
+          JOIN LotFactors lf ON lf.id = pl.id
+          WHERE pl.userId = @userId AND (pl.remainingQuantity * lf.factor) > 0
         )
         SELECT
           COALESCE(c.deposits, 0) AS deposits,
@@ -128,14 +281,33 @@ router.get('/portfolio/summary', async (req: Request, res: Response) => {
     const stocksResult = await getPool().request()
       .input('userId', sql.NVarChar, userId)
       .query(`
+        ;WITH ActivatedSplits AS (
+          SELECT usa.userId, ss.ticker, ss.splitDate, CAST(ss.multiplier AS FLOAT) AS multiplier
+          FROM UserSplitActivations usa
+          JOIN StockSplits ss ON ss.id = usa.splitId
+          WHERE usa.userId = @userId
+        ),
+        LotFactors AS (
+          SELECT
+            pl.id,
+            COALESCE(EXP(SUM(LOG(NULLIF(a.multiplier, 0)))), 1.0) AS factor
+          FROM PurchaseLots pl
+          LEFT JOIN ActivatedSplits a
+            ON a.userId = pl.userId
+            AND a.ticker = pl.ticker
+            AND a.splitDate >= pl.purchaseDate
+          WHERE pl.userId = @userId
+          GROUP BY pl.id
+        )
         SELECT
-          ticker,
-          SUM(remainingQuantity) AS totalShares,
-          SUM(remainingQuantity * unitCost) AS costBasis,
-          SUM(CASE WHEN sourceType = 'purchase' THEN 1 ELSE 0 END) AS lotCount
-        FROM PurchaseLots
-        WHERE userId = @userId AND remainingQuantity > 0
-        GROUP BY ticker
+          pl.ticker,
+          SUM(pl.remainingQuantity * lf.factor) AS totalShares,
+          SUM((pl.remainingQuantity * lf.factor) * (pl.unitCost / lf.factor)) AS costBasis,
+          SUM(CASE WHEN pl.sourceType = 'purchase' THEN 1 ELSE 0 END) AS lotCount
+        FROM PurchaseLots pl
+        JOIN LotFactors lf ON lf.id = pl.id
+        WHERE pl.userId = @userId AND (pl.remainingQuantity * lf.factor) > 0
+        GROUP BY pl.ticker
         ORDER BY ticker ASC;
       `);
 
@@ -1218,12 +1390,31 @@ router.get('/:ticker/summary', async (req: Request, res: Response) => {
       .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, ticker.toUpperCase())
       .query(`
+        ;WITH ActivatedSplits AS (
+          SELECT usa.userId, ss.ticker, ss.splitDate, CAST(ss.multiplier AS FLOAT) AS multiplier
+          FROM UserSplitActivations usa
+          JOIN StockSplits ss ON ss.id = usa.splitId
+          WHERE usa.userId = @userId
+        ),
+        LotFactors AS (
+          SELECT
+            pl.id,
+            COALESCE(EXP(SUM(LOG(NULLIF(a.multiplier, 0)))), 1.0) AS factor
+          FROM PurchaseLots pl
+          LEFT JOIN ActivatedSplits a
+            ON a.userId = pl.userId
+            AND a.ticker = pl.ticker
+            AND a.splitDate >= pl.purchaseDate
+          WHERE pl.userId = @userId AND pl.ticker = @ticker
+          GROUP BY pl.id
+        )
         SELECT 
-          SUM(remainingQuantity) as totalShares,
+          SUM(pl.remainingQuantity * lf.factor) as totalShares,
           COUNT(*) as numberOfLots,
-          SUM(remainingQuantity * unitCost) as costBasis
-        FROM PurchaseLots
-        WHERE userId = @userId AND ticker = @ticker AND remainingQuantity > 0
+          SUM((pl.remainingQuantity * lf.factor) * (pl.unitCost / lf.factor)) as costBasis
+        FROM PurchaseLots pl
+        JOIN LotFactors lf ON lf.id = pl.id
+        WHERE pl.userId = @userId AND pl.ticker = @ticker AND (pl.remainingQuantity * lf.factor) > 0
       `);
     
     const lot = lotsResult.recordset[0] || {};
@@ -1299,13 +1490,6 @@ router.post('/', async (req: Request, res: Response) => {
     if (Number.isNaN(parsedTransactionDate.getTime())) {
       return res.status(400).json({ error: 'Invalid transactionDate' });
     }
-
-    const marketDataSync = await ensureBackfilledMarketDataForBackdatedTransaction(
-      pool,
-      userId,
-      normalizedTicker,
-      parsedTransactionDate
-    );
 
     // Calculate amount based on transaction type
     let amount: number | null = null;
@@ -1517,26 +1701,7 @@ router.post('/', async (req: Request, res: Response) => {
             VALUES (@lotId, @userId, @ticker, @transactionId, 'purchase', @quantity, @quantity, @price, @transactionDate)
           `);
 
-        const displayLotId = uuidv4();
-        await new sql.Request(tx)
-          .input('displayLotId', sql.UniqueIdentifier, displayLotId)
-          .input('userId', sql.NVarChar, userId)
-          .input('ticker', sql.NVarChar, normalizedTicker)
-          .input('totalQuantity', sql.Decimal(18, 8), quantity)
-          .query(`
-            INSERT INTO DisplayLots (id, userId, ticker, totalQuantity)
-            VALUES (@displayLotId, @userId, @ticker, @totalQuantity)
-          `);
-
-        await new sql.Request(tx)
-          .input('compositionId', sql.UniqueIdentifier, uuidv4())
-          .input('displayLotId', sql.UniqueIdentifier, displayLotId)
-          .input('purchaseLotId', sql.UniqueIdentifier, lotId)
-          .input('quantityAllocated', sql.Decimal(18, 8), quantity)
-          .query(`
-            INSERT INTO DisplayLotComposition (id, displayLotId, purchaseLotId, quantityAllocated)
-            VALUES (@compositionId, @displayLotId, @purchaseLotId, @quantityAllocated)
-          `);
+        await appendDisplayLotQuantity(tx, userId, normalizedTicker, Number(quantity || 0));
       }
 
       // Dividends create only a purchase lot (sourceType=dividend).
@@ -1595,45 +1760,8 @@ router.post('/', async (req: Request, res: Response) => {
           return sum;
         }, 0);
 
-        // Also consume display lots smallest-first to keep display state in sync
-        const displayLotsResult = await new sql.Request(tx)
-          .input('userId', sql.NVarChar, userId)
-          .input('ticker', sql.NVarChar, normalizedTicker)
-          .query(`
-            SELECT id, totalQuantity FROM DisplayLots
-            WHERE userId = @userId AND ticker = @ticker AND totalQuantity > 0
-            ORDER BY totalQuantity ASC, createdAt ASC
-          `);
-
-        let displayRemaining = Number(displayQuantityToConsume);
-        for (const row of displayLotsResult.recordset as any[]) {
-          if (displayRemaining <= ALLOCATION_TOLERANCE) break;
-          const dlId = String(row.id);
-          const dlQty = Number(row.totalQuantity);
-          const consume = Math.min(dlQty, displayRemaining);
-          displayRemaining -= consume;
-
-          await new sql.Request(tx)
-            .input('allocationId', sql.UniqueIdentifier, uuidv4())
-            .input('userId', sql.NVarChar, userId)
-            .input('saleTransactionId', sql.UniqueIdentifier, id)
-            .input('displayLotId', sql.UniqueIdentifier, dlId)
-            .input('quantity', sql.Decimal(18, 8), consume)
-            .query(`
-              INSERT INTO DisplayLotAllocations (id, userId, saleTransactionId, displayLotId, quantityConsumed)
-              VALUES (@allocationId, @userId, @saleTransactionId, @displayLotId, @quantity)
-            `);
-
-          // Update DisplayLot quantity (don't delete to preserve foreign key references to DisplayLotAllocations)
-          await new sql.Request(tx)
-            .input('displayLotId', sql.UniqueIdentifier, dlId)
-            .input('userId', sql.NVarChar, userId)
-            .input('quantity', sql.Decimal(18, 8), consume)
-            .query(`
-              UPDATE DisplayLots
-              SET totalQuantity = totalQuantity - @quantity, updatedAt = GETUTCDATE()
-              WHERE id = @displayLotId AND userId = @userId
-            `);
+        if (displayQuantityToConsume > ALLOCATION_TOLERANCE) {
+          await consumeDisplayLotQuantitySmallestFirst(tx, userId, normalizedTicker, displayQuantityToConsume);
         }
       }
 
@@ -1656,7 +1784,6 @@ router.post('/', async (req: Request, res: Response) => {
         price,
         amount,
         transactionDate,
-        marketDataSync,
       });
     } catch (innerError) {
       await tx.rollback();
@@ -1748,29 +1875,38 @@ router.delete('/:id', async (req: Request, res: Response) => {
             `);
         }
 
-        // Restore DisplayLots quantities (reversible display lot allocations)
-        const displayAllocations = await new sql.Request(tx)
+        // Restore display lots for purchase-sourced shares only.
+        const purchaseDisplayRestore = await new sql.Request(tx)
           .input('saleTransactionId', sql.UniqueIdentifier, id)
           .input('userId', sql.NVarChar, userId)
           .query(`
-            SELECT displayLotId, quantityConsumed
-            FROM DisplayLotAllocations
-            WHERE saleTransactionId = @saleTransactionId AND userId = @userId
+            SELECT COALESCE(SUM(pla.quantityConsumed), 0) AS totalRestore
+            FROM PurchaseLotAllocations pla
+            JOIN PurchaseLots pl ON pl.id = pla.purchaseLotId
+            JOIN StockTransactions st ON st.id = pla.saleTransactionId
+            WHERE pla.saleTransactionId = @saleTransactionId
+              AND pla.userId = @userId
+              AND st.userId = @userId
+              AND pl.sourceType = 'purchase'
           `);
 
-        for (const allocation of displayAllocations.recordset) {
-          await new sql.Request(tx)
-            .input('displayLotId', sql.UniqueIdentifier, allocation.displayLotId)
+        const totalRestore = Number(purchaseDisplayRestore.recordset[0]?.totalRestore || 0);
+        if (totalRestore > ALLOCATION_TOLERANCE) {
+          const saleRow = await new sql.Request(tx)
+            .input('saleTransactionId', sql.UniqueIdentifier, id)
             .input('userId', sql.NVarChar, userId)
-            .input('quantity', sql.Decimal(18, 8), allocation.quantityConsumed)
             .query(`
-              UPDATE DisplayLots
-              SET totalQuantity = totalQuantity + @quantity, updatedAt = GETUTCDATE()
-              WHERE id = @displayLotId AND userId = @userId
+              SELECT TOP 1 ticker FROM StockTransactions
+              WHERE id = @saleTransactionId AND userId = @userId
             `);
+
+          const ticker = String(saleRow.recordset[0]?.ticker || '');
+          if (ticker) {
+            await appendDisplayLotQuantity(tx, userId, ticker, totalRestore);
+          }
         }
       } else if (transactionType === 'buy' || transactionType === 'div') {
-        // For buy/div, delete the associated DisplayLotComposition, DisplayLots, and PurchaseLot
+        // For buy/div, remove affected purchase shares from display lots then delete purchase lots.
         
         const purchaseLotsResult = await new sql.Request(tx)
           .input('transactionId', sql.UniqueIdentifier, id)
@@ -1782,34 +1918,24 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
         for (const row of purchaseLotsResult.recordset) {
           const purchaseLotId = row.id;
-          
-          // Find and delete all DisplayLotComposition records that reference this PurchaseLot
-          const compositionsResult = await new sql.Request(tx)
+
+          const lotResult = await new sql.Request(tx)
             .input('purchaseLotId', sql.UniqueIdentifier, purchaseLotId)
+            .input('userId', sql.NVarChar, userId)
             .query(`
-              SELECT displayLotId FROM DisplayLotComposition
-              WHERE purchaseLotId = @purchaseLotId
+              SELECT TOP 1 ticker, sourceType, remainingQuantity
+              FROM PurchaseLots
+              WHERE id = @purchaseLotId AND userId = @userId
             `);
 
-          for (const comp of compositionsResult.recordset) {
-            const displayLotId = comp.displayLotId;
-            
-            // Delete the composition record
-            await new sql.Request(tx)
-              .input('purchaseLotId', sql.UniqueIdentifier, purchaseLotId)
-              .query(`
-                DELETE FROM DisplayLotComposition
-                WHERE purchaseLotId = @purchaseLotId
-              `);
-
-            // Delete the DisplayLot
-            await new sql.Request(tx)
-              .input('displayLotId', sql.UniqueIdentifier, displayLotId)
-              .input('userId', sql.NVarChar, userId)
-              .query(`
-                DELETE FROM DisplayLots
-                WHERE id = @displayLotId AND userId = @userId
-              `);
+          if (lotResult.recordset.length > 0) {
+            const lotRow = lotResult.recordset[0] as any;
+            const sourceType = String(lotRow.sourceType || '').toLowerCase();
+            const ticker = String(lotRow.ticker || '');
+            const remaining = Number(lotRow.remainingQuantity || 0);
+            if (sourceType === 'purchase' && remaining > ALLOCATION_TOLERANCE && ticker) {
+              await consumeDisplayLotQuantitySmallestFirst(tx, userId, ticker, remaining);
+            }
           }
 
           // Delete the PurchaseLot
@@ -2476,8 +2602,8 @@ async function applyAutomaticSplitCatchUpForInsertedTransaction(
   ticker: string,
   transactionDate: Date,
   stockTransactionId: string,
-  createdPurchaseLotId: string | null,
-  createdPurchaseAllocationIds: string[]
+  _createdPurchaseLotId: string | null,
+  _createdPurchaseAllocationIds: string[]
 ) {
   const splitRows = await new sql.Request(tx)
     .input('ticker', sql.NVarChar, ticker)
@@ -2501,86 +2627,18 @@ async function applyAutomaticSplitCatchUpForInsertedTransaction(
 
   for (const split of splits) {
     await new sql.Request(tx)
-      .input('id', sql.UniqueIdentifier, stockTransactionId)
-      .input('userId', sql.NVarChar, userId)
-      .input('multiplier', sql.Decimal(18, 8), split.multiplier)
-      .input('splitId', sql.UniqueIdentifier, split.id)
-      .query(`
-        UPDATE StockTransactions
-        SET quantity = CASE WHEN quantity IS NOT NULL THEN quantity * @multiplier ELSE NULL END,
-            price = CASE WHEN price IS NOT NULL AND quantity IS NOT NULL THEN price / @multiplier ELSE price END,
-            splitAdjusted = 1,
-            lastSplitId = @splitId,
-            updatedAt = GETUTCDATE()
-        WHERE id = @id AND userId = @userId AND type IN ('buy', 'sell', 'div')
-      `);
-
-    await new sql.Request(tx)
       .input('id', sql.UniqueIdentifier, uuidv4())
-      .input('splitId', sql.UniqueIdentifier, split.id)
       .input('userId', sql.NVarChar, userId)
-      .input('entityType', sql.NVarChar, 'transaction')
-      .input('entityId', sql.UniqueIdentifier, stockTransactionId)
-      .input('multiplier', sql.Decimal(18, 8), split.multiplier)
+      .input('splitId', sql.UniqueIdentifier, split.id)
+      .input('activatedBy', sql.NVarChar, 'transaction')
+      .input('activationTransactionId', sql.UniqueIdentifier, stockTransactionId)
       .query(`
-        INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
-        VALUES (@id, @splitId, @userId, @entityType, @entityId, @multiplier)
+        IF NOT EXISTS (
+          SELECT 1 FROM UserSplitActivations WHERE userId = @userId AND splitId = @splitId
+        )
+        INSERT INTO UserSplitActivations (id, userId, splitId, activatedBy, activationTransactionId)
+        VALUES (@id, @userId, @splitId, @activatedBy, @activationTransactionId)
       `);
-
-    if (createdPurchaseLotId) {
-      await new sql.Request(tx)
-        .input('lotId', sql.UniqueIdentifier, createdPurchaseLotId)
-        .input('userId', sql.NVarChar, userId)
-        .input('multiplier', sql.Decimal(18, 8), split.multiplier)
-        .input('splitId', sql.UniqueIdentifier, split.id)
-        .query(`
-          UPDATE PurchaseLots
-          SET originalQuantity = originalQuantity * @multiplier,
-              remainingQuantity = remainingQuantity * @multiplier,
-              unitCost = unitCost / @multiplier,
-              splitAdjusted = 1,
-              lastSplitId = @splitId,
-              updatedAt = GETUTCDATE()
-          WHERE id = @lotId AND userId = @userId
-        `);
-
-      await new sql.Request(tx)
-        .input('id', sql.UniqueIdentifier, uuidv4())
-        .input('splitId', sql.UniqueIdentifier, split.id)
-        .input('userId', sql.NVarChar, userId)
-        .input('entityType', sql.NVarChar, 'lot')
-        .input('entityId', sql.UniqueIdentifier, createdPurchaseLotId)
-        .input('multiplier', sql.Decimal(18, 8), split.multiplier)
-        .query(`
-          INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
-          VALUES (@id, @splitId, @userId, @entityType, @entityId, @multiplier)
-        `);
-    }
-
-    for (const allocationId of createdPurchaseAllocationIds) {
-      await new sql.Request(tx)
-        .input('allocationId', sql.UniqueIdentifier, allocationId)
-        .input('userId', sql.NVarChar, userId)
-        .input('multiplier', sql.Decimal(18, 8), split.multiplier)
-        .query(`
-          UPDATE PurchaseLotAllocations
-          SET quantityConsumed = quantityConsumed * @multiplier,
-              updatedAt = GETUTCDATE()
-          WHERE id = @allocationId AND userId = @userId
-        `);
-
-      await new sql.Request(tx)
-        .input('id', sql.UniqueIdentifier, uuidv4())
-        .input('splitId', sql.UniqueIdentifier, split.id)
-        .input('userId', sql.NVarChar, userId)
-        .input('entityType', sql.NVarChar, 'allocation')
-        .input('entityId', sql.UniqueIdentifier, allocationId)
-        .input('multiplier', sql.Decimal(18, 8), split.multiplier)
-        .query(`
-          INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
-          VALUES (@id, @splitId, @userId, @entityType, @entityId, @multiplier)
-        `);
-    }
   }
 }
 

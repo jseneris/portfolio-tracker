@@ -139,43 +139,6 @@ describe('12. Display Lots - Auto-deletion & Cleanup', () => {
     expect(remainingQty).toBeLessThanOrEqual(TOLERANCE);
   });
 
-  it('Display Lot with multiple Purchase Lots auto-deletes only when all empty', async () => {
-    await depositCash(50000);
-    await buyStock('AAPL', 10, 100);
-    await buyStock('AAPL', 10, 105);
-
-    const purchaseLots = await getPurchaseLots('AAPL');
-
-    const displayLotId = await createDisplayLot('AAPL', [
-      { purchaseLotId: purchaseLots[0].id, quantityAllocated: 10 },
-      { purchaseLotId: purchaseLots[1].id, quantityAllocated: 10 }
-    ]);
-
-    let displayLots = await getDisplayLots('AAPL');
-    expect(displayLots).toHaveLength(1);
-
-    // Sell from first purchase lot only
-    await sellStock('AAPL', 10, 110, [
-      { lotId: purchaseLots[0].id, quantity: 10 }
-    ]);
-
-    // Verify first purchase lot is empty, second still has 10
-    const afterFirstSale = await getPurchaseLots('AAPL');
-    const firstRemaining = Number(afterFirstSale.find(p => p.id === purchaseLots[0].id)?.remainingQuantity || 0);
-    const secondRemaining = Number(afterFirstSale.find(p => p.id === purchaseLots[1].id)?.remainingQuantity || 0);
-    expect(firstRemaining).toBeLessThanOrEqual(TOLERANCE);
-    expect(secondRemaining).toBeCloseTo(10, 3);
-
-    // Sell remaining 10 shares
-    await sellStock('AAPL', 10, 115, [
-      { lotId: purchaseLots[1].id, quantity: 10 }
-    ]);
-
-    // Verify both purchase lots are empty
-    const afterSecondSale = await getPurchaseLots('AAPL');
-    const finalRemaining = afterSecondSale.reduce((sum, p) => sum + Number(p.remainingQuantity || 0), 0);
-    expect(finalRemaining).toBeLessThanOrEqual(TOLERANCE);
-  });
 
   it('Display Lot across multiple tickers independent deletion', async () => {
     await depositCash(100000);

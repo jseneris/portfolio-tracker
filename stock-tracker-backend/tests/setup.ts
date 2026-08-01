@@ -21,6 +21,7 @@ export async function clearUserData(): Promise<void> {
   await request.query('DELETE FROM DisplayLots WHERE userId = @userId');
   await request.query('DELETE FROM PurchaseLotAllocations WHERE userId = @userId');
   await request.query('DELETE FROM SplitAdjustments WHERE userId = @userId');
+  await request.query('DELETE FROM UserSplitActivations WHERE userId = @userId');
   await request.query('DELETE FROM PurchaseLots WHERE userId = @userId');
   await request.query('DELETE FROM StockTransactions WHERE userId = @userId');
   await request.query('DELETE FROM StockSplits');
@@ -217,42 +218,57 @@ export async function createDisplayLot(
   composition: { purchaseLotId: string; quantityAllocated: number }[]
 ): Promise<string> {
   const pool = getPool();
-  const displayLotId = uuidv4();
-  const totalQuantity = composition.reduce((sum, c) => sum + c.quantityAllocated, 0);
+  const normalizedTicker = ticker.toUpperCase();
+  const quantities = composition.map((c) => Number(c.quantityAllocated));
 
-  const transaction = new sql.Transaction(pool);
-  await transaction.begin();
+  if (quantities.length === 0 || quantities.some((q) => !Number.isFinite(q) || q <= 0)) {
+    throw new Error('Display lot quantities must be positive numbers');
+  }
 
-  try {
-    // Create display lot
-    await new sql.Request(transaction)
+  const existing = await pool.request()
+    .input('userId', sql.NVarChar, TEST_USER_ID)
+    .input('ticker', sql.NVarChar, normalizedTicker)
+    .query(`
+      SELECT TOP 1 id, lotsCsv
+      FROM DisplayLots
+      WHERE userId = @userId AND ticker = @ticker
+    `);
+
+  let displayLotId = '';
+  if (existing.recordset.length === 0) {
+    displayLotId = uuidv4();
+    const lotsCsv = quantities.map((q) => Number(q.toFixed(8))).join(',');
+    await pool.request()
       .input('id', sql.UniqueIdentifier, displayLotId)
       .input('userId', sql.NVarChar, TEST_USER_ID)
-      .input('ticker', sql.NVarChar, ticker.toUpperCase())
-      .input('totalQuantity', sql.Decimal(18, 8), totalQuantity)
+      .input('ticker', sql.NVarChar, normalizedTicker)
+      .input('lotsCsv', sql.NVarChar(sql.MAX), lotsCsv)
       .query(`
-        INSERT INTO DisplayLots (id, userId, ticker, totalQuantity)
-        VALUES (@id, @userId, @ticker, @totalQuantity)
+        INSERT INTO DisplayLots (id, userId, ticker, lotsCsv)
+        VALUES (@id, @userId, @ticker, @lotsCsv)
       `);
-
-    // Add composition
-    for (const comp of composition) {
-      await new sql.Request(transaction)
-        .input('id', sql.UniqueIdentifier, uuidv4())
-        .input('displayLotId', sql.UniqueIdentifier, displayLotId)
-        .input('purchaseLotId', sql.UniqueIdentifier, comp.purchaseLotId)
-        .input('quantityAllocated', sql.Decimal(18, 8), comp.quantityAllocated)
-        .query(`
-          INSERT INTO DisplayLotComposition (id, displayLotId, purchaseLotId, quantityAllocated)
-          VALUES (@id, @displayLotId, @purchaseLotId, @quantityAllocated)
-        `);
-    }
-
-    await transaction.commit();
-  } catch (error) {
-    await transaction.rollback();
-    throw error;
+    return displayLotId;
   }
+
+  displayLotId = String(existing.recordset[0].id);
+  const currentCsv = String(existing.recordset[0].lotsCsv || '');
+  const currentLots = currentCsv
+    .split(',')
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  const nextLots = [...currentLots, ...quantities.map((q) => Number(q.toFixed(8)))];
+  const nextCsv = nextLots.join(',');
+
+  await pool.request()
+    .input('id', sql.UniqueIdentifier, displayLotId)
+    .input('userId', sql.NVarChar, TEST_USER_ID)
+    .input('lotsCsv', sql.NVarChar(sql.MAX), nextCsv)
+    .query(`
+      UPDATE DisplayLots
+      SET lotsCsv = @lotsCsv, updatedAt = GETUTCDATE()
+      WHERE id = @id AND userId = @userId
+    `);
 
   return displayLotId;
 }
@@ -284,13 +300,32 @@ export async function getDisplayLots(ticker: string): Promise<any[]> {
     .input('userId', sql.NVarChar, TEST_USER_ID)
     .input('ticker', sql.NVarChar, ticker.toUpperCase())
     .query(`
-      SELECT id, totalQuantity, createdAt
+      SELECT id, lotsCsv, createdAt
       FROM DisplayLots
       WHERE userId = @userId AND ticker = @ticker
-      ORDER BY totalQuantity ASC, createdAt ASC
+      ORDER BY createdAt ASC
     `);
 
-  return result.recordset;
+  const expanded: any[] = [];
+  for (const row of result.recordset as any[]) {
+    const lots = String(row.lotsCsv || '')
+      .split(',')
+      .map((part) => Number(part.trim()))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((a, b) => a - b);
+
+    lots.forEach((qty, index) => {
+      expanded.push({
+        id: `${String(row.id)}:${index}`,
+        rowId: String(row.id),
+        lotIndex: index,
+        totalQuantity: Number(qty.toFixed(8)),
+        createdAt: row.createdAt,
+      });
+    });
+  }
+
+  return expanded;
 }
 
 /**
@@ -298,16 +333,31 @@ export async function getDisplayLots(ticker: string): Promise<any[]> {
  */
 export async function getDisplayLotComposition(displayLotId: string): Promise<any[]> {
   const pool = getPool();
+  const rowId = displayLotId.includes(':') ? displayLotId.split(':')[0] : displayLotId;
   const result = await pool.request()
-    .input('displayLotId', sql.UniqueIdentifier, displayLotId)
+    .input('displayLotId', sql.UniqueIdentifier, rowId)
     .query(`
-      SELECT purchaseLotId, quantityAllocated
-      FROM DisplayLotComposition
-      WHERE displayLotId = @displayLotId
-      ORDER BY id ASC
+      SELECT lotsCsv, ticker
+      FROM DisplayLots
+      WHERE id = @displayLotId
     `);
 
-  return result.recordset;
+  if (result.recordset.length === 0) {
+    return [];
+  }
+
+  const row = result.recordset[0] as any;
+  const lots = String(row.lotsCsv || '')
+    .split(',')
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  return lots.map((quantityAllocated, index) => ({
+    id: `${rowId}:${index}`,
+    index,
+    quantityAllocated: Number(quantityAllocated.toFixed(8)),
+    ticker: String(row.ticker || ''),
+  }));
 }
 
 /**
@@ -371,109 +421,30 @@ export async function applySplit(ticker: string, numerator: number, denominator:
 
   const splitId = uuidv4();
 
-  const transaction = new sql.Transaction(pool);
-  await transaction.begin();
+  await pool.request()
+    .input('id', sql.UniqueIdentifier, splitId)
+    .input('ticker', sql.NVarChar, ticker.toUpperCase())
+    .input('numerator', sql.Decimal(18, 8), numerator)
+    .input('denominator', sql.Decimal(18, 8), denominator)
+    .input('multiplier', sql.Decimal(18, 8), multiplier)
+    .input('splitDate', sql.DateTime2, splitDate)
+    .query(`
+      INSERT INTO StockSplits (id, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
+      VALUES (@id, @ticker, @numerator, @denominator, @multiplier, @splitDate)
+    `);
 
-  try {
-    // Record split
-    await new sql.Request(transaction)
-      .input('id', sql.UniqueIdentifier, splitId)
-      .input('ticker', sql.NVarChar, ticker.toUpperCase())
-      .input('numerator', sql.Decimal(18, 8), numerator)
-      .input('denominator', sql.Decimal(18, 8), denominator)
-      .input('multiplier', sql.Decimal(18, 8), multiplier)
-      .input('splitDate', sql.DateTime2, splitDate)
-      .query(`
-        INSERT INTO StockSplits (id, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
-        VALUES (@id, @ticker, @numerator, @denominator, @multiplier, @splitDate)
-      `);
-
-    // Update purchase lots
-    await new sql.Request(transaction)
-      .input('ticker', sql.NVarChar, ticker.toUpperCase())
-      .input('userId', sql.NVarChar, TEST_USER_ID)
-      .input('multiplier', sql.Decimal(18, 8), multiplier)
-      .input('splitDate', sql.DateTime2, splitDate)
-      .input('splitId', sql.UniqueIdentifier, splitId)
-      .query(`
-        UPDATE PurchaseLots
-        SET originalQuantity = originalQuantity * @multiplier,
-            remainingQuantity = remainingQuantity * @multiplier,
-            unitCost = unitCost / @multiplier,
-            lastSplitId = @splitId
-        WHERE userId = @userId AND ticker = @ticker AND purchaseDate <= @splitDate
-      `);
-
-    // Update stock transactions
-    await new sql.Request(transaction)
-      .input('ticker', sql.NVarChar, ticker.toUpperCase())
-      .input('userId', sql.NVarChar, TEST_USER_ID)
-      .input('multiplier', sql.Decimal(18, 8), multiplier)
-      .input('splitDate', sql.DateTime2, splitDate)
-      .input('splitId', sql.UniqueIdentifier, splitId)
-      .query(`
-        UPDATE StockTransactions
-        SET quantity = CASE WHEN quantity IS NOT NULL THEN quantity * @multiplier ELSE NULL END,
-            price = CASE WHEN price IS NOT NULL THEN price / @multiplier ELSE NULL END,
-            lastSplitId = @splitId
-        WHERE userId = @userId AND ticker = @ticker AND transactionDate <= @splitDate AND type IN ('buy', 'sell', 'div')
-      `);
-
-    // Update allocations
-    await new sql.Request(transaction)
-      .input('ticker', sql.NVarChar, ticker.toUpperCase())
-      .input('userId', sql.NVarChar, TEST_USER_ID)
-      .input('multiplier', sql.Decimal(18, 8), multiplier)
-      .input('splitDate', sql.DateTime2, splitDate)
-      .query(`
-        UPDATE pla
-        SET pla.quantityConsumed = pla.quantityConsumed * @multiplier
-        FROM PurchaseLotAllocations pla
-        JOIN StockTransactions st ON pla.saleTransactionId = st.id
-        WHERE pla.userId = @userId AND st.ticker = @ticker AND st.transactionDate <= @splitDate
-      `);
-
-    // Record split audit rows for all affected entities
-    await new sql.Request(transaction)
-      .input('splitId', sql.UniqueIdentifier, splitId)
-      .input('userId', sql.NVarChar, TEST_USER_ID)
-      .input('ticker', sql.NVarChar, ticker.toUpperCase())
-      .input('splitDate', sql.DateTime2, splitDate)
-      .input('multiplier', sql.Decimal(18, 8), multiplier)
-      .query(`
-        INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
-        SELECT NEWID(), @splitId, @userId, 'lot', pl.id, @multiplier
-        FROM PurchaseLots pl
-        WHERE pl.userId = @userId AND pl.ticker = @ticker AND pl.purchaseDate <= @splitDate;
-
-        INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
-        SELECT NEWID(), @splitId, @userId, 'transaction', st.id, @multiplier
-        FROM StockTransactions st
-        WHERE st.userId = @userId
-          AND st.ticker = @ticker
-          AND st.transactionDate <= @splitDate
-          AND st.type IN ('buy', 'sell', 'div');
-
-        INSERT INTO SplitAdjustments (id, splitId, userId, entityType, entityId, multiplier)
-        SELECT NEWID(), @splitId, @userId, 'allocation', pla.id, @multiplier
-        FROM PurchaseLotAllocations pla
-        JOIN StockTransactions st ON pla.saleTransactionId = st.id
-        WHERE pla.userId = @userId
-          AND st.ticker = @ticker
-          AND st.transactionDate <= @splitDate;
-      `);
-
-    await transaction.commit();
-  } catch (error) {
-    try {
-      if (transaction.state === sql.ConnectionState.LoggedIn) {
-        await transaction.rollback();
-      }
-    } catch (rollbackError) {
-      // Transaction might already be rolled back, ignore
-    }
-    throw error;
-  }
+  await pool.request()
+    .input('id', sql.UniqueIdentifier, uuidv4())
+    .input('userId', sql.NVarChar, TEST_USER_ID)
+    .input('splitId', sql.UniqueIdentifier, splitId)
+    .input('activatedBy', sql.NVarChar, 'manual')
+    .query(`
+      IF NOT EXISTS (
+        SELECT 1 FROM UserSplitActivations WHERE userId = @userId AND splitId = @splitId
+      )
+      INSERT INTO UserSplitActivations (id, userId, splitId, activatedBy)
+      VALUES (@id, @userId, @splitId, @activatedBy)
+    `);
 
   return splitId;
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { initializeDatabase } from '../src/db/connection.js';
 import { 
   clearUserData, depositCash, buyStock, 
-  createDisplayLot, getDisplayLots, getPurchaseLots, TOLERANCE, TEST_USER_ID 
+  createDisplayLot, getDisplayLots, TEST_USER_ID 
 } from './setup.js';
 import request from 'supertest';
 import app from '../src/index.js';
@@ -20,21 +20,17 @@ describe('11. Display Lots - Split Operations', () => {
     await depositCash(10000);
     await buyStock('AAPL', 10, 100);
 
-    const purchaseLots = await getPurchaseLots('AAPL');
-    const lotId = purchaseLots[0].id;
-
     const displayLotId = await createDisplayLot('AAPL', [
-      { purchaseLotId: lotId, quantityAllocated: 10 }
+      { purchaseLotId: 'seed', quantityAllocated: 10 }
     ]);
 
     let displayLots = await getDisplayLots('AAPL');
     expect(displayLots).toHaveLength(1);
 
-    // Split 10 shares into [5, 5]
     const response = await request(app)
       .post(`/api/display-lots/${displayLotId}/split`)
       .set('x-user-id', TEST_USER_ID)
-      .send({ splits: [{ quantityAllocated: 5 }, { quantityAllocated: 5 }] })
+      .send({ index: 0, quantities: [5, 5] })
       .expect(201);
 
     displayLots = await getDisplayLots('AAPL');
@@ -46,17 +42,14 @@ describe('11. Display Lots - Split Operations', () => {
     await depositCash(10000);
     await buyStock('AAPL', 10, 100);
 
-    const purchaseLots = await getPurchaseLots('AAPL');
-    const lotId = purchaseLots[0].id;
-
     const displayLotId = await createDisplayLot('AAPL', [
-      { purchaseLotId: lotId, quantityAllocated: 10 }
+      { purchaseLotId: 'seed', quantityAllocated: 10 }
     ]);
 
     const response = await request(app)
       .post(`/api/display-lots/${displayLotId}/split`)
       .set('x-user-id', TEST_USER_ID)
-      .send({ splits: [{ quantityAllocated: 3 }, { quantityAllocated: 7 }] })
+      .send({ index: 0, quantities: [3, 7] })
       .expect(201);
 
     const displayLots = await getDisplayLots('AAPL');
@@ -68,17 +61,14 @@ describe('11. Display Lots - Split Operations', () => {
     await depositCash(10000);
     await buyStock('AAPL', 10, 100);
 
-    const purchaseLots = await getPurchaseLots('AAPL');
-    const lotId = purchaseLots[0].id;
-
     const displayLotId = await createDisplayLot('AAPL', [
-      { purchaseLotId: lotId, quantityAllocated: 10 }
+      { purchaseLotId: 'seed', quantityAllocated: 10 }
     ]);
 
     const response = await request(app)
       .post(`/api/display-lots/${displayLotId}/split`)
       .set('x-user-id', TEST_USER_ID)
-      .send({ splits: [{ quantityAllocated: 4 }, { quantityAllocated: 3 }, { quantityAllocated: 3 }] })
+      .send({ index: 0, quantities: [4, 3, 3] })
       .expect(201);
 
     const displayLots = await getDisplayLots('AAPL');
@@ -90,18 +80,14 @@ describe('11. Display Lots - Split Operations', () => {
     await depositCash(10000);
     await buyStock('AAPL', 10, 100);
 
-    const purchaseLots = await getPurchaseLots('AAPL');
-    const lotId = purchaseLots[0].id;
-
     const displayLotId = await createDisplayLot('AAPL', [
-      { purchaseLotId: lotId, quantityAllocated: 10 }
+      { purchaseLotId: 'seed', quantityAllocated: 10 }
     ]);
 
-    // Attempt to split into quantities that sum > 10
     const response = await request(app)
       .post(`/api/display-lots/${displayLotId}/split`)
       .set('x-user-id', TEST_USER_ID)
-      .send({ splits: [{ quantityAllocated: 6 }, { quantityAllocated: 5 }] })
+      .send({ index: 0, quantities: [6, 5] })
       .expect(400);
   });
 
@@ -109,18 +95,14 @@ describe('11. Display Lots - Split Operations', () => {
     await depositCash(10000);
     await buyStock('AAPL', 10, 100);
 
-    const purchaseLots = await getPurchaseLots('AAPL');
-    const lotId = purchaseLots[0].id;
-
     const displayLotId = await createDisplayLot('AAPL', [
-      { purchaseLotId: lotId, quantityAllocated: 10 }
+      { purchaseLotId: 'seed', quantityAllocated: 10 }
     ]);
 
-    // Attempt to split into quantities that sum < 10
     const response = await request(app)
       .post(`/api/display-lots/${displayLotId}/split`)
       .set('x-user-id', TEST_USER_ID)
-      .send({ splits: [{ quantityAllocated: 4 }, { quantityAllocated: 5 }] })
+      .send({ index: 0, quantities: [4, 5] })
       .expect(400);
   });
 
@@ -128,17 +110,14 @@ describe('11. Display Lots - Split Operations', () => {
     await depositCash(10000);
     await buyStock('AAPL', 10, 100);
 
-    const purchaseLots = await getPurchaseLots('AAPL');
-    const lotId = purchaseLots[0].id;
-
     const displayLotId = await createDisplayLot('AAPL', [
-      { purchaseLotId: lotId, quantityAllocated: 10 }
+      { purchaseLotId: 'seed', quantityAllocated: 10 }
     ]);
 
     const response = await request(app)
       .post(`/api/display-lots/${displayLotId}/split`)
       .set('x-user-id', TEST_USER_ID)
-      .send({ splits: [{ quantityAllocated: 2.5 }, { quantityAllocated: 2.5 }, { quantityAllocated: 5 }] })
+      .send({ index: 0, quantities: [2.5, 2.5, 5] })
       .expect(201);
 
     const displayLots = await getDisplayLots('AAPL');
@@ -153,7 +132,7 @@ describe('11. Display Lots - Split Operations', () => {
     const response = await request(app)
       .post(`/api/display-lots/${fakeId}/split`)
       .set('x-user-id', TEST_USER_ID)
-      .send({ splits: [{ quantityAllocated: 5 }, { quantityAllocated: 5 }] })
+      .send({ index: 0, quantities: [5, 5] })
       .expect(404);
   });
 
@@ -161,17 +140,14 @@ describe('11. Display Lots - Split Operations', () => {
     await depositCash(10000);
     await buyStock('AAPL', 10, 100);
 
-    const purchaseLots = await getPurchaseLots('AAPL');
-    const lotId = purchaseLots[0].id;
-
     const displayLotId = await createDisplayLot('AAPL', [
-      { purchaseLotId: lotId, quantityAllocated: 10 }
+      { purchaseLotId: 'seed', quantityAllocated: 10 }
     ]);
 
     const response = await request(app)
       .post(`/api/display-lots/${displayLotId}/split`)
       .set('x-user-id', TEST_USER_ID)
-      .send({ splits: [] })
+      .send({ index: 0, quantities: [] })
       .expect(400);
   });
 
@@ -179,17 +155,14 @@ describe('11. Display Lots - Split Operations', () => {
     await depositCash(10000);
     await buyStock('AAPL', 10, 100);
 
-    const purchaseLots = await getPurchaseLots('AAPL');
-    const lotId = purchaseLots[0].id;
-
     const displayLotId = await createDisplayLot('AAPL', [
-      { purchaseLotId: lotId, quantityAllocated: 10 }
+      { purchaseLotId: 'seed', quantityAllocated: 10 }
     ]);
 
     const response = await request(app)
       .post(`/api/display-lots/${displayLotId}/split`)
       .set('x-user-id', TEST_USER_ID)
-      .send({ splits: [{ quantityAllocated: 10 }] })
+      .send({ index: 0, quantities: [10] })
       .expect(400);
   });
 
@@ -197,18 +170,15 @@ describe('11. Display Lots - Split Operations', () => {
     await depositCash(10000);
     await buyStock('AAPL', 10, 100);
 
-    const purchaseLots = await getPurchaseLots('AAPL');
-    const lotId = purchaseLots[0].id;
-
     const displayLotId = await createDisplayLot('AAPL', [
-      { purchaseLotId: lotId, quantityAllocated: 10 }
+      { purchaseLotId: 'seed', quantityAllocated: 10 }
     ]);
 
     const quantities = Array(10).fill(1);
     const response = await request(app)
       .post(`/api/display-lots/${displayLotId}/split`)
       .set('x-user-id', TEST_USER_ID)
-      .send({ splits: quantities.map(q => ({ quantityAllocated: q })) })
+      .send({ index: 0, quantities })
       .expect(201);
 
     const displayLots = await getDisplayLots('AAPL');

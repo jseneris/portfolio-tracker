@@ -165,9 +165,21 @@ async function createTablesIfNotExist() {
         id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
         userId NVARCHAR(255) NOT NULL,
         ticker NVARCHAR(10) NOT NULL,
-        totalQuantity DECIMAL(18, 8) NOT NULL CHECK (totalQuantity >= 0),
+        lotsCsv NVARCHAR(MAX) NOT NULL,
         createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
         updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+      );
+
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'UserSplitActivations')
+      CREATE TABLE UserSplitActivations (
+        id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+        userId NVARCHAR(255) NOT NULL,
+        splitId UNIQUEIDENTIFIER NOT NULL,
+        activatedBy NVARCHAR(20) NOT NULL CHECK (activatedBy IN ('manual', 'transaction')),
+        activationTransactionId UNIQUEIDENTIFIER NULL,
+        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        FOREIGN KEY (splitId) REFERENCES StockSplits(id),
+        FOREIGN KEY (activationTransactionId) REFERENCES StockTransactions(id)
       );
 
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'DisplayLotComposition')
@@ -264,6 +276,15 @@ async function createTablesIfNotExist() {
       CREATE INDEX IX_DisplayLots_UserId ON DisplayLots(userId);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLots_Ticker')
       CREATE INDEX IX_DisplayLots_Ticker ON DisplayLots(ticker);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_DisplayLots_UserId_Ticker')
+      CREATE UNIQUE INDEX UX_DisplayLots_UserId_Ticker ON DisplayLots(userId, ticker);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_UserSplitActivations_UserId')
+      CREATE INDEX IX_UserSplitActivations_UserId ON UserSplitActivations(userId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_UserSplitActivations_SplitId')
+      CREATE INDEX IX_UserSplitActivations_SplitId ON UserSplitActivations(splitId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_UserSplitActivations_UserId_SplitId')
+      CREATE UNIQUE INDEX UX_UserSplitActivations_UserId_SplitId ON UserSplitActivations(userId, splitId);
 
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotComposition_DisplayLotId')
       CREATE INDEX IX_DisplayLotComposition_DisplayLotId ON DisplayLotComposition(displayLotId);

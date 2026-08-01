@@ -26,15 +26,17 @@ describe('19. Database Schema - Clean Install', () => {
         'PurchaseLotAllocations',
         'SplitAdjustments',
         'DisplayLots',
+        'UserSplitActivations',
         'DisplayLotComposition',
         'DisplayLotAllocations',
         'HistoricalPrices',
+        'Users',
         'UserSettings'
       )
       ORDER BY name
     `);
 
-    expect(tablesResult.recordset.map((row: any) => String(row.name))).toEqual([
+    expectColumnsToMatch(tablesResult.recordset.map((row: any) => String(row.name)), [
       'CashTransactions',
       'DisplayLotAllocations',
       'DisplayLotComposition',
@@ -45,7 +47,41 @@ describe('19. Database Schema - Clean Install', () => {
       'SplitAdjustments',
       'StockSplits',
       'StockTransactions',
+      'UserSplitActivations',
       'UserSettings',
+      'Users',
+    ]);
+
+    const displayLotsColumnsResult = await pool.request().query(`
+      SELECT name
+      FROM sys.columns
+      WHERE object_id = OBJECT_ID('DisplayLots')
+      ORDER BY column_id
+    `);
+
+    expectColumnsToMatch(displayLotsColumnsResult.recordset.map((row: any) => row.name), [
+      'id',
+      'userId',
+      'ticker',
+      'lotsCsv',
+      'createdAt',
+      'updatedAt',
+    ]);
+
+    const userSplitActivationsColumnsResult = await pool.request().query(`
+      SELECT name
+      FROM sys.columns
+      WHERE object_id = OBJECT_ID('UserSplitActivations')
+      ORDER BY column_id
+    `);
+
+    expectColumnsToMatch(userSplitActivationsColumnsResult.recordset.map((row: any) => row.name), [
+      'id',
+      'userId',
+      'splitId',
+      'activatedBy',
+      'activationTransactionId',
+      'createdAt',
     ]);
 
     const userSettingsColumnsResult = await pool.request().query(`
@@ -143,15 +179,19 @@ describe('19. Database Schema - Clean Install', () => {
       'UX_StockSplits_Ticker_Ratio_Date',
     ]);
 
-    const foreignKeysResult = await pool.request().query(`
-      SELECT name
-      FROM sys.foreign_keys
-      WHERE name = 'FK_StockTransactions_LastSplit'
+    const stockTransactionSplitFkResult = await pool.request().query(`
+      SELECT fk.name
+      FROM sys.foreign_keys fk
+      INNER JOIN sys.foreign_key_columns fkc ON fk.object_id = fkc.constraint_object_id
+      INNER JOIN sys.tables t ON fk.parent_object_id = t.object_id
+      INNER JOIN sys.columns c ON c.object_id = t.object_id AND c.column_id = fkc.parent_column_id
+      INNER JOIN sys.tables rt ON fk.referenced_object_id = rt.object_id
+      WHERE t.name = 'StockTransactions'
+        AND rt.name = 'StockSplits'
+        AND c.name = 'lastSplitId'
     `);
 
-    expect(foreignKeysResult.recordset.map((row: any) => String(row.name))).toEqual([
-      'FK_StockTransactions_LastSplit',
-    ]);
+    expect(stockTransactionSplitFkResult.recordset).toHaveLength(1);
 
     const purchaseLotSplitFkResult = await pool.request().query(`
       SELECT fk.name
@@ -166,6 +206,20 @@ describe('19. Database Schema - Clean Install', () => {
     `);
 
     expect(purchaseLotSplitFkResult.recordset).toHaveLength(1);
+
+    const userSplitActivationIndexes = await pool.request().query(`
+      SELECT name
+      FROM sys.indexes
+      WHERE object_id = OBJECT_ID('UserSplitActivations')
+        AND name IN ('IX_UserSplitActivations_UserId', 'IX_UserSplitActivations_SplitId', 'UX_UserSplitActivations_UserId_SplitId')
+      ORDER BY name
+    `);
+
+    expect(userSplitActivationIndexes.recordset.map((row: any) => String(row.name))).toEqual([
+      'IX_UserSplitActivations_SplitId',
+      'IX_UserSplitActivations_UserId',
+      'UX_UserSplitActivations_UserId_SplitId',
+    ]);
   });
 
   it('does not include legacy userId columns on global tables', async () => {

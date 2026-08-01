@@ -44,7 +44,7 @@ describe('09. Display Lots - Edge Cases & Error Handling', () => {
     expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(1500, 0);
   });
 
-  it('handles Display Lot composed from 10+ Source Lots', async () => {
+  it('handles 10+ display lot quantities in a single ticker row', async () => {
     await depositCash(100000);
     
     // Create 15 purchase lots
@@ -55,16 +55,18 @@ describe('09. Display Lots - Edge Cases & Error Handling', () => {
     const purchaseLots = await getPurchaseLots('AAPL');
     expect(purchaseLots.length).toBeGreaterThanOrEqual(15);
 
-    // Create display lot from all of them
+    // In the simplified model, composition IDs are ignored and quantities are stored.
     const composition = purchaseLots.map(p => ({
       purchaseLotId: p.id,
       quantityAllocated: 1
     }));
 
-    const displayLotId = await createDisplayLot('AAPL', composition);
+    await createDisplayLot('AAPL', composition);
 
     const displayLots = await getDisplayLots('AAPL');
-    expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(15, 3);
+    expect(displayLots).toHaveLength(15);
+    const totalQuantity = displayLots.reduce((sum, lot) => sum + Number(lot.totalQuantity), 0);
+    expect(totalQuantity).toBeCloseTo(15, 3);
   });
 
   it('sequential sales from same Display Lot', async () => {

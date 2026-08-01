@@ -5,303 +5,77 @@ excludeAgent: "code-review"
 
 # API Endpoints (Current Implementation)
 
-All endpoints run behind auth middleware and use JSON request/response bodies.
+All routes are authenticated and user-scoped via middleware.
 
-Authentication accepted by middleware:
-- `x-user-id: <user-id>`
-- `Authorization: Bearer <token>` (uses `x-user-id` when provided, otherwise falls back to `dev-user`)
-
-Endpoint files should follow this fomatting order, but better readability
-- Constants
-- Interfaces (All interfaces start with letter "I")
-- Endpoints
-- Functions
-
-## Cash Endpoints
+## Cash
 
 ### GET /api/cash
-Returns all cash transactions for the authenticated user, newest first.
-
-Workflow:
-1. Read `req.user.id` from middleware context.
-2. Query `CashTransactions` filtered by `userId`.
-3. Sort by `transactionDate DESC`.
-4. Return the recordset as JSON.
+- Returns user cash transactions.
 
 ### GET /api/cash/summary
-Returns aggregate cash and stock cash-flow summary.
-
-Workflow:
-1. Aggregate cash totals from `CashTransactions` (`deposit`, `withdrawal`, `interest`, `fee`).
-2. Aggregate stock cash totals from `StockTransactions` (`buy`, `sell`).
-3. Compute derived fields:
-   - `availableCash = deposits - withdrawals + interest - fees - buys + sells`
-   - `costBasis = deposits - withdrawals`
-   - `adjustments = interest - fees`
-4. Return computed summary JSON.
+- Returns deposits, withdrawals, interest, fees, buys/sells impact, and available cash.
 
 ### POST /api/cash
-Creates a cash transaction.
-
-Request body:
-```json
-{
-  "type": "deposit|withdrawal|interest|fee",
-  "amount": 1000.0,
-  "transactionDate": "2026-01-15T00:00:00Z"
-}
-```
-
-Workflow:
-1. Validate required fields: `type`, `amount`, `transactionDate`.
-2. Generate UUID for new cash transaction.
-3. Insert row into `CashTransactions`.
-4. Return `201` with created transaction payload.
+- Creates a cash transaction.
 
 ### PUT /api/cash/:id
-Updates an existing cash transaction for the authenticated user.
-
-Workflow:
-1. Read `id` path param and payload fields.
-2. Update matching `CashTransactions` row scoped by `id` and `userId`.
-3. Set `updatedAt = GETUTCDATE()`.
-4. Return updated object payload.
+- Updates a cash transaction.
 
 ### DELETE /api/cash/:id
-Deletes an existing cash transaction for the authenticated user.
+- Deletes a cash transaction.
 
-Workflow:
-1. Read `id` path param.
-2. Delete row from `CashTransactions` where `id` and `userId` match.
-3. Return `204` with empty body.
-
-## Stock Endpoints
-
-### GET /api/stocks/portfolio/summary
-Returns cash summary plus open holdings rollup.
-
-Workflow:
-1. Run CTE-based summary query:
-   - Cash aggregates from `CashTransactions`.
-   - Buy/sell cash aggregates from `StockTransactions`.
-   - Open stock totals from `PurchaseLots` (`remainingQuantity > 0`).
-2. Run grouped holdings query by `ticker` from `PurchaseLots`.
-3. Convert nullable numeric fields to numbers.
-4. Return combined summary object with `stocks` array.
+## Stocks
 
 ### GET /api/stocks
-Returns all stock transactions for the authenticated user.
-
-Workflow:
-1. Query `StockTransactions` by `userId`.
-2. Sort by `transactionDate DESC, ticker ASC`.
-3. Return recordset JSON.
-
-### POST /api/stocks/historical-prices/sync-2021
-Fetches and stores Yahoo Finance daily closes for each user ticker on:
-- all cash `deposit`/`withdrawal` dates (up to `2021-12-31`)
-- plus `2021-12-31`
-- plus benchmark tickers `^DJI` (DOW), `^IXIC` (Nasdaq), `^GSPC` (S&P 500)
-
-Workflow:
-1. Collect distinct cash deposit/withdrawal dates for the user within 2021.
-2. Build a priority date queue in this order:
-  - cash deposit/withdrawal dates
-  - `2021-12-31`
-  - remaining unsynced dates from first cash date through `2021-12-31`
-3. Collect distinct user tickers with stock transactions up to `2021-12-31`, then include benchmark tickers `^DJI`, `^IXIC`, `^GSPC`.
-4. Skip dates already fully synced for all selected tickers.
-5. Process only the next capped batch of dates (incremental backfill per click).
-6. For each ticker, fetch Yahoo daily bars once across the selected batch date window.
-7. For each selected date, use same-day close or nearest previous trading day close.
-8. Upsert each point into global `HistoricalPrices` (`source = yahoo-finance`) shared across users.
-9. Return sync summary (`storedRows`, `missingPrices`, requested dates/tickers, remaining date count).
-
-### GET /api/stocks/historical-prices
-Returns stored historical closes from global `HistoricalPrices` for a date range.
-
-Query params:
-- `startDate` (optional, default `2021-01-01`)
-- `endDate` (optional, default `2021-12-31`)
-
-Workflow:
-1. Read date range query params.
-2. Query global `HistoricalPrices` by date range.
-3. Return rows ordered by `priceDate ASC, ticker ASC`.
-
-### GET /api/stocks/portfolio/comparison-2021
-Returns chart points for portfolio-vs-cash-basis comparison on the stored historical-price dates.
-
-Workflow:
-1. Load distinct stored `priceDate` values from global `HistoricalPrices` (`source = yahoo-finance`).
-2. Load cash and stock transactions through the date window.
-3. Replay transactions cumulatively per point date to compute:
-  - `availableCash`
-  - holdings by ticker
-  - benchmark shares for DOW/Nasdaq/S&P (deposit => buy benchmark shares, withdrawal => FIFO benchmark share sale)
-  - `cashCostBasis`
-4. Value holdings on each point date using stored closes.
-5. Return points with:
-  - `date`
-  - `hasCashFlowEvent`
-  - `availableCash`
-  - `stockValue`
-  - `portfolioValue`
-  - `dowBenchmarkValue`
-  - `dowBenchmarkShares`
-  - `nasdaqBenchmarkValue`
-  - `nasdaqBenchmarkShares`
-  - `sp500BenchmarkValue`
-  - `sp500BenchmarkShares`
-  - `cashCostBasis`
-  - `missingTickers`
+- Returns user stock transactions.
 
 ### GET /api/stocks/:ticker
-Returns all stock transactions for one ticker.
-
-Workflow:
-1. Normalize path `ticker` to uppercase.
-2. Query `StockTransactions` filtered by `userId` and ticker.
-3. Sort by `transactionDate DESC`.
-4. Return recordset JSON.
+- Returns transactions for one ticker.
 
 ### GET /api/stocks/:ticker/summary
-Returns open position summary for one ticker.
+- Returns ticker summary (`totalShares`, `numberOfLots`, `costBasis`) with activated splits applied dynamically.
 
-Workflow:
-1. Normalize ticker to uppercase.
-2. Aggregate open lots from `PurchaseLots` (`remainingQuantity > 0`) for that ticker.
-3. Return summary:
-   - `totalShares`
-   - `numberOfLots`
-   - `costBasis`
+### GET /api/stocks/portfolio/summary
+- Returns full portfolio summary with dynamic split projection.
 
 ### GET /api/stocks/:transactionId/allocations
-Returns purchase-lot allocations for a sale transaction.
-
-Workflow:
-1. Query `PurchaseLotAllocations` joined to `PurchaseLots` by `purchaseLotId`.
-2. Filter by `saleTransactionId` and `userId`.
-3. Map decimals to numeric response fields.
-4. Return allocation list in purchase-date order.
+- Returns purchase-lot allocations for a sell transaction.
 
 ### POST /api/stocks
-Creates a stock transaction (`buy`, `sell`, or `div`) and applies side effects transactionally.
-
-Request body (buy/div):
-```json
-{
-  "ticker": "AAPL",
-  "type": "buy|div",
-  "quantity": 10,
-  "price": 150.0,
-  "transactionDate": "2026-01-15T00:00:00Z"
-}
-```
-
-Request body (sell):
-```json
-{
-  "ticker": "AAPL",
-  "type": "sell",
-  "quantity": 5,
-  "price": 160.0,
-  "transactionDate": "2026-01-20T00:00:00Z",
-  "allocations": [
-    { "lotId": "purchase-lot-uuid", "quantity": 5 }
-  ]
-}
-```
-
-Workflow:
-1. Validate required fields and normalize ticker.
-2. Compute `amount = quantity * price` for supported types.
-3. For `sell`:
-   - Require explicit `allocations`.
-   - Validate allocation totals equal sell `quantity`.
-   - Validate each lot exists and has enough remaining shares.
-   - Validate allocated purchase dates are not after sale date.
-   - Build smallest-lot-first operational consumption plan for open lots.
-4. Open SQL transaction.
-5. Insert row into `StockTransactions`.
-6. Apply type-specific side effects:
-   - `buy`: create `PurchaseLots` row (`sourceType = purchase`) and matching `DisplayLots` + `DisplayLotComposition`.
-  - `div`: create `PurchaseLots` row (`sourceType = dividend`) only.
-  - `sell`: decrement `PurchaseLots.remainingQuantity`, insert `PurchaseLotAllocations`, consume `DisplayLots` smallest-first only for shares allocated from `sourceType = purchase`, then insert `DisplayLotAllocations`.
-7. Commit transaction and return `201` with created transaction payload.
+- Creates buy/sell/div transaction.
+- `sell` requires explicit `allocations` whose total equals sell quantity.
+- `buy` creates a `PurchaseLots` row and appends quantity to display lots.
+- `div` creates a dividend `PurchaseLots` row only.
+- `sell` updates `PurchaseLots`, writes `PurchaseLotAllocations`, and consumes display quantities smallest-first for purchase-sourced shares.
+- After insert, automatic split catch-up writes activation rows when applicable.
 
 ### PUT /api/stocks/:id
-Updates a stock transaction row (no lot recomputation logic).
-
-Workflow:
-1. Read path `id` and payload fields.
-2. Recompute `amount` from payload.
-3. Update matching `StockTransactions` row by `id` and `userId`.
-4. Set `updatedAt = GETUTCDATE()`.
-5. Return updated payload.
+- Updates one stock transaction row.
 
 ### DELETE /api/stocks/:id
-Deletes a stock transaction and reverses side effects transactionally.
+- Deletes transaction and reverses side effects.
+- `sell` deletion restores `PurchaseLots` and appends restored purchase shares back into display lots.
+- `buy/div` deletion removes related purchase lot inventory and reconciles display quantities.
 
-Workflow:
-1. Lookup transaction by `id` and `userId`.
-2. If not found, return `404`.
-3. Start SQL transaction.
-4. If type is `sell`:
-   - Restore consumed shares to `PurchaseLots` from `PurchaseLotAllocations`.
-   - Restore display quantities in `DisplayLots` from `DisplayLotAllocations`.
-5. If type is `buy` or `div`:
-   - Locate related `PurchaseLots`.
-   - Delete related `DisplayLotComposition`, `DisplayLots`, then `PurchaseLots`.
-6. Delete the `StockTransactions` row.
-7. Commit and return `204`.
-
-## Purchase Lots Endpoints
+## Purchase Lots and Splits
 
 ### GET /api/lots
-Returns open purchase lots (all tickers) for user.
-
-Workflow:
-1. Query `PurchaseLots` by `userId` with `remainingQuantity > 0`.
-2. Sort by `purchaseDate ASC`.
-3. Return recordset JSON.
+- Returns open lots for user.
 
 ### GET /api/lots/:ticker
-Returns open purchase lots for a ticker, optional source-type filter.
-
-Optional query:
-- `sourceType=purchase|dividend`
-
-Workflow:
-1. Normalize ticker to uppercase.
-2. Query `PurchaseLots` with `remainingQuantity > 0`.
-3. If `sourceType` provided, add filter.
-4. Sort by `purchaseDate ASC`.
-5. Return recordset JSON.
+- Returns open lots for ticker, optional `sourceType` filter.
 
 ### GET /api/lots/:ticker/open
-Returns open purchase-only lots for a ticker (dividend lots excluded).
+- Returns open purchase-only lots for ticker (`sourceType = purchase`).
 
-Workflow:
-1. Normalize ticker to uppercase.
-2. Query `PurchaseLots` where:
-   - `sourceType = 'purchase'`
-   - `remainingQuantity > 0`
-3. Sort by `purchaseDate ASC`.
-4. Return recordset JSON.
+### GET /api/lots/splits
+### GET /api/lots/ticker/:ticker/splits
+- Returns split history (global split events).
 
 ### PUT /api/lots/:id
-Updates remaining quantity for one purchase lot.
-
-Workflow:
-1. Read path `id` and `remainingQuantity` from body.
-2. Update matching `PurchaseLots` row by `id` and `userId`.
-3. Set `updatedAt = GETUTCDATE()`.
-4. Return updated payload.
+- Updates lot remaining quantity.
 
 ### POST /api/lots/ticker/:ticker/split
-Applies a stock split for one ticker, retroactively up to `splitDate`.
-
 Request body:
 ```json
 {
@@ -310,156 +84,70 @@ Request body:
   "splitDate": "2026-01-15T00:00:00Z"
 }
 ```
+- Upserts/finds a global split event in `StockSplits`.
+- Activates it for the calling user in `UserSplitActivations`.
+- Does not bulk-rewrite all historical transaction/lot rows.
 
-Workflow:
-1. Validate split ratio and `splitDate`.
-2. Normalize ticker and compute `multiplier`.
-3. Start SQL transaction.
-4. Prevent duplicate split by checking `StockSplits` for same ticker, ratio, and date.
-5. Insert split event into `StockSplits`.
-6. Update split-eligible rows (`<= splitDate`) across:
-   - `PurchaseLots` (quantities multiplied, unit cost divided)
-   - `StockTransactions` for `buy|sell|div` (quantity/price adjusted)
-   - `PurchaseLotAllocations` (quantity consumed scaled)
-7. Insert audit rows into `SplitAdjustments` for touched entities.
-8. Commit and return split summary payload.
-
-## Display Lots Endpoints
+## Display Lots
 
 ### GET /api/display-lots
-Returns all open display lots for user.
-
-Workflow:
-1. Query `DisplayLots` filtered by `userId` and `totalQuantity > 0`.
-2. Sort by `ticker ASC, totalQuantity ASC`.
-3. Map numeric fields and return JSON list.
+- Returns all display-lot rows mapped to:
+- `lots` (parsed array)
+- `lotCount`
+- `totalQuantity`
 
 ### GET /api/display-lots/ticker/:ticker
-Returns open display lots for one ticker.
-
-Workflow:
-1. Normalize ticker to uppercase.
-2. Query `DisplayLots` by `userId`, ticker, and `totalQuantity > 0`.
-3. Sort by `totalQuantity ASC, createdAt ASC`.
-4. Return mapped list.
+- Same as above, ticker-scoped.
 
 ### GET /api/display-lots/:id/composition
-Returns composition rows for a display lot.
-
-Workflow:
-1. Verify display lot exists and belongs to user.
-2. If not found, return `404`.
-3. Query `DisplayLotComposition` joined to `PurchaseLots`.
-4. Return composition list with lot metadata.
+- Returns synthetic composition entries from `lotsCsv`:
+- `{ id: "<rowId>:<index>", index, quantityAllocated, ticker }`
 
 ### POST /api/display-lots/:ticker
-Creates one display lot from provided purchase-lot composition.
-
 Request body:
 ```json
 {
-  "composition": [
-    { "purchaseLotId": "lot-uuid-1", "quantityAllocated": 10 },
-    { "purchaseLotId": "lot-uuid-2", "quantityAllocated": 10 }
-  ]
+  "quantities": [5, 5, 10]
 }
 ```
-
-Workflow:
-1. Validate `composition` array and positive quantities.
-2. Normalize ticker.
-3. Start SQL transaction.
-4. Validate each `purchaseLotId` belongs to user and ticker.
-5. Insert new `DisplayLots` row with summed `totalQuantity`.
-6. Insert `DisplayLotComposition` rows.
-7. Commit and return `201` with new display lot summary.
+- Creates or replaces the ticker row for the user.
+- Stores values in `DisplayLots.lotsCsv`.
 
 ### POST /api/display-lots/:id/combine
-Combines one source display lot (`:id`) plus additional lot IDs into one new lot.
-
 Request body:
 ```json
 {
-  "displayLotIds": ["display-lot-uuid-1", "display-lot-uuid-2"]
+  "indices": [0, 1, 2]
 }
 ```
-
-Workflow:
-1. Validate `displayLotIds` is non-empty.
-2. Build merge set: `:id` + request IDs.
-3. Start SQL transaction.
-4. Verify all source lots exist for user.
-5. Validate all source lots share the same ticker.
-6. Insert new combined `DisplayLots` row with total summed quantity.
-7. Copy all source composition rows into the new lot.
-8. Delete old source lots (composition rows cascade-delete).
-9. Commit and return `201` with merge summary.
+- Combines selected lot indices into one index slot.
 
 ### POST /api/display-lots/:id/split
-Splits one display lot into multiple new display lots.
-
 Request body:
 ```json
 {
-  "splits": [
-    { "quantityAllocated": 10 },
-    { "quantityAllocated": 10 }
-  ]
+  "index": 0,
+  "quantities": [2.5, 7.5]
 }
 ```
-
-Workflow:
-1. Validate `splits` has at least 2 items and positive quantities.
-2. Start SQL transaction.
-3. Load source display lot by `id` and `userId`; return `404` if missing.
-4. Validate split quantities sum to source lot total (within tolerance).
-5. Load source `DisplayLotComposition`.
-6. For each split target:
-   - Insert new `DisplayLots` row.
-   - Distribute each source composition proportionally into new composition rows.
-7. Delete original source display lot.
-8. Commit and return `201` with new display lot IDs.
+- Splits one lot entry by index.
+- Sum of `quantities` must equal original lot quantity (within tolerance).
 
 ### DELETE /api/display-lots/:id
-Deletes a display lot when it has no active sale allocations.
-
-Workflow:
-1. Check `DisplayLotAllocations` count for the display lot.
-2. If allocations exist, return `400` with dependency error.
-3. Delete `DisplayLots` row scoped by `id` and `userId`.
-4. If row not found, return `404`.
-5. Return `204` with empty body.
-
-## Health Endpoint
-
-### GET /api/health
-Simple API health check.
-
-Workflow:
-1. Return static JSON `{ "status": "ok" }`.
-
-## Error Handling
-
-Standard error shape:
+Request body:
 ```json
 {
-  "error": "Description of the error"
+  "index": 0
 }
 ```
+- Deletes one lot entry by index.
+- Deletes the row when it becomes empty.
 
-Common status codes in current routes:
-- `200`: Successful read/update responses.
-- `201`: Successful creation endpoints.
-- `204`: Successful delete with empty body.
-- `400`: Validation and business-rule failures.
-- `404`: Missing resources.
-- `409`: Duplicate split application attempt.
-- `500`: Unexpected server/database errors.
+## Health
+
+### GET /api/health
+- Returns `{ "status": "ok" }`.
 
 ## Notes
 
-- Cash amounts are persisted using SQL `DECIMAL` precision.
-- Share quantities use `DECIMAL(18,8)` to preserve split math accuracy.
-- Most complex write operations run in SQL transactions.
-- Sell processing uses explicit purchase-lot attribution plus smallest-first operational consumption for open lots and display lots.
-- Split processing is implemented on lots routes at `POST /api/lots/ticker/:ticker/split`.
+- Legacy tables (`DisplayLotComposition`, `DisplayLotAllocations`, `SplitAdjustments`) still exist, but current display-lot and split workflows are centered on `lotsCsv` and `UserSplitActivations`.
