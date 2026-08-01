@@ -10,6 +10,7 @@ import {
   getCashSummary,
   getCashTransactions,
 } from '../api'
+import { formatCurrency2 } from '../formatters'
 
 type CashFormState = {
   type: CashTransactionType
@@ -29,10 +30,6 @@ function formatDate(value: string) {
     return value
   }
   return date.toLocaleDateString(undefined, { timeZone: 'UTC' })
-}
-
-function formatMoney(value: number) {
-  return `$${value.toFixed(2)}`
 }
 
 function validateCashForm(form: CashFormState): string | null {
@@ -130,7 +127,7 @@ export default function CashPage() {
   }
 
   async function onDelete(transaction: CashTransaction) {
-    const shouldDelete = window.confirm(`Delete ${transaction.type} transaction for ${formatMoney(Number(transaction.amount))}?`)
+    const shouldDelete = window.confirm(`Delete ${transaction.type} transaction for ${formatCurrency2(Number(transaction.amount))}?`)
     if (!shouldDelete) {
       return
     }
@@ -206,12 +203,12 @@ export default function CashPage() {
 
       {summary ? (
         <div className="panel stat-grid">
-          <div className="stat"><div className="label">Available Cash</div><div className="value">{formatMoney(summary.availableCash)}</div></div>
-          <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatMoney(summary.costBasis)}</div></div>
-          <div className="stat"><div className="label">Adjustments</div><div className="value">{formatMoney(summary.adjustments)}</div></div>
-          <div className="stat"><div className="label">Deposits</div><div className="value">{formatMoney(summary.deposits)}</div></div>
-          <div className="stat"><div className="label">Withdrawals</div><div className="value">{formatMoney(summary.withdrawals)}</div></div>
-          <div className="stat"><div className="label">Fees</div><div className="value">{formatMoney(summary.fees)}</div></div>
+          <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(summary.availableCash)}</div></div>
+          <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatCurrency2(summary.costBasis)}</div></div>
+          <div className="stat"><div className="label">Adjustments</div><div className="value">{formatCurrency2(summary.adjustments)}</div></div>
+          <div className="stat"><div className="label">Deposits</div><div className="value">{formatCurrency2(summary.deposits)}</div></div>
+          <div className="stat"><div className="label">Withdrawals</div><div className="value">{formatCurrency2(summary.withdrawals)}</div></div>
+          <div className="stat"><div className="label">Fees</div><div className="value">{formatCurrency2(summary.fees)}</div></div>
         </div>
       ) : null}
 
@@ -236,7 +233,7 @@ export default function CashPage() {
                 <tr key={transaction.id}>
                   <td>{formatDate(transaction.transactionDate)}</td>
                   <td>{transaction.type}</td>
-                  <td>{formatMoney(Number(transaction.amount))}</td>
+                  <td>{formatCurrency2(Number(transaction.amount))}</td>
                   <td>
                     <button className="button button-danger" type="button" onClick={() => onDelete(transaction)}>
                       Delete

@@ -201,12 +201,7 @@ describe('05. Foundation - Stock Split Workflow', () => {
         WHERE usa.userId = @userId AND ss.ticker = 'AAPL'
       `);
 
-    const splitAdjustmentsRows = await pool.request()
-      .input('userId', sql.NVarChar, TEST_USER_ID)
-      .query('SELECT COUNT(*) AS adjustmentCount FROM SplitAdjustments WHERE userId = @userId');
-
     expect(Number(activationRows.recordset[0].activationCount || 0)).toBeGreaterThan(0);
-    expect(Number(splitAdjustmentsRows.recordset[0].adjustmentCount || 0)).toBe(0);
   });
 
   it('split only affects projected quantities on or before the split date', async () => {

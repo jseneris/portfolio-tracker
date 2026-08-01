@@ -37,7 +37,7 @@ Display lots are no longer persisted as a composition graph in active workflow l
 
 ## Compatibility Note
 
-Legacy tables (`DisplayLotComposition`, `DisplayLotAllocations`, `SplitAdjustments`) remain in schema for compatibility, but current operational behavior is driven by CSV display lots and split activations.
+Current operational behavior is driven by CSV display lots and split activations; legacy display-lot and split-audit compatibility tables have been removed from the active schema.
 
 ## Testing Direction
 

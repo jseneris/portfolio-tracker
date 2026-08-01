@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   combineDisplayLots,
-  CreateDisplayLotInput,
   DisplayLot,
-  DisplayLotComposition,
   PortfolioSummary,
   PurchaseLot,
   splitDisplayLot,
@@ -12,21 +10,20 @@ import {
   getUserTargetSettings,
   getStockTransactionsByTicker,
   getDisplayLotsByTicker,
-  getDisplayLotComposition,
   getPurchaseLotsByTicker,
-  deleteDisplayLot,
-  createDisplayLot,
-  SplitDisplayLotInput,
+  deleteDisplayLotIndex,
 } from '../api'
+import { formatCurrency2, formatStockPrice4 } from '../formatters'
 
 const SPLIT_TOLERANCE = 1e-6
 const DEFAULT_SALE_TARGET_PERCENT = 10
 
-function formatMoney(value: number | null) {
-  if (value == null || Number.isNaN(Number(value))) {
-    return '--'
-  }
-  return `$${Number(value).toFixed(2)}`
+type DisplayLotEntry = {
+  id: string
+  rowId: string
+  index: number
+  totalQuantity: number
+  createdAt: string
 }
 
 function formatNumber(value: number | null, digits = 6) {
@@ -49,14 +46,13 @@ export default function HoldingsPage() {
   const [selectedTicker, setSelectedTicker] = useState<string>('')
   const [displayLots, setDisplayLots] = useState<DisplayLot[]>([])
   const [purchaseLots, setPurchaseLots] = useState<PurchaseLot[]>([])
-  const [displayLotCompositions, setDisplayLotCompositions] = useState<Record<string, DisplayLotComposition[]>>({})
   const [transactions, setTransactions] = useState<StockTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [splitting, setSplitting] = useState(false)
   const [combining, setCombining] = useState(false)
-  const [selectedDisplayLotIds, setSelectedDisplayLotIds] = useState<string[]>([])
-  const [splitLotTarget, setSplitLotTarget] = useState<DisplayLot | null>(null)
+  const [selectedDisplayLotEntryIds, setSelectedDisplayLotEntryIds] = useState<string[]>([])
+  const [splitLotTarget, setSplitLotTarget] = useState<DisplayLotEntry | null>(null)
   const [splitQuantitiesInput, setSplitQuantitiesInput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -65,6 +61,23 @@ export default function HoldingsPage() {
   const tickers = useMemo(() => {
     return (portfolio?.stocks ?? []).map((stock) => stock.ticker)
   }, [portfolio])
+
+  const displayLotEntries = useMemo<DisplayLotEntry[]>(() => {
+    const entries: DisplayLotEntry[] = []
+    for (const row of displayLots) {
+      const lots = Array.isArray(row.lots) ? row.lots : []
+      lots.forEach((qty, index) => {
+        entries.push({
+          id: `${row.id}:${index}`,
+          rowId: row.id,
+          index,
+          totalQuantity: Number(qty),
+          createdAt: row.createdAt,
+        })
+      })
+    }
+    return entries
+  }, [displayLots])
 
   async function loadPortfolio() {
     setLoading(true)
@@ -139,9 +152,8 @@ export default function HoldingsPage() {
     if (!selectedTicker) {
       setDisplayLots([])
       setPurchaseLots([])
-      setDisplayLotCompositions({})
       setTransactions([])
-      setSelectedDisplayLotIds([])
+      setSelectedDisplayLotEntryIds([])
       return
     }
 
@@ -160,15 +172,7 @@ export default function HoldingsPage() {
           setDisplayLots(displayLotsResult)
           setPurchaseLots(purchaseLotsResult)
           setTransactions(txResult)
-          setSelectedDisplayLotIds([])
-          
-          // Load composition for each display lot
-          const compositions: Record<string, DisplayLotComposition[]> = {}
-          for (const lot of displayLotsResult) {
-            const comp = await getDisplayLotComposition(lot.id)
-            compositions[lot.id] = comp
-          }
-          setDisplayLotCompositions(compositions)
+          setSelectedDisplayLotEntryIds([])
         }
       } catch (err: unknown) {
         if (!cancelled) {
@@ -188,24 +192,24 @@ export default function HoldingsPage() {
     }
   }, [selectedTicker])
 
-  function openSplitModal(lot: DisplayLot) {
+  function openSplitModal(lot: DisplayLotEntry) {
     setError(null)
     setSuccess(null)
     setSplitLotTarget(lot)
     setSplitQuantitiesInput('')
   }
 
-  function toggleDisplayLotSelection(lotId: string) {
-    setSelectedDisplayLotIds((prev) => {
-      if (prev.includes(lotId)) {
-        return prev.filter((id) => id !== lotId)
+  function toggleDisplayLotSelection(entryId: string) {
+    setSelectedDisplayLotEntryIds((prev) => {
+      if (prev.includes(entryId)) {
+        return prev.filter((id) => id !== entryId)
       }
-      return [...prev, lotId]
+      return [...prev, entryId]
     })
   }
 
   async function submitCombineDisplayLots() {
-    if (selectedDisplayLotIds.length < 2 || !selectedTicker) {
+    if (selectedDisplayLotEntryIds.length < 2 || !selectedTicker) {
       setError('Select at least two display lots to combine.')
       return
     }
@@ -214,11 +218,18 @@ export default function HoldingsPage() {
     setSuccess(null)
     setCombining(true)
     try {
-      const targetLotId = selectedDisplayLotIds[0]
-      const otherLotIds = selectedDisplayLotIds.slice(1)
-      const response = await combineDisplayLots(targetLotId, otherLotIds)
-      setSuccess(`Combined ${otherLotIds.length + 1} display lots into one lot of ${formatNumber(response.totalQuantity)} shares.`)
-      setSelectedDisplayLotIds([])
+      const selectedEntries = displayLotEntries.filter((entry) => selectedDisplayLotEntryIds.includes(entry.id))
+      const rowIds = new Set(selectedEntries.map((entry) => entry.rowId))
+      if (rowIds.size !== 1 || selectedEntries.length < 2) {
+        setError('Selected entries must belong to the same ticker row.')
+        return
+      }
+
+      const rowId = selectedEntries[0].rowId
+      const indices = selectedEntries.map((entry) => entry.index).sort((a, b) => a - b)
+      const response = await combineDisplayLots(rowId, indices)
+      setSuccess(`Combined ${indices.length} display lots into one lot of ${formatNumber(response.totalQuantity)} shares.`)
+      setSelectedDisplayLotEntryIds([])
       await Promise.all([
         loadPortfolio(),
       ])
@@ -272,10 +283,10 @@ export default function HoldingsPage() {
 
     setSplitting(true)
     try {
-      const payload: SplitDisplayLotInput = {
-        splits: quantities.map((q) => ({ quantityAllocated: q })),
-      }
-      await splitDisplayLot(splitLotTarget.id, payload)
+      await splitDisplayLot(splitLotTarget.rowId, {
+        index: splitLotTarget.index,
+        quantities,
+      })
       setSuccess(`Display lot split into ${quantities.length} lots.`)
       setSplitLotTarget(null)
       setSplitQuantitiesInput('')
@@ -287,7 +298,7 @@ export default function HoldingsPage() {
     }
   }
 
-  async function deleteDisplayLot(lotId: string) {
+  async function onDeleteDisplayLot(entry: DisplayLotEntry) {
     const confirmed = window.confirm('Delete this display lot?')
     if (!confirmed) {
       return
@@ -297,7 +308,7 @@ export default function HoldingsPage() {
     setSuccess(null)
 
     try {
-      await deleteDisplayLot(lotId)
+      await deleteDisplayLotIndex(entry.rowId, entry.index)
       setSuccess('Display lot deleted.')
       await loadPortfolio()
     } catch (err: unknown) {
@@ -348,14 +359,14 @@ export default function HoldingsPage() {
                 className="button"
                 type="button"
                 onClick={submitCombineDisplayLots}
-                disabled={combining || detailsLoading || selectedDisplayLotIds.length < 2 || splitting}
+                  disabled={combining || detailsLoading || selectedDisplayLotEntryIds.length < 2 || splitting}
               >
-                {combining ? 'Combining...' : `Combine Selected (${selectedDisplayLotIds.length})`}
+                  {combining ? 'Combining...' : `Combine Selected (${selectedDisplayLotEntryIds.length})`}
               </button>
             </div>
             {detailsLoading ? (
               <p>Loading display lots...</p>
-            ) : displayLots.length === 0 ? (
+            ) : displayLotEntries.length === 0 ? (
               <p>No display lots for {selectedTicker}. Create display lots from purchase lots to organize your holdings.</p>
             ) : (
               <table className="table">
@@ -369,17 +380,17 @@ export default function HoldingsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayLots.map((lot) => (
+                  {displayLotEntries.map((lot) => (
                     <tr key={lot.id}>
                       <td>
                         <input
                           type="checkbox"
-                          checked={selectedDisplayLotIds.includes(lot.id)}
+                          checked={selectedDisplayLotEntryIds.includes(lot.id)}
                           onChange={() => toggleDisplayLotSelection(lot.id)}
                           disabled={combining || splitting}
                         />
                       </td>
-                      <td className="mono">{lot.id.slice(0, 8)}...</td>
+                      <td className="mono">{lot.rowId.slice(0, 8)}:{lot.index}</td>
                       <td>{formatNumber(lot.totalQuantity)}</td>
                       <td>{formatDate(lot.createdAt)}</td>
                       <td>
@@ -387,7 +398,7 @@ export default function HoldingsPage() {
                           <button className="button" type="button" onClick={() => openSplitModal(lot)} disabled={splitting || combining}>
                             Split
                           </button>
-                          <button className="button button-danger" type="button" onClick={() => deleteDisplayLot(lot.id)} disabled={splitting || combining}>
+                          <button className="button button-danger" type="button" onClick={() => onDeleteDisplayLot(lot)} disabled={splitting || combining}>
                             Delete
                           </button>
                         </div>
@@ -425,7 +436,7 @@ export default function HoldingsPage() {
                       <td>{formatDate(lot.purchaseDate)}</td>
                       <td>{formatNumber(lot.originalQuantity)}</td>
                       <td>{formatNumber(lot.remainingQuantity)}</td>
-                      <td>{formatMoney(lot.unitCost)}</td>
+                      <td>{formatStockPrice4(lot.unitCost)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -439,9 +450,9 @@ export default function HoldingsPage() {
               Sale target uses the most recent buy/sell price and your configured percentage ({saleTargetPercent.toFixed(2)}%).
             </p>
             <p>
-              Latest buy/sell price: {formatMoney(latestBuyOrSellTransaction ? Number(latestBuyOrSellTransaction.price) : null)}
+              Latest buy/sell price: {formatStockPrice4(latestBuyOrSellTransaction ? Number(latestBuyOrSellTransaction.price) : null)}
               {' | '}
-              Sale target: {formatMoney(saleTargetPrice)}
+              Sale target: {formatStockPrice4(saleTargetPrice)}
             </p>
             {detailsLoading ? (
               <p>Loading transactions...</p>
@@ -464,8 +475,8 @@ export default function HoldingsPage() {
                       <td>{formatDate(transaction.transactionDate)}</td>
                       <td>{transaction.type}</td>
                       <td>{formatNumber(transaction.quantity)}</td>
-                      <td>{formatMoney(transaction.price)}</td>
-                      <td>{formatMoney(transaction.amount)}</td>
+                      <td>{formatStockPrice4(transaction.price)}</td>
+                      <td>{formatCurrency2(transaction.amount)}</td>
                     </tr>
                   ))}
                 </tbody>

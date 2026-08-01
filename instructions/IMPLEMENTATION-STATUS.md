@@ -14,7 +14,7 @@ Backend behavior has shifted to:
 ### Schema
 - Cash, stock, source-lot, split, display-lot, historical-price, users/settings tables are present.
 - `DisplayLots.lotsCsv` and `UserSplitActivations` are active parts of current workflows.
-- Legacy compatibility tables (`DisplayLotComposition`, `DisplayLotAllocations`, `SplitAdjustments`) still exist.
+- Legacy compatibility tables for display-lot composition/allocation and split-adjustment audit have been removed from the active schema.
 
 ### Routes
 - Display lot endpoints are index-based for combine/split/delete operations.

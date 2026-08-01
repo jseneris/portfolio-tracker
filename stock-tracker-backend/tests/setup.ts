@@ -15,12 +15,8 @@ export async function clearUserData(): Promise<void> {
   const request = pool.request().input('userId', sql.NVarChar, TEST_USER_ID);
 
   // Delete in proper cascade order
-  await request.query('DELETE FROM DisplayLotAllocations WHERE userId = @userId');
-  await request.query('DELETE FROM DisplayLotComposition WHERE displayLotId IN (SELECT id FROM DisplayLots WHERE userId = @userId)');
-  await request.query('DELETE FROM DisplayLotComposition WHERE purchaseLotId IN (SELECT id FROM PurchaseLots WHERE userId = @userId)');
   await request.query('DELETE FROM DisplayLots WHERE userId = @userId');
   await request.query('DELETE FROM PurchaseLotAllocations WHERE userId = @userId');
-  await request.query('DELETE FROM SplitAdjustments WHERE userId = @userId');
   await request.query('DELETE FROM UserSplitActivations WHERE userId = @userId');
   await request.query('DELETE FROM PurchaseLots WHERE userId = @userId');
   await request.query('DELETE FROM StockTransactions WHERE userId = @userId');

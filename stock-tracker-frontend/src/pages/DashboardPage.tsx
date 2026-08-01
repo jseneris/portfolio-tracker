@@ -16,6 +16,7 @@ import {
   UserTargetSettings,
   getUserTargetSettings,
 } from '../api'
+import { formatCurrency2, formatStockPrice4 } from '../formatters'
 
 const DEFAULT_SALE_TARGET_PERCENT = 10
 const DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS = 5
@@ -23,16 +24,6 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10
 const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25
-
-function formatMoney(value: number | null) {
-  if (value == null || Number.isNaN(Number(value))) {
-    return '--'
-  }
-  return `$${Number(value).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
-}
 
 type AddStockFormState = {
   ticker: string
@@ -317,7 +308,10 @@ export default function DashboardPage() {
         if (!ticker) {
           continue
         }
-        displayLotCountsByTicker[ticker] = Number(displayLotCountsByTicker[ticker] || 0) + 1
+        const countFromRow = Number(
+          lot.lotCount ?? (Array.isArray((lot as any).lots) ? (lot as any).lots.length : 0)
+        )
+        displayLotCountsByTicker[ticker] = Number(displayLotCountsByTicker[ticker] || 0) + countFromRow
       }
 
       setData(summary)
@@ -430,7 +424,7 @@ export default function DashboardPage() {
     const buyCost = Number(payload.quantity || 0) * Number(payload.price || 0)
     if (Number.isFinite(availableCash) && Number.isFinite(buyCost) && buyCost > availableCash) {
       setAddStockError(
-        `Insufficient available cash. Buy requires ${formatMoney(buyCost)} but only ${formatMoney(availableCash)} is available.`
+        `Insufficient available cash. Buy requires ${formatCurrency2(buyCost)} but only ${formatCurrency2(availableCash)} is available.`
       )
       return
     }
@@ -485,12 +479,12 @@ export default function DashboardPage() {
       {!loading && data ? (
         <>
           <div className="panel stat-grid">
-            <div className="stat"><div className="label">Available Cash</div><div className="value">{formatMoney(data.availableCash)}</div></div>
-            <div className="stat"><div className="label">Cash Basis</div><div className="value">{formatMoney(data.cashBasis)}</div></div>
-            <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{formatMoney(holdingsMarketValue)}</div></div>
-            <div className="stat"><div className="label">Performance</div><div className="value">{formatMoney(stockPerformance)}</div></div>
-            <div className="stat"><div className="label">Adjustments</div><div className="value">{formatMoney(data.adjustments)}</div></div>
-            <div className="stat"><div className="label">Stock Cost Basis (No Div)</div><div className="value">{formatMoney(stockCostBasisExcludingDividends)}</div></div>
+            <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(data.availableCash)}</div></div>
+            <div className="stat"><div className="label">Cash Basis</div><div className="value">{formatCurrency2(data.cashBasis)}</div></div>
+            <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{formatCurrency2(holdingsMarketValue)}</div></div>
+            <div className="stat"><div className="label">Performance</div><div className="value">{formatCurrency2(stockPerformance)}</div></div>
+            <div className="stat"><div className="label">Adjustments</div><div className="value">{formatCurrency2(data.adjustments)}</div></div>
+            <div className="stat"><div className="label">Stock Cost Basis (No Div)</div><div className="value">{formatCurrency2(stockCostBasisExcludingDividends)}</div></div>
             <div className="stat"><div className="label">Stock Count</div><div className="value">{data.stockCount}</div></div>
           </div>
 
@@ -516,9 +510,9 @@ export default function DashboardPage() {
                       </Link>
                     </td>
                     <td>{formatShares(row.totalShares)}</td>
-                    <td>{formatMoney(stockCostBasisExcludingDividendsByTicker[row.ticker] ?? 0)}</td>
-                    <td>{formatMoney(buyTargetsByTicker[row.ticker] ?? null)}</td>
-                    <td>{formatMoney(saleTargetsByTicker[row.ticker] ?? null)}</td>
+                    <td>{formatCurrency2(stockCostBasisExcludingDividendsByTicker[row.ticker] ?? 0)}</td>
+                    <td>{formatStockPrice4(buyTargetsByTicker[row.ticker] ?? null)}</td>
+                    <td>{formatStockPrice4(saleTargetsByTicker[row.ticker] ?? null)}</td>
                     <td>{row.lotCount}</td>
                   </tr>
                 ))}
@@ -594,7 +588,7 @@ export default function DashboardPage() {
 
             {hasInsufficientCashForBuy ? (
               <div className="status status-error">
-                Insufficient available cash. Buy requires {formatMoney(buyTotalCost)} and available cash is {formatMoney(Number(data?.availableCash || 0))}.
+                Insufficient available cash. Buy requires {formatCurrency2(buyTotalCost)} and available cash is {formatCurrency2(Number(data?.availableCash || 0))}.
               </div>
             ) : null}
             {addStockError ? <div className="status status-error">{addStockError}</div> : null}

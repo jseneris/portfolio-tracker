@@ -72,9 +72,8 @@ This file lists the current backend test coverage and expected outcomes.
 
 - Global + sequential split behavior (`stock-split-global-and-sequential.test.ts`)
    - Two users each buy same ticker.
-   - A single split request applies to both users' lots.
+   - A single global split record can later be activated for eligible users.
    - Sequential splits compound correctly (final quantity and unit cost assertions).
-   - `SplitAdjustments` contains per-user, per-entity audit rows for each split.
 
 - Portfolio summary endpoint (`portfolio-summary.test.ts`)
    - Validates `GET /api/stocks/portfolio/summary` returns cash summary and stock list in one call.
@@ -83,7 +82,7 @@ This file lists the current backend test coverage and expected outcomes.
 
 - Table CRUD coverage (`table-crud.test.ts`)
    - Verifies insert/read/delete operations across all tables:
-      `CashTransactions`, `StockTransactions`, `StockSplits`, `Lots`, `LotAllocations`, `SplitAdjustments`.
+   `CashTransactions`, `StockTransactions`, `StockSplits`, `Lots`, `LotAllocations`.
 
 - P0 database hardening (`db-p0-hardening.test.ts`)
    - Verifies `SchemaMigrations` exists and contains `2026-07-12-p0-hardening`.

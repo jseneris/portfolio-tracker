@@ -6,18 +6,7 @@ import {
   getStockTransactions,
   syncHistoricalPricesByYear,
 } from '../api'
-
-const SUPPORTED_YEARS = [2021, 2022] as const
-
-function formatMoney(value: number | null) {
-  if (value == null || Number.isNaN(Number(value))) {
-    return '--'
-  }
-  return `$${Number(value).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
-}
+import { formatCurrency2 } from '../formatters'
 
 function formatDate(value: string) {
   const date = new Date(`${value}T00:00:00Z`)
@@ -72,13 +61,25 @@ function buildPath(
 }
 
 export default function Comparison2021Page() {
-  const [selectedYear, setSelectedYear] = useState<number>(2021)
+  const [selectedYear, setSelectedYear] = useState<number | null>(null)
   const [points, setPoints] = useState<PortfolioComparisonPoint[]>([])
   const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([])
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [missingPriceWarning, setMissingPriceWarning] = useState<string | null>(null)
+
+  const availableYears = useMemo(() => {
+    const years = new Set<number>()
+    for (const transaction of stockTransactions) {
+      const date = new Date(transaction.transactionDate)
+      if (!Number.isNaN(date.getTime())) {
+        years.add(date.getUTCFullYear())
+      }
+    }
+    return Array.from(years).sort((a, b) => b - a)
+  }, [stockTransactions])
 
   const yearlyStockTransactionSummary = useMemo(() => {
     const summary = {
@@ -89,7 +90,7 @@ export default function Comparison2021Page() {
 
     for (const transaction of stockTransactions) {
       const date = new Date(transaction.transactionDate)
-      if (Number.isNaN(date.getTime()) || date.getUTCFullYear() !== selectedYear) {
+      if (selectedYear == null || Number.isNaN(date.getTime()) || date.getUTCFullYear() !== selectedYear) {
         continue
       }
 
@@ -251,17 +252,44 @@ export default function Comparison2021Page() {
     }
   }, [points])
 
+  async function loadTransactions() {
+    try {
+      const transactions = await getStockTransactions()
+      setStockTransactions(transactions)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to load stock transactions.')
+    }
+  }
+
+  function updateMissingPriceWarning(year: number, nextPoints: PortfolioComparisonPoint[]) {
+    const missingDates = new Set<string>()
+    const missingTickers = new Set<string>()
+
+    for (const point of nextPoints) {
+      if (Array.isArray(point.missingTickers) && point.missingTickers.length > 0) {
+        missingDates.add(point.date)
+        point.missingTickers.forEach((ticker) => missingTickers.add(ticker))
+      }
+    }
+
+    if (missingDates.size > 0) {
+      setMissingPriceWarning(
+        `Missing historical prices for ${year}: ${missingTickers.size} ticker(s) across ${missingDates.size} date(s). Click Recalculate to fetch prices for this year.`
+      )
+      return
+    }
+
+    setMissingPriceWarning(null)
+  }
+
   async function loadComparison(year: number) {
     setLoading(true)
     setError(null)
     setSuccess(null)
     try {
-      const [response, transactions] = await Promise.all([
-        getPortfolioComparisonByYear(year),
-        getStockTransactions(),
-      ])
+      const response = await getPortfolioComparisonByYear(year)
       setPoints(response.points)
-      setStockTransactions(transactions)
+      updateMissingPriceWarning(year, response.points)
       if (response.points.length === 0) {
         setSuccess(`No comparison points found yet for ${year}. Run sync first.`)
       }
@@ -273,6 +301,10 @@ export default function Comparison2021Page() {
   }
 
   async function syncAndLoad() {
+    if (selectedYear == null) {
+      return
+    }
+
     setSyncing(true)
     setError(null)
     setSuccess(null)
@@ -281,10 +313,13 @@ export default function Comparison2021Page() {
       await loadComparison(selectedYear)
       const processedDateCount = syncResult.syncedDates?.length ?? syncResult.requestedDates.length
       const remainingDates = Number(syncResult.remainingDates ?? 0)
+      const splitSummary = syncResult.splitCheckPerformed
+        ? ` Split check: ${Number(syncResult.splitsInserted ?? 0)} inserted from ${Number(syncResult.splitsDiscovered ?? 0)} discovered across ${Number(syncResult.splitTickersChecked ?? 0)} ticker(s).`
+        : ''
       setSuccess(
         remainingDates > 0
-          ? `Synced ${syncResult.storedRows} price points for ${selectedYear} across ${syncResult.tickers.length} tickers and ${processedDateCount} dates. ${remainingDates} dates remain to backfill.`
-          : `Synced ${syncResult.storedRows} price points for ${selectedYear} across ${syncResult.tickers.length} tickers and ${processedDateCount} dates. Backfill is complete.`
+          ? `Synced ${syncResult.storedRows} price points for ${selectedYear} across ${syncResult.tickers.length} tickers and ${processedDateCount} dates. ${remainingDates} dates remain to backfill.${splitSummary}`
+          : `Synced ${syncResult.storedRows} price points for ${selectedYear} across ${syncResult.tickers.length} tickers and ${processedDateCount} dates. Backfill is complete.${splitSummary}`
       )
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to sync historical prices.')
@@ -294,6 +329,27 @@ export default function Comparison2021Page() {
   }
 
   useEffect(() => {
+    void loadTransactions()
+  }, [])
+
+  useEffect(() => {
+    if (availableYears.length === 0) {
+      setSelectedYear(null)
+      setPoints([])
+      setMissingPriceWarning(null)
+      return
+    }
+
+    if (selectedYear == null || !availableYears.includes(selectedYear)) {
+      setSelectedYear(availableYears[0])
+    }
+  }, [availableYears, selectedYear])
+
+  useEffect(() => {
+    if (selectedYear == null) {
+      return
+    }
+
     void loadComparison(selectedYear)
   }, [selectedYear])
 
@@ -301,29 +357,30 @@ export default function Comparison2021Page() {
     <section>
       <div className="panel row-between">
         <div>
-          <h2>Portfolio vs Cash Basis ({selectedYear})</h2>
+          <h2>Portfolio vs Cash Basis ({selectedYear ?? '--'})</h2>
           <p>Uses Yahoo closes on cash deposit/withdrawal dates plus the year-end date for the selected year.</p>
         </div>
         <div className="inline-actions">
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
             Year
             <select
-              value={selectedYear}
+              value={selectedYear ?? ''}
               onChange={(event) => setSelectedYear(Number(event.target.value))}
-              disabled={loading || syncing}
+              disabled={loading || syncing || availableYears.length === 0}
             >
-              {SUPPORTED_YEARS.map((year) => (
+              {availableYears.map((year) => (
                 <option key={year} value={year}>{year}</option>
               ))}
             </select>
           </label>
-          <button className="button button-primary" type="button" onClick={syncAndLoad} disabled={loading || syncing}>
+          <button className="button button-primary" type="button" onClick={syncAndLoad} disabled={loading || syncing || selectedYear == null}>
             {syncing ? 'Syncing...' : 'Recalculate'}
           </button>
         </div>
       </div>
 
       {error ? <div className="panel status status-error">{error}</div> : null}
+      {missingPriceWarning ? <div className="panel status status-warning">{missingPriceWarning}</div> : null}
       {success ? <div className="panel status status-success">{success}</div> : null}
 
       <div className="panel">
@@ -420,14 +477,14 @@ export default function Comparison2021Page() {
               <span><i className="legend-dot legend-dot-dow" />DOW Benchmark</span>
               <span><i className="legend-dot legend-dot-nasdaq" />Nasdaq Benchmark</span>
               <span><i className="legend-dot legend-dot-sp500" />S&P 500 Benchmark</span>
-              <span>Range: {formatMoney(chart.minY)} to {formatMoney(chart.maxY)}</span>
+              <span>Range: {formatCurrency2(chart.minY)} to {formatCurrency2(chart.maxY)}</span>
             </div>
           </div>
         )}
       </div>
 
       <div className="panel">
-        <h3>{selectedYear} Stock Transaction Summary</h3>
+        <h3>{selectedYear ?? '--'} Stock Transaction Summary</h3>
         <table className="table">
           <thead>
             <tr>
@@ -440,17 +497,17 @@ export default function Comparison2021Page() {
             <tr>
               <td>Purchases</td>
               <td>{yearlyStockTransactionSummary.buy.count}</td>
-              <td>{formatMoney(yearlyStockTransactionSummary.buy.amount)}</td>
+              <td>{formatCurrency2(yearlyStockTransactionSummary.buy.amount)}</td>
             </tr>
             <tr>
               <td>Sales</td>
               <td>{yearlyStockTransactionSummary.sell.count}</td>
-              <td>{formatMoney(yearlyStockTransactionSummary.sell.amount)}</td>
+              <td>{formatCurrency2(yearlyStockTransactionSummary.sell.amount)}</td>
             </tr>
             <tr>
               <td>Dividends</td>
               <td>{yearlyStockTransactionSummary.div.count}</td>
-              <td>{formatMoney(yearlyStockTransactionSummary.div.amount)}</td>
+              <td>{formatCurrency2(yearlyStockTransactionSummary.div.amount)}</td>
             </tr>
           </tbody>
         </table>
@@ -470,23 +527,23 @@ export default function Comparison2021Page() {
             <tbody>
               <tr>
                 <td>Portfolio Starting Value ({formatDate(comparisonSummary.startPoint.date)})</td>
-                <td>{formatMoney(comparisonSummary.startPoint.portfolioValue)}</td>
+                <td>{formatCurrency2(comparisonSummary.startPoint.portfolioValue)}</td>
               </tr>
               <tr>
                 <td>Portfolio Ending Value ({formatDate(comparisonSummary.endPoint.date)})</td>
-                <td>{formatMoney(comparisonSummary.endPoint.portfolioValue)}</td>
+                <td>{formatCurrency2(comparisonSummary.endPoint.portfolioValue)}</td>
               </tr>
               <tr>
                 <td>Cash Basis in DOW Benchmark ({formatDate(comparisonSummary.endPoint.date)})</td>
-                <td>{formatMoney(comparisonSummary.endPoint.dowBenchmarkValue)}</td>
+                <td>{formatCurrency2(comparisonSummary.endPoint.dowBenchmarkValue)}</td>
               </tr>
               <tr>
                 <td>Cash Basis in Nasdaq Benchmark ({formatDate(comparisonSummary.endPoint.date)})</td>
-                <td>{formatMoney(comparisonSummary.endPoint.nasdaqBenchmarkValue)}</td>
+                <td>{formatCurrency2(comparisonSummary.endPoint.nasdaqBenchmarkValue)}</td>
               </tr>
               <tr>
                 <td>Cash Basis in S&amp;P 500 Benchmark ({formatDate(comparisonSummary.endPoint.date)})</td>
-                <td>{formatMoney(comparisonSummary.endPoint.sp500BenchmarkValue)}</td>
+                <td>{formatCurrency2(comparisonSummary.endPoint.sp500BenchmarkValue)}</td>
               </tr>
             </tbody>
           </table>

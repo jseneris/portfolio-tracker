@@ -148,18 +148,6 @@ async function createTablesIfNotExist() {
         FOREIGN KEY (purchaseLotId) REFERENCES PurchaseLots(id)
       );
 
-    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SplitAdjustments')
-      CREATE TABLE SplitAdjustments (
-        id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-        userId NVARCHAR(255) NOT NULL,
-        splitId UNIQUEIDENTIFIER NOT NULL,
-        entityType NVARCHAR(20) NOT NULL CHECK (entityType IN ('lot', 'transaction', 'allocation')),
-        entityId UNIQUEIDENTIFIER NOT NULL,
-        multiplier DECIMAL(18, 8) NOT NULL,
-        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
-        FOREIGN KEY (splitId) REFERENCES StockSplits(id)
-      );
-
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'DisplayLots')
       CREATE TABLE DisplayLots (
         id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
@@ -180,30 +168,6 @@ async function createTablesIfNotExist() {
         createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
         FOREIGN KEY (splitId) REFERENCES StockSplits(id),
         FOREIGN KEY (activationTransactionId) REFERENCES StockTransactions(id)
-      );
-
-    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'DisplayLotComposition')
-      CREATE TABLE DisplayLotComposition (
-        id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-        displayLotId UNIQUEIDENTIFIER NOT NULL,
-        purchaseLotId UNIQUEIDENTIFIER NOT NULL,
-        quantityAllocated DECIMAL(18, 8) NOT NULL CHECK (quantityAllocated > 0),
-        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
-        updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
-        FOREIGN KEY (displayLotId) REFERENCES DisplayLots(id) ON DELETE CASCADE,
-        FOREIGN KEY (purchaseLotId) REFERENCES PurchaseLots(id)
-      );
-
-    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'DisplayLotAllocations')
-      CREATE TABLE DisplayLotAllocations (
-        id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
-        userId NVARCHAR(255) NOT NULL,
-        saleTransactionId UNIQUEIDENTIFIER NOT NULL,
-        displayLotId UNIQUEIDENTIFIER NOT NULL,
-        quantityConsumed DECIMAL(18, 8) NOT NULL CHECK (quantityConsumed > 0),
-        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
-        FOREIGN KEY (saleTransactionId) REFERENCES StockTransactions(id) ON DELETE CASCADE,
-        FOREIGN KEY (displayLotId) REFERENCES DisplayLots(id)
       );
 
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'HistoricalPrices')
@@ -265,13 +229,6 @@ async function createTablesIfNotExist() {
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLotAllocations_PurchaseLotId')
       CREATE INDEX IX_PurchaseLotAllocations_PurchaseLotId ON PurchaseLotAllocations(purchaseLotId);
 
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SplitAdjustments_UserId')
-      CREATE INDEX IX_SplitAdjustments_UserId ON SplitAdjustments(userId);
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SplitAdjustments_SplitId')
-      CREATE INDEX IX_SplitAdjustments_SplitId ON SplitAdjustments(splitId);
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_SplitAdjustments_EntityId')
-      CREATE INDEX IX_SplitAdjustments_EntityId ON SplitAdjustments(entityId);
-
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLots_UserId')
       CREATE INDEX IX_DisplayLots_UserId ON DisplayLots(userId);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLots_Ticker')
@@ -285,18 +242,6 @@ async function createTablesIfNotExist() {
       CREATE INDEX IX_UserSplitActivations_SplitId ON UserSplitActivations(splitId);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_UserSplitActivations_UserId_SplitId')
       CREATE UNIQUE INDEX UX_UserSplitActivations_UserId_SplitId ON UserSplitActivations(userId, splitId);
-
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotComposition_DisplayLotId')
-      CREATE INDEX IX_DisplayLotComposition_DisplayLotId ON DisplayLotComposition(displayLotId);
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotComposition_PurchaseLotId')
-      CREATE INDEX IX_DisplayLotComposition_PurchaseLotId ON DisplayLotComposition(purchaseLotId);
-
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotAllocations_UserId')
-      CREATE INDEX IX_DisplayLotAllocations_UserId ON DisplayLotAllocations(userId);
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotAllocations_SaleTransactionId')
-      CREATE INDEX IX_DisplayLotAllocations_SaleTransactionId ON DisplayLotAllocations(saleTransactionId);
-    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DisplayLotAllocations_DisplayLotId')
-      CREATE INDEX IX_DisplayLotAllocations_DisplayLotId ON DisplayLotAllocations(displayLotId);
 
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_HistoricalPrices_Ticker')
       CREATE INDEX IX_HistoricalPrices_Ticker ON HistoricalPrices(ticker);

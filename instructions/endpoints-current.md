@@ -150,4 +150,4 @@ Request body:
 
 ## Notes
 
-- Legacy tables (`DisplayLotComposition`, `DisplayLotAllocations`, `SplitAdjustments`) still exist, but current display-lot and split workflows are centered on `lotsCsv` and `UserSplitActivations`.
+- Display-lot and split workflows are centered on `DisplayLots.lotsCsv`, `PurchaseLotAllocations`, `StockSplits`, and `UserSplitActivations`.

@@ -26,6 +26,7 @@ import {
   getPortfolioSummary,
   splitDisplayLot,
 } from '../api'
+import { formatCurrency2, formatStockPrice4 } from '../formatters'
 
 const ALLOCATION_TOLERANCE = 1e-6
 const LOT_STATE_TOLERANCE = 1e-6
@@ -46,26 +47,6 @@ const EMPTY_STOCK_FORM: StockFormState = {
   price: '',
   totalAmount: '',
   transactionDate: new Date().toISOString().slice(0, 10),
-}
-
-function formatMoney(value: number | null) {
-  if (value == null || Number.isNaN(Number(value))) {
-    return '--'
-  }
-  return `$${Number(value).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
-}
-
-function formatMoney4(value: number | null) {
-  if (value == null || Number.isNaN(Number(value))) {
-    return '--'
-  }
-  return `$${Number(value).toLocaleString(undefined, {
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
-  })}`
 }
 
 function formatNumber(value: number | null, digits = 6) {
@@ -148,6 +129,14 @@ function getSalePriceComparisonLabel(unitCost: number, salePrice: number | null)
   return 'Even'
 }
 
+type DisplayLotEntry = {
+  id: string
+  rowId: string
+  index: number
+  totalQuantity: number
+  createdAt: string
+}
+
 export default function StockHistoryPage() {
   const { ticker: tickerParam } = useParams<{ ticker: string }>()
   const ticker = useMemo(() => decodeURIComponent(tickerParam ?? '').trim().toUpperCase(), [tickerParam])
@@ -178,6 +167,23 @@ export default function StockHistoryPage() {
   const [lotsError, setLotsError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+
+  const displayLotEntries = useMemo<DisplayLotEntry[]>(() => {
+    const entries: DisplayLotEntry[] = []
+    for (const row of displayLots) {
+      const lots = Array.isArray(row.lots) ? row.lots : []
+      lots.forEach((qty, index) => {
+        entries.push({
+          id: `${row.id}:${index}`,
+          rowId: row.id,
+          index,
+          totalQuantity: Number(qty),
+          createdAt: row.createdAt,
+        })
+      })
+    }
+    return entries
+  }, [displayLots])
 
   const isSell = form.type === 'sell'
   const isDividend = form.type === 'div'
@@ -228,23 +234,23 @@ export default function StockHistoryPage() {
     && buyCost > Number(availableCash)
 
   const displayLotSummary = useMemo(() => {
-    if (displayLots.length === 0) {
+    if (displayLotEntries.length === 0) {
       return '--'
     }
-    return displayLots
+    return displayLotEntries
       .map((lot) => Number(lot.totalQuantity))
       .filter((value) => Number.isFinite(value))
       .sort((a, b) => a - b)
       .map((q) => Number(q.toFixed(6)).toString())
       .join(', ')
-  }, [displayLots])
+  }, [displayLotEntries])
 
   const totalDisplayLotShares = useMemo(() => {
-    return displayLots.reduce((sum, lot) => {
+    return displayLotEntries.reduce((sum, lot) => {
       const quantity = Number(lot.totalQuantity)
       return Number.isFinite(quantity) ? sum + quantity : sum
     }, 0)
-  }, [displayLots])
+  }, [displayLotEntries])
 
   const totalOpenPurchaseShares = useMemo(() => {
     return openLots.reduce((sum, lot) => {
@@ -363,7 +369,7 @@ export default function StockHistoryPage() {
     return [...txEntries, ...splitEntries].sort((a, b) => b.date - a.date)
   }, [transactions, splitEvents])
 
-  const originalTransactionValuesById = useMemo(() => {
+  const adjustedTransactionValuesById = useMemo(() => {
     const splitTimeline = splitEvents
       .map((split) => ({
         day: toUtcDayTimestamp(split.splitDate),
@@ -388,13 +394,13 @@ export default function StockHistoryPage() {
       const quantity = transaction.quantity == null
         ? null
         : Number.isFinite(Number(transaction.quantity))
-          ? Number(transaction.quantity) / cumulativeMultiplier
+          ? Number(transaction.quantity) * cumulativeMultiplier
           : null
 
       const price = transaction.price == null
         ? null
         : Number.isFinite(Number(transaction.price))
-          ? Number(transaction.price) * cumulativeMultiplier
+          ? Number(transaction.price) / cumulativeMultiplier
           : null
 
       values[transaction.id] = {
@@ -749,7 +755,7 @@ export default function StockHistoryPage() {
       const requiredCash = Number(payload.quantity || 0) * Number(payload.price || 0)
       if (Number.isFinite(available) && Number.isFinite(requiredCash) && requiredCash > available) {
         setError(
-          `Insufficient available cash. Buy requires ${formatMoney(requiredCash)} but only ${formatMoney(available)} is available.`
+          `Insufficient available cash. Buy requires ${formatCurrency2(requiredCash)} but only ${formatCurrency2(available)} is available.`
         )
         return
       }
@@ -831,12 +837,17 @@ export default function StockHistoryPage() {
     setLotsError(null)
     setLotsBusy(true)
     try {
-      // Create one display lot per open purchase lot
-      for (const lot of openLots) {
-        await createDisplayLot(ticker, {
-          composition: [{ purchaseLotId: lot.id, quantityAllocated: Number(lot.remainingQuantity) }],
-        })
+      const quantities = openLots
+        .filter((lot) => String(lot.sourceType).toLowerCase() === 'purchase')
+        .map((lot) => Number(lot.remainingQuantity))
+        .filter((qty) => Number.isFinite(qty) && qty > 0)
+
+      if (quantities.length === 0) {
+        setLotsError('No open purchase-lot quantities available to initialize display lots.')
+        return
       }
+
+      await createDisplayLot(ticker, { quantities })
       await reloadDisplayLots()
     } catch (err: unknown) {
       setLotsError(err instanceof Error ? err.message : 'Unable to initialize display lots.')
@@ -853,8 +864,16 @@ export default function StockHistoryPage() {
     setLotsError(null)
     setLotsBusy(true)
     try {
-      const [targetId, ...otherIds] = selectedDisplayLotIds
-      await combineDisplayLots(targetId, otherIds)
+      const selectedEntries = displayLotEntries.filter((entry) => selectedDisplayLotIds.includes(entry.id))
+      const rowIds = new Set(selectedEntries.map((entry) => entry.rowId))
+      if (rowIds.size !== 1 || selectedEntries.length < 2) {
+        setLotsError('Selected display lots must come from the same ticker row.')
+        return
+      }
+
+      const rowId = selectedEntries[0].rowId
+      const indices = selectedEntries.map((entry) => entry.index).sort((a, b) => a - b)
+      await combineDisplayLots(rowId, indices)
       await reloadDisplayLots()
     } catch (err: unknown) {
       setLotsError(err instanceof Error ? err.message : 'Unable to combine lots.')
@@ -863,8 +882,8 @@ export default function StockHistoryPage() {
     }
   }
 
-  async function onSplitDisplayLot(lotId: string) {
-    const input = splitInputs[lotId] ?? ''
+  async function onSplitDisplayLot(entryId: string) {
+    const input = splitInputs[entryId] ?? ''
     const quantities = input
       .split(',')
       .map((s) => s.trim())
@@ -876,7 +895,7 @@ export default function StockHistoryPage() {
       return
     }
 
-    const lot = displayLots.find((l) => l.id === lotId)
+    const lot = displayLotEntries.find((l) => l.id === entryId)
     const total = quantities.reduce((s, q) => s + q, 0)
     if (Math.abs(total - Number(lot?.totalQuantity ?? 0)) > ALLOCATION_TOLERANCE) {
       setLotsError(`Quantities must sum to ${formatNumber(lot?.totalQuantity ?? 0, 6)} (got ${total.toFixed(6)}).`)
@@ -886,8 +905,12 @@ export default function StockHistoryPage() {
     setLotsError(null)
     setLotsBusy(true)
     try {
-      const payload: SplitDisplayLotInput = { splits: quantities.map((q) => ({ quantityAllocated: q })) }
-      await splitDisplayLot(lotId, payload)
+      if (!lot) {
+        setLotsError('Selected display lot was not found.')
+        return
+      }
+      const payload: SplitDisplayLotInput = { index: lot.index, quantities }
+      await splitDisplayLot(lot.rowId, payload)
       await reloadDisplayLots()
     } catch (err: unknown) {
       setLotsError(err instanceof Error ? err.message : 'Unable to split lot.')
@@ -927,20 +950,20 @@ export default function StockHistoryPage() {
               type="button"
               onClick={() => { setLotsError(null); setShowLotsModal(true) }}
             >
-              <div className="label">Display Lots ({displayLots.length})</div>
+              <div className="label">Display Lots ({displayLotEntries.length})</div>
               <div className="value">{displayLotSummary}</div>
               <div className="hint">click to manage</div>
             </button>
-            <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatMoney(costBasisExcludingDividends)}</div></div>
-            <div className="stat"><div className="label">Current Value</div><div className="value">{formatMoney(currentValue)}</div></div>
-            <div className="stat"><div className="label">Performance</div><div className="value">{formatMoney(summaryPerformance)}</div></div>
+            <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatCurrency2(costBasisExcludingDividends)}</div></div>
+            <div className="stat"><div className="label">Current Value</div><div className="value">{formatCurrency2(currentValue)}</div></div>
+            <div className="stat"><div className="label">Performance</div><div className="value">{formatCurrency2(summaryPerformance)}</div></div>
           </div>
 
           {salesSummary.saleCount > 0 ? (
             <div className="panel stat-grid" style={{ marginTop: '0.75rem' }}>
-              <div className="stat"><div className="label">Sales Cost Basis</div><div className="value">{formatMoney(salesSummary.salesCostBasis)}</div></div>
-              <div className="stat"><div className="label">Exhausted Purchase Lots Cost Basis (No Div)</div><div className="value">{formatMoney(salesSummary.exhaustedPurchaseLotsCostBasis)}</div></div>
-              <div className="stat"><div className="label">Sales Performance</div><div className="value">{formatMoney(salesSummary.performance)}</div></div>
+              <div className="stat"><div className="label">Sales Cost Basis</div><div className="value">{formatCurrency2(salesSummary.salesCostBasis)}</div></div>
+              <div className="stat"><div className="label">Exhausted Purchase Lots Cost Basis (No Div)</div><div className="value">{formatCurrency2(salesSummary.exhaustedPurchaseLotsCostBasis)}</div></div>
+              <div className="stat"><div className="label">Sales Performance</div><div className="value">{formatCurrency2(salesSummary.performance)}</div></div>
             </div>
           ) : null}
 
@@ -1000,9 +1023,9 @@ export default function StockHistoryPage() {
                   }
 
                   const transaction = entry.transaction
-                  const originalValues = originalTransactionValuesById[transaction.id]
-                  const displayQuantity = showOriginalPreSplit ? (originalValues?.quantity ?? transaction.quantity) : transaction.quantity
-                  const displayPrice = showOriginalPreSplit ? (originalValues?.price ?? transaction.price) : transaction.price
+                  const adjustedValues = adjustedTransactionValuesById[transaction.id]
+                  const displayQuantity = showOriginalPreSplit ? transaction.quantity : (adjustedValues?.quantity ?? transaction.quantity)
+                  const displayPrice = showOriginalPreSplit ? transaction.price : (adjustedValues?.price ?? transaction.price)
                   const lotState = positiveTransactionStates[transaction.id]
                   const partialRemainingShares = remainingSharesByTransactionId[transaction.id]
                   const isPartialLotRow =
@@ -1036,17 +1059,17 @@ export default function StockHistoryPage() {
                         </td>
                         <td>
                           {formatNumber(quantityToDisplay)}
-                          {showOriginalPreSplit && originalValues?.hadSplitAdjustments && !isPartialLotRow ? (
+                          {showOriginalPreSplit && adjustedValues?.hadSplitAdjustments && !isPartialLotRow ? (
                             <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>pre-split</div>
                           ) : null}
                         </td>
                         <td>
-                          {formatMoney4(displayPrice)}
-                          {showOriginalPreSplit && originalValues?.hadSplitAdjustments ? (
+                          {formatStockPrice4(displayPrice)}
+                          {showOriginalPreSplit && adjustedValues?.hadSplitAdjustments ? (
                             <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>pre-split</div>
                           ) : null}
                         </td>
-                        <td>{formatMoney(transaction.amount)}</td>
+                        <td>{formatCurrency2(transaction.amount)}</td>
                         <td>
                           {transaction.type === 'sell' ? (
                             <button
@@ -1086,14 +1109,14 @@ export default function StockHistoryPage() {
                                         <td style={{ padding: '0.5rem' }}>{formatDate(alloc.purchaseDate)}</td>
                                         <td style={{ padding: '0.5rem' }}>
                                           <div className="sale-lot-cost-cell">
-                                            <span>{formatMoney4(alloc.unitCost)}</span>
+                                            <span>{formatStockPrice4(alloc.unitCost)}</span>
                                             <span className={getSalePriceComparisonClassName(Number(alloc.unitCost), Number(transaction.price))}>
                                               {getSalePriceComparisonLabel(Number(alloc.unitCost), Number(transaction.price))}
                                             </span>
                                           </div>
                                         </td>
                                         <td style={{ padding: '0.5rem' }}>{formatNumber(alloc.quantity)}</td>
-                                        <td style={{ padding: '0.5rem' }}>{formatMoney(alloc.unitCost * alloc.quantity)}</td>
+                                        <td style={{ padding: '0.5rem' }}>{formatCurrency2(alloc.unitCost * alloc.quantity)}</td>
                                       </tr>
                                     ))}
                                   </tbody>
@@ -1200,7 +1223,7 @@ export default function StockHistoryPage() {
 
             {hasInsufficientCashForBuy ? (
               <div className="status status-error">
-                Insufficient available cash. Buy requires {formatMoney(buyCost)} and available cash is {formatMoney(Number(availableCash || 0))}.
+                Insufficient available cash. Buy requires {formatCurrency2(buyCost)} and available cash is {formatCurrency2(Number(availableCash || 0))}.
               </div>
             ) : null}
 
@@ -1253,7 +1276,7 @@ export default function StockHistoryPage() {
                             <td>{formatNumber(displayRemaining, 6)}</td>
                             <td>
                               <div className="sale-lot-cost-cell">
-                                <span>{formatMoney(displayUnitCost)}</span>
+                                <span>{formatStockPrice4(displayUnitCost)}</span>
                                 <span className={getSalePriceComparisonClassName(displayUnitCost, salePriceValue)}>
                                   {getSalePriceComparisonLabel(displayUnitCost, salePriceValue)}
                                 </span>
@@ -1261,10 +1284,10 @@ export default function StockHistoryPage() {
                             </td>
                             <td>
                               <input
-                                type="number"
-                                min="0"
-                                step="0.00000001"
-                                max={inputMax}
+                                type="text"
+                                inputMode="decimal"
+                                pattern="[0-9]*[.]?[0-9]*"
+                                placeholder="0.00000000"
                                 value={allocations[lot.id] ?? ''}
                                 onChange={(event) => setAllocation(lot.id, event.target.value)}
                                 disabled={saving}
@@ -1305,7 +1328,7 @@ export default function StockHistoryPage() {
 
             {lotsError ? <div className="status status-error">{lotsError}</div> : null}
 
-            {displayLots.length === 0 ? (
+            {displayLotEntries.length === 0 ? (
               <>
                 <p>No display lots exist yet for {ticker}. You have {openLots.length} open purchase lot{openLots.length !== 1 ? 's' : ''} with the following share counts:</p>
                 {openLots.length > 0 ? (
@@ -1337,7 +1360,7 @@ export default function StockHistoryPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {displayLots.map((lot) => (
+                  {displayLotEntries.map((lot) => (
                     <tr key={lot.id}>
                       <td>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>

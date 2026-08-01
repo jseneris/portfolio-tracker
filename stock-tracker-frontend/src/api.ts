@@ -140,6 +140,8 @@ export type DisplayLot = {
   id: string
   userId: string
   ticker: string
+  lots: number[]
+  lotCount: number
   totalQuantity: number
   createdAt: string
   updatedAt: string
@@ -147,45 +149,41 @@ export type DisplayLot = {
 
 export type DisplayLotComposition = {
   id: string
-  purchaseLotId: string
+  index: number
   quantityAllocated: number
   ticker: string
-  unitCost: number
-  sourceType: 'purchase' | 'dividend'
-  purchaseDate: string
 }
 
 export type CreateDisplayLotInput = {
-  composition: Array<{
-    purchaseLotId: string
-    quantityAllocated: number
-  }>
+  quantities: number[]
 }
 
 export type SplitDisplayLotInput = {
-  splits: Array<{
-    quantityAllocated: number
-  }>
+  index: number
+  quantities: number[]
 }
 
 export type CreateDisplayLotResponse = {
   id: string
   ticker: string
+  lotCount: number
   totalQuantity: number
-  compositionCount: number
 }
 
 export type CombineDisplayLotsResponse = {
   id: string
   ticker: string
+  lotCount: number
   totalQuantity: number
-  mergedFromCount: number
+  combinedIndices: number[]
 }
 
 export type SplitDisplayLotResponse = {
-  originalDisplayLotId: string
-  newDisplayLotIds: string[]
+  id: string
   ticker: string
+  lotCount: number
+  totalQuantity: number
+  splitIndex: number
 }
 
 // ============================================================================
@@ -199,7 +197,11 @@ export type RecordStockSplitResponse = {
   ratioNumerator: number
   ratioDenominator: number
   multiplier: number
+  isActive: boolean
+  canActivate: boolean
 }
+
+export type ActivateStockSplitResponse = RecordStockSplitResponse
 
 export type StockSplitEvent = {
   id: string
@@ -209,6 +211,8 @@ export type StockSplitEvent = {
   multiplier: number
   splitDate: string
   createdAt?: string
+  isActive?: boolean
+  canActivate?: boolean
 }
 
 export type HistoricalPrice = {
@@ -230,6 +234,10 @@ export type SyncHistoricalPrices2021Response = {
   tickers: string[]
   storedRows: number
   missingPrices: Array<{ ticker: string; priceDate: string }>
+  splitCheckPerformed?: boolean
+  splitTickersChecked?: number
+  splitsDiscovered?: number
+  splitsInserted?: number
 }
 
 export type PortfolioComparisonPoint = {
@@ -399,6 +407,12 @@ export async function getAllStockSplits(): Promise<StockSplitEvent[]> {
   return requestApi<StockSplitEvent[]>('/api/lots/splits')
 }
 
+export async function activateStockSplit(splitId: string): Promise<ActivateStockSplitResponse> {
+  return requestApi<ActivateStockSplitResponse>(`/api/lots/splits/${encodeURIComponent(splitId)}/activate`, {
+    method: 'POST',
+  })
+}
+
 export async function syncHistoricalPrices2021(): Promise<SyncHistoricalPrices2021Response> {
   return requestApi<SyncHistoricalPrices2021Response>('/api/stocks/historical-prices/sync-2021', {
     method: 'POST',
@@ -483,11 +497,11 @@ export async function createDisplayLot(
 
 export async function combineDisplayLots(
   displayLotId: string,
-  displayLotIds: string[]
+  indices: number[]
 ): Promise<CombineDisplayLotsResponse> {
   return requestApi<CombineDisplayLotsResponse>(`/api/display-lots/${displayLotId}/combine`, {
     method: 'POST',
-    body: { displayLotIds },
+    body: { indices },
   })
 }
 
@@ -502,5 +516,15 @@ export async function splitDisplayLot(
 }
 
 export async function deleteDisplayLot(displayLotId: string): Promise<void> {
-  return requestApi<void>(`/api/display-lots/${displayLotId}`, { method: 'DELETE' })
+  return requestApi<void>(`/api/display-lots/${displayLotId}`, {
+    method: 'DELETE',
+    body: { index: 0 },
+  })
+}
+
+export async function deleteDisplayLotIndex(displayLotId: string, index: number): Promise<void> {
+  return requestApi<void>(`/api/display-lots/${displayLotId}`, {
+    method: 'DELETE',
+    body: { index },
+  })
 }

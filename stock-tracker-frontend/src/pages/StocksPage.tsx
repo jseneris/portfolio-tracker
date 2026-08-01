@@ -6,15 +6,9 @@ import {
   emitPortfolioUpdated,
   getStockTransactions,
 } from '../api'
+import { formatCurrency2, formatStockPrice4 } from '../formatters'
 
 const SHARE_TOLERANCE = 1e-6
-
-function formatMoney(value: number | null) {
-  if (value == null || Number.isNaN(Number(value))) {
-    return '--'
-  }
-  return `$${Number(value).toFixed(2)}`
-}
 
 function formatNumber(value: number | null, digits = 4) {
   if (value == null || Number.isNaN(Number(value))) {
@@ -151,8 +145,8 @@ export default function StocksPage() {
                   </td>
                   <td>{transaction.type}</td>
                   <td>{formatNumber(transaction.quantity, 6)}</td>
-                  <td>{formatMoney(transaction.price)}</td>
-                  <td>{formatMoney(transaction.amount)}</td>
+                  <td>{formatStockPrice4(transaction.price)}</td>
+                  <td>{formatCurrency2(transaction.amount)}</td>
                   <td>
                     <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
                       Delete

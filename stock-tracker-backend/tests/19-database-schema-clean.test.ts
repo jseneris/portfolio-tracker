@@ -24,11 +24,8 @@ describe('19. Database Schema - Clean Install', () => {
         'StockSplits',
         'PurchaseLots',
         'PurchaseLotAllocations',
-        'SplitAdjustments',
         'DisplayLots',
         'UserSplitActivations',
-        'DisplayLotComposition',
-        'DisplayLotAllocations',
         'HistoricalPrices',
         'Users',
         'UserSettings'
@@ -38,13 +35,10 @@ describe('19. Database Schema - Clean Install', () => {
 
     expectColumnsToMatch(tablesResult.recordset.map((row: any) => String(row.name)), [
       'CashTransactions',
-      'DisplayLotAllocations',
-      'DisplayLotComposition',
       'DisplayLots',
       'HistoricalPrices',
       'PurchaseLotAllocations',
       'PurchaseLots',
-      'SplitAdjustments',
       'StockSplits',
       'StockTransactions',
       'UserSplitActivations',

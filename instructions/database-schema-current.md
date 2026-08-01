@@ -56,11 +56,6 @@ This document reflects the schema currently created by [stock-tracker-backend/sr
 - Unique index:
 - `UX_DisplayLots_UserId_Ticker`.
 
-### DisplayLotComposition (legacy-compatible)
-### DisplayLotAllocations (legacy-compatible)
-- These tables still exist in schema for compatibility and historical continuity.
-- Current display-lot endpoint workflow is centered on `DisplayLots.lotsCsv` and index-based operations.
-
 ## Historical/Identity Tables
 
 ### HistoricalPrices
@@ -77,7 +72,7 @@ This document reflects the schema currently created by [stock-tracker-backend/sr
 
 - Split events are stored globally in `StockSplits`.
 - User applicability is tracked in `UserSplitActivations`.
-- Portfolio and ticker summaries apply activated split multipliers dynamically in query projection.
+- Activated splits are reflected by updating purchase lots and reconciling display lots.
 - Split activation does not retroactively mutate all `PurchaseLots` or `StockTransactions` rows.
 
 ## Indexing Highlights
