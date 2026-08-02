@@ -1,6 +1,8 @@
 import { getPool } from '../src/db/connection.js';
 import sql from 'mssql';
 import { v4 as uuidv4 } from 'uuid';
+import request from 'supertest';
+import app from '../src/index.js';
 
 const TEST_USER_ID = 'auth0|test-user-' + uuidv4().substring(0, 8);
 const TOLERANCE = 1e-6;
@@ -309,7 +311,7 @@ export async function getDisplayLots(ticker: string): Promise<any[]> {
       .map((part) => Number(part.trim()))
       .filter((value) => Number.isFinite(value) && value > 0)
       .sort((a, b) => a - b);
-
+console.log('lots',lots);
     lots.forEach((qty, index) => {
       expanded.push({
         id: `${String(row.id)}:${index}`,
@@ -395,52 +397,64 @@ export async function getCashBalance(): Promise<number> {
 export async function applySplit(ticker: string, numerator: number, denominator: number, date?: Date): Promise<string> {
   const pool = getPool();
   const splitDate = date || new Date();
-  const multiplier = numerator / denominator;
+  const recordResponse = await request(app)
+    .post(`/api/lots/ticker/${encodeURIComponent(ticker.toUpperCase())}/split`)
+    .set('x-user-id', TEST_USER_ID)
+    .send({
+      ratioNumerator: numerator,
+      ratioDenominator: denominator,
+      splitDate: splitDate.toISOString(),
+    })
+    .expect(200);
 
-  // Check if this split already exists (idempotency)
-  const existingResult = await pool.request()
-    .input('ticker', sql.NVarChar, ticker.toUpperCase())
-    .input('numerator', sql.Decimal(18, 8), numerator)
-    .input('denominator', sql.Decimal(18, 8), denominator)
-    .input('splitDate', sql.DateTime2, splitDate)
-    .query(`
-      SELECT id FROM StockSplits
-      WHERE ticker = @ticker
-        AND ratioNumerator = @numerator
-        AND ratioDenominator = @denominator
-        AND splitDate = @splitDate
-    `);
-
-  if (existingResult.recordset.length > 0) {
-    return existingResult.recordset[0].id;
+  const splitId = String(recordResponse.body.splitId || '');
+  if (!splitId) {
+    throw new Error('Split record response did not include splitId');
   }
 
-  const splitId = uuidv4();
+  const activationProbe = await request(app)
+    .post(`/api/lots/splits/${encodeURIComponent(splitId)}/activate`)
+    .set('x-user-id', TEST_USER_ID);
+
+  if (activationProbe.status === 200) {
+    return splitId;
+  }
+
+  if (activationProbe.status !== 409) {
+    throw new Error(`Unexpected split activation status: ${activationProbe.status}`);
+  }
+
+  const activationDate = new Date(splitDate);
+  activationDate.setUTCDate(activationDate.getUTCDate() + 1);
 
   await pool.request()
-    .input('id', sql.UniqueIdentifier, splitId)
     .input('ticker', sql.NVarChar, ticker.toUpperCase())
-    .input('numerator', sql.Decimal(18, 8), numerator)
-    .input('denominator', sql.Decimal(18, 8), denominator)
-    .input('multiplier', sql.Decimal(18, 8), multiplier)
-    .input('splitDate', sql.DateTime2, splitDate)
+    .input('priceDate', sql.Date, activationDate)
+    .input('marketDate', sql.Date, activationDate)
+    .input('closePrice', sql.Decimal(18, 8), 100)
+    .input('source', sql.NVarChar, 'test')
     .query(`
-      INSERT INTO StockSplits (id, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
-      VALUES (@id, @ticker, @numerator, @denominator, @multiplier, @splitDate)
+      MERGE HistoricalPrices AS target
+      USING (
+        SELECT @ticker AS ticker, @priceDate AS priceDate, @source AS source
+      ) AS sourceRow
+      ON target.ticker = sourceRow.ticker
+         AND target.priceDate = sourceRow.priceDate
+         AND target.source = sourceRow.source
+      WHEN MATCHED THEN
+        UPDATE SET
+          marketDate = @marketDate,
+          closePrice = @closePrice,
+          updatedAt = GETUTCDATE()
+      WHEN NOT MATCHED THEN
+        INSERT (id, ticker, priceDate, marketDate, closePrice, source)
+        VALUES (NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source);
     `);
 
-  await pool.request()
-    .input('id', sql.UniqueIdentifier, uuidv4())
-    .input('userId', sql.NVarChar, TEST_USER_ID)
-    .input('splitId', sql.UniqueIdentifier, splitId)
-    .input('activatedBy', sql.NVarChar, 'manual')
-    .query(`
-      IF NOT EXISTS (
-        SELECT 1 FROM UserSplitActivations WHERE userId = @userId AND splitId = @splitId
-      )
-      INSERT INTO UserSplitActivations (id, userId, splitId, activatedBy)
-      VALUES (@id, @userId, @splitId, @activatedBy)
-    `);
+  await request(app)
+    .post(`/api/lots/splits/${encodeURIComponent(splitId)}/activate`)
+    .set('x-user-id', TEST_USER_ID)
+    .expect(200);
 
   return splitId;
 }

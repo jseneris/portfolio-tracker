@@ -787,37 +787,6 @@ router.post('/historical-prices/sync-2021', async (req: Request, res: Response) 
 // Read stored historical closes for the requested date range.
 router.get('/historical-prices', async (req: Request, res: Response) => {
   try {
-    const startDate = String(req.query.startDate || '2021-01-01');
-    const endDate = String(req.query.endDate || HISTORICAL_2021_END_DATE);
-
-    const result = await getPool().request()
-      .input('startDate', sql.Date, parseDateOnly(startDate))
-      .input('endDate', sql.Date, parseDateOnly(endDate))
-      .query(`
-        SELECT
-          ticker,
-          CONVERT(VARCHAR(10), priceDate, 23) AS priceDate,
-          CONVERT(VARCHAR(10), marketDate, 23) AS marketDate,
-          closePrice,
-          source,
-          createdAt,
-          updatedAt
-        FROM HistoricalPrices
-        WHERE priceDate >= @startDate
-          AND priceDate <= @endDate
-        ORDER BY priceDate ASC, ticker ASC
-      `);
-
-    res.json(result.recordset.map((row: any) => ({
-      ticker: row.ticker,
-      priceDate: row.priceDate,
-      marketDate: row.marketDate,
-      closePrice: Number(row.closePrice),
-      source: row.source,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt
-    })));
-  try {
     const requestedYear = parseSupportedComparisonYear(req.query.year);
     if (requestedYear == null) {
       return res.status(400).json({ error: 'Query parameter year must be 2021 or 2022.' });

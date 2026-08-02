@@ -61,13 +61,13 @@ describe('16. Display Lots - Additional Edge Cases', () => {
     await applySplit('AAPL', 2, 1);
 
     let purchaseLots = await getPurchaseLots('AAPL');
-    expect(Number(purchaseLots[0].remainingQuantity)).toBeCloseTo(10, 3);
+    expect(Number(purchaseLots[0].remainingQuantity)).toBeCloseTo(20, 3);
 
     // Apply 3:1 split
     await applySplit('AAPL', 3, 1);
 
     let purchaseLots2 = await getPurchaseLots('AAPL');
-    expect(Number(purchaseLots2[0].remainingQuantity)).toBeCloseTo(10, 3);
+    expect(Number(purchaseLots2[0].remainingQuantity)).toBeCloseTo(60, 3);
   });
 
   it('Display Lot survives reverse split (5:2)', async () => {
@@ -85,7 +85,7 @@ describe('16. Display Lots - Additional Edge Cases', () => {
     await applySplit('AAPL', 2, 5);
 
     const purchaseLots = await getPurchaseLots('AAPL');
-    expect(Number(purchaseLots[0].remainingQuantity)).toBeCloseTo(10, 3);
+    expect(Number(purchaseLots[0].remainingQuantity)).toBeCloseTo(4, 3);
   });
 
   it('Display Lot correctly tracks after complex transaction sequence', async () => {
@@ -143,17 +143,17 @@ describe('16. Display Lots - Additional Edge Cases', () => {
     // Split 2:1
     await applySplit('AAPL', 2, 1);
     let purchaseLots2 = await getPurchaseLots('AAPL');
-    expect(Number(purchaseLots2[0].remainingQuantity)).toBeCloseTo(100, 3);
+    expect(Number(purchaseLots2[0].remainingQuantity)).toBeCloseTo(200, 3);
 
     // Sell 50
     await sellStock('AAPL', 50, 110, [{ lotId, quantity: 50 }]);
     let purchaseLots3 = await getPurchaseLots('AAPL');
-    expect(Number(purchaseLots3[0].remainingQuantity)).toBeCloseTo(50, 3);
+    expect(Number(purchaseLots3[0].remainingQuantity)).toBeCloseTo(150, 3);
 
     // Split 3:2
     await applySplit('AAPL', 3, 2);
     let purchaseLots4 = await getPurchaseLots('AAPL');
-    expect(Number(purchaseLots4[0].remainingQuantity)).toBeCloseTo(50, 3);
+    expect(Number(purchaseLots4[0].remainingQuantity)).toBeCloseTo(225, 3);
   });
 
   it('Display Lot precision loss at extreme small quantities', async () => {
