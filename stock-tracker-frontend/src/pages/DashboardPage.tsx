@@ -281,6 +281,15 @@ export default function DashboardPage() {
     data && Number.isFinite(buyTotalCost) && buyTotalCost > Number(data.availableCash)
   )
 
+  const performanceClassName =
+    stockPerformance == null || !Number.isFinite(stockPerformance)
+      ? 'value'
+      : stockPerformance > 0
+        ? 'value value-positive'
+        : stockPerformance < 0
+          ? 'value value-negative'
+          : 'value'
+
   async function loadSummary(backgroundRefresh = false) {
     if (backgroundRefresh) {
       setRefreshing(true)
@@ -482,7 +491,7 @@ export default function DashboardPage() {
             <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(data.availableCash)}</div></div>
             <div className="stat"><div className="label">Cash Basis</div><div className="value">{formatCurrency2(data.cashBasis)}</div></div>
             <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{formatCurrency2(holdingsMarketValue)}</div></div>
-            <div className="stat"><div className="label">Performance</div><div className="value">{formatCurrency2(stockPerformance)}</div></div>
+            <div className="stat"><div className="label">Performance</div><div className={performanceClassName}>{formatCurrency2(stockPerformance)}</div></div>
             <div className="stat"><div className="label">Adjustments</div><div className="value">{formatCurrency2(data.adjustments)}</div></div>
             <div className="stat"><div className="label">Stock Cost Basis (No Div)</div><div className="value">{formatCurrency2(stockCostBasisExcludingDividends)}</div></div>
             <div className="stat"><div className="label">Stock Count</div><div className="value">{data.stockCount}</div></div>

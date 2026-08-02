@@ -124,6 +124,14 @@ body {
   margin-top: 0.2rem;
 }
 
+.value-positive {
+  color: #166534;
+}
+
+.value-negative {
+  color: #b91c1c;
+}
+
 .stat-clickable {
   cursor: pointer;
   text-align: left;
@@ -309,6 +317,31 @@ body {
   border-radius: 0.6rem;
   padding: 0.8rem;
   background: #f8fafc;
+}
+
+.allocation-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.allocation-table {
+  width: 100%;
+  min-width: 540px;
+  table-layout: fixed;
+}
+
+.allocation-input-cell {
+  width: 120px;
+}
+
+.allocation-input {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.4rem;
+  padding: 0.45rem 0.5rem;
+  font: inherit;
 }
 
 .allocation-header {

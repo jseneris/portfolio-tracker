@@ -5,6 +5,10 @@ excludeAgent: "code-review"
 
 This file lists and describes the current api endpoints.
 
+Last updated: 2026-08-02
+
+Canonical source of truth: see `endpoints-current.md` for full behavior and request/response notes.
+
 ## API Endpoints
 
 ### Cash Transactions
@@ -17,6 +21,10 @@ This file lists and describes the current api endpoints.
 ### Stock Transactions
 - `GET /api/stocks` - Get all stock transactions
 - `GET /api/stocks/portfolio/summary` - Get unified portfolio summary for one user (cash totals, available cash, cash basis, adjustments, total stock cost basis, stock count, and stock list with ticker/totalShares/costBasis/lotCount)
+- `POST /api/stocks/historical-prices/sync-year?year=2021|2022` - Backfill historical closes for supported comparison year.
+- `POST /api/stocks/historical-prices/sync-2021` - Legacy convenience backfill for 2021.
+- `GET /api/stocks/historical-prices` - Dual mode: date-range row retrieval or year-based comparison series.
+- `GET /api/stocks/portfolio/comparison-2021` - Portfolio vs benchmark series based on stored historical prices.
 - `GET /api/stocks/:ticker` - Get transactions for ticker
 - `GET /api/stocks/:ticker/summary` - Get ticker summary (total shares across all lots, lot count, cost basis)
 - `POST /api/stocks` - Create stock transaction (`buy`, `sell`, `div`)
@@ -29,7 +37,22 @@ This file lists and describes the current api endpoints.
 ### Lots
 - `GET /api/lots` - Get all purchase-lot attribution rows (`PurchaseLots`)
 - `GET /api/lots/:ticker` - Get open operational lots for ticker with `remainingQuantity > 0`. Supports an optional `?sourceType=purchase` or `?sourceType=dividend` query filter.
+- `GET /api/lots/:ticker/open` - Get open purchase-only lots (`sourceType='purchase'`) for ticker.
+- `GET /api/lots/splits` - Get all global split rows with per-user `isActive` and `canActivate` flags.
+- `GET /api/lots/ticker/:ticker/splits` - Get ticker split rows with per-user `isActive` and `canActivate` flags.
 - `PUT /api/lots/:id` - Update lot (adjust remaining quantity)
-- `POST /api/lots/lot/:id/split` - Split a single open lot into child lots whose quantities sum to the lot's current remaining quantity.
-- `POST /api/lots/ticker/:ticker/split` - Record a global stock split. Body: `{ ratioNumerator, ratioDenominator, splitDate }`. The split is stored inactive by default.
-- `POST /api/lots/splits/:splitId/activate` - Activate a recorded split for the current user when eligibility requirements are met. Activation updates purchase lots and reconciles display lots, but does not mutate stock transactions.
+- `POST /api/lots/ticker/:ticker/split` - Record or return a global stock split. Body: `{ ratioNumerator, ratioDenominator, splitDate }`. Returns inactive split plus `canActivate` status.
+- `POST /api/lots/splits/:splitId/activate` - Activate a split for current user when eligible. Activation updates purchase lots and reconciles display lots.
+
+### Display Lots
+- `GET /api/display-lots` - List all display-lot rows for user, with parsed `lots`, `lotCount`, and `totalQuantity`.
+- `GET /api/display-lots/ticker/:ticker` - List display-lot rows for one ticker.
+- `GET /api/display-lots/:id/composition` - Synthetic per-index composition view for one row.
+- `POST /api/display-lots/:ticker` - Create/replace row from `quantities: number[]`.
+- `POST /api/display-lots/:id/combine` - Combine selected indices.
+- `POST /api/display-lots/:id/split` - Split one index into provided quantities.
+- `DELETE /api/display-lots/:id` - Delete one lot index; delete row if it becomes empty.
+
+### User Settings
+- `GET /api/user-settings/targets` - Get user target rule settings (with defaults when missing).
+- `PUT /api/user-settings/targets` - Upsert user target rule settings.

@@ -1,41 +1,50 @@
 # Frontend Plan: MVP First, Enhancements After
 
+Status updated: 2026-08-02
+
+## Completion Snapshot
+- [x] Phase 0 foundation is in place (routing, typed API client, auth-aware app shell).
+- [x] Core MVP flows are implemented for dashboard, cash management, buy/div/sell flows, and ticker history navigation.
+- [~] MVP quality gate remains partial (manual checks continue; automated frontend test coverage is still limited).
+- [~] Phase 3 is partially complete (split status/history context and target settings page exist; manual quote refresh and full target overlays are still pending).
+- [~] Phase 4 is partially complete (historical close retrieval/sync utilities and comparison view exist; cron observability and broader controls are pending).
+
 ## Goal
 Deliver a usable stock tracker frontend quickly with core portfolio workflows first, then layer future enhancements without destabilizing the MVP.
 
 ## Phase 0: Foundation
-1. Set up React + TypeScript app structure in stock-tracker-frontend.
-2. Configure routing, API client, global error handling, and shared UI layout.
-3. Define typed API contracts for existing backend endpoints:
+1. [x] Set up React + TypeScript app structure in stock-tracker-frontend.
+2. [x] Configure routing, API client, global error handling, and shared UI layout.
+3. [x] Define typed API contracts for existing backend endpoints:
    - /api/cash
    - /api/stocks
    - /api/lots
-4. Implement auth/header strategy compatible with current backend user model.
-5. Add baseline frontend test setup and lint/format tooling.
+4. [x] Implement auth/header strategy compatible with current backend user model.
+5. [~] Add baseline frontend test setup and lint/format tooling.
 
 ## Phase 1: MVP (Highest Priority)
-1. Dashboard
+1. [x] Dashboard
    - Use portfolio summary endpoint as primary data source.
    - Display available cash, cash basis, adjustments, stock cost basis, and holdings table.
    - Add quick Add Stock modal for buy entry from dashboard.
    - Make ticker cells navigable to stock-specific history page.
-2. Cash Management
+2. [x] Cash Management
    - Build create, edit, delete, and list flows for cash transactions.
    - Refresh summary after mutations.
-3. Stock Transactions
+3. [~] Stock Transactions
    - Build buy and dividend transaction forms.
    - Support historical transaction dates.
    - Add edit/delete actions for stock transaction records.
-4. Sell With Explicit Lot Allocation
+4. [x] Sell With Explicit Lot Allocation
    - Fetch available lots by ticker.
    - Require user-selected lot allocations.
    - Validate allocation total equals sell quantity before submit.
-5. Holdings Detail
+5. [x] Holdings Detail
    - Per-ticker transaction view and lots view.
    - Show remaining shares and lot-level cost information.
    - Show per-ticker summary metrics on stock-specific page (Total Shares, Open Lots, Cost Basis).
    - Keep stock-specific Add Transaction modal tickerless by inferring ticker from route.
-6. MVP Quality Gate
+6. [~] MVP Quality Gate
    - Add frontend tests for critical workflows and validations.
    - Run manual acceptance checklist against backend behavior.
 
@@ -48,31 +57,31 @@ Deliver a usable stock tracker frontend quickly with core portfolio workflows fi
 6. Transaction dates render as entered dates without timezone day-shift regressions.
 
 ## Phase 2: Enhancement-Ready Platform
-1. Add feature flags to isolate post-MVP functionality.
-2. Add reusable chart/time-series components.
-3. Add reusable async status components (loading, partial failure, retries).
-4. Standardize notifications and error surfaces across pages.
+1. [ ] Add feature flags to isolate post-MVP functionality.
+2. [ ] Add reusable chart/time-series components.
+3. [ ] Add reusable async status components (loading, partial failure, retries).
+4. [ ] Standardize notifications and error surfaces across pages.
 
 ## Phase 3: P1 Enhancements
-1. Stock Splits UI
+1. [~] Stock Splits UI
    - Split form and result feedback.
    - Display split status/history context on relevant pages.
-2. Current Prices
+2. [ ] Current Prices
    - Add manual quote refresh button on dashboard.
    - Show quote freshness timestamps and partial-failure states.
-3. Target Prices
+3. [~] Target Prices
    - Add target settings page.
    - Show target levels on dashboard and holdings views.
 
 ## Phase 4: P2/P3 Enhancements
-1. Historical Closing Prices
+1. [~] Historical Closing Prices
    - Add utility workflows for backfill and retrieval.
    - Add historical price displays.
-2. Index Comparison
+2. [~] Index Comparison
    - Add portfolio vs index comparison views with date range controls.
-3. Cron Observability
+3. [ ] Cron Observability
    - Add job status/health UI when backend observability endpoints are ready.
-4. Longer-Term Data Model Features
+4. [ ] Longer-Term Data Model Features
    - Add admin/maintenance views as normalization changes are introduced.
 
 ## Dependency Order

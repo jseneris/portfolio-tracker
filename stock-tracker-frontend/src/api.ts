@@ -439,7 +439,7 @@ export async function getPortfolioComparison2021(): Promise<PortfolioComparison2
 }
 
 export async function getPortfolioComparisonByYear(year: number): Promise<PortfolioComparisonResponse> {
-  return requestApi<PortfolioComparisonResponse>(`/api/stocks/portfolio/comparison?year=${encodeURIComponent(String(year))}`)
+  return requestApi<PortfolioComparisonResponse>(`/api/stocks/historical-prices?year=${encodeURIComponent(String(year))}`)
 }
 
 export async function getUserTargetSettings(): Promise<UserTargetSettings> {

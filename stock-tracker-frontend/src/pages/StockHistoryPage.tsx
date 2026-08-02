@@ -129,6 +129,32 @@ function getSalePriceComparisonLabel(unitCost: number, salePrice: number | null)
   return 'Even'
 }
 
+function getPerformanceClassName(value: number | null) {
+  if (value == null || !Number.isFinite(value)) {
+    return 'value'
+  }
+
+  if (value > ALLOCATION_TOLERANCE) {
+    return 'value value-positive'
+  }
+
+  if (value < -ALLOCATION_TOLERANCE) {
+    return 'value value-negative'
+  }
+
+  return 'value'
+}
+
+function getSplitStatusClassName(split: StockSplitEvent) {
+  const isActive = split.isActive !== false
+  return isActive ? 'pill pill-full' : 'pill pill-warn'
+}
+
+function getSplitStatusLabel(split: StockSplitEvent) {
+  const isActive = split.isActive !== false
+  return isActive ? 'active' : 'not active'
+}
+
 type DisplayLotEntry = {
   id: string
   rowId: string
@@ -956,14 +982,42 @@ export default function StockHistoryPage() {
             </button>
             <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatCurrency2(costBasisExcludingDividends)}</div></div>
             <div className="stat"><div className="label">Current Value</div><div className="value">{formatCurrency2(currentValue)}</div></div>
-            <div className="stat"><div className="label">Performance</div><div className="value">{formatCurrency2(summaryPerformance)}</div></div>
+            <div className="stat"><div className="label">Performance</div><div className={getPerformanceClassName(summaryPerformance)}>{formatCurrency2(summaryPerformance)}</div></div>
           </div>
 
           {salesSummary.saleCount > 0 ? (
             <div className="panel stat-grid" style={{ marginTop: '0.75rem' }}>
               <div className="stat"><div className="label">Sales Cost Basis</div><div className="value">{formatCurrency2(salesSummary.salesCostBasis)}</div></div>
               <div className="stat"><div className="label">Exhausted Purchase Lots Cost Basis (No Div)</div><div className="value">{formatCurrency2(salesSummary.exhaustedPurchaseLotsCostBasis)}</div></div>
-              <div className="stat"><div className="label">Sales Performance</div><div className="value">{formatCurrency2(salesSummary.performance)}</div></div>
+              <div className="stat"><div className="label">Sales Performance</div><div className={getPerformanceClassName(salesSummary.performance)}>{formatCurrency2(salesSummary.performance)}</div></div>
+            </div>
+          ) : null}
+
+          {splitEvents.length > 0 ? (
+            <div className="panel" style={{ marginTop: '0.75rem' }}>
+              <h3 style={{ marginTop: 0 }}>Split Events</h3>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Ratio</th>
+                    <th>Multiplier</th>
+                    <th>Activation</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {splitEvents.map((split) => (
+                    <tr key={split.id}>
+                      <td>{formatDate(split.splitDate)}</td>
+                      <td>{split.ratioNumerator}:{split.ratioDenominator}</td>
+                      <td>{formatNumber(split.multiplier, 8)}x</td>
+                      <td>
+                        <span className={getSplitStatusClassName(split)}>{getSplitStatusLabel(split)}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : null}
 
@@ -1016,7 +1070,9 @@ export default function StockHistoryPage() {
                         <td>{formatDate(entry.split.splitDate)}</td>
                         <td colSpan={6}>
                           <strong>Stock Split</strong> {entry.split.ratioNumerator}:{entry.split.ratioDenominator}
-                          {' '}({formatNumber(entry.split.multiplier, 8)}x). Older transactions below this row are pre-split.
+                          {' '}({formatNumber(entry.split.multiplier, 8)}x). Status:{' '}
+                          <span className={getSplitStatusClassName(entry.split)}>{getSplitStatusLabel(entry.split)}</span>
+                          . Older transactions below this row are pre-split.
                         </td>
                       </tr>
                     )
@@ -1250,18 +1306,19 @@ export default function StockHistoryPage() {
                         Allocation inputs use pre-split share quantities.
                       </div>
                     ) : null}
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Type</th>
-                        <th>Date</th>
-                        <th>Remaining</th>
-                        <th>Unit Cost</th>
-                        <th>Allocate</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {availableLots.map((lot) => {
+                  <div className="allocation-table-wrap">
+                    <table className="table allocation-table">
+                      <thead>
+                        <tr>
+                          <th>Type</th>
+                          <th>Date</th>
+                          <th>Remaining</th>
+                          <th>Unit Cost</th>
+                          <th>Allocate</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {availableLots.map((lot) => {
                         const preSplitLot = preSplitLotValuesById[lot.id]
                         const displayRemaining = preSplitLot ? preSplitLot.remaining : Number(lot.remainingQuantity)
                         const displayUnitCost = preSplitLot ? preSplitLot.unitCost : Number(lot.unitCost)
@@ -1282,7 +1339,7 @@ export default function StockHistoryPage() {
                                 </span>
                               </div>
                             </td>
-                            <td>
+                            <td className="allocation-input-cell">
                               <input
                                 type="text"
                                 inputMode="decimal"
@@ -1291,13 +1348,15 @@ export default function StockHistoryPage() {
                                 value={allocations[lot.id] ?? ''}
                                 onChange={(event) => setAllocation(lot.id, event.target.value)}
                                 disabled={saving}
+                                className="allocation-input"
                               />
                             </td>
                           </tr>
                         )
-                      })}
-                    </tbody>
-                  </table>
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                   </>
                 ) : null}
               </div>

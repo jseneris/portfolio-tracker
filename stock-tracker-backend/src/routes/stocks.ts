@@ -787,6 +787,53 @@ router.post('/historical-prices/sync-2021', async (req: Request, res: Response) 
 // Read stored historical closes for the requested date range.
 router.get('/historical-prices', async (req: Request, res: Response) => {
   try {
+    const startDateQuery = typeof req.query.startDate === 'string' ? req.query.startDate.trim() : '';
+    const endDateQuery = typeof req.query.endDate === 'string' ? req.query.endDate.trim() : '';
+    const hasRangeQuery = startDateQuery.length > 0 || endDateQuery.length > 0;
+
+    // Backward-compatible mode for dashboard/stock-history consumers.
+    // When startDate/endDate are supplied, return raw historical rows.
+    if (hasRangeQuery) {
+      if (!startDateQuery || !endDateQuery) {
+        return res.status(400).json({ error: 'Query parameters startDate and endDate are both required when using date range mode.' });
+      }
+
+      if (!isValidDateOnlyString(startDateQuery) || !isValidDateOnlyString(endDateQuery)) {
+        return res.status(400).json({ error: 'Query parameters startDate and endDate must be in YYYY-MM-DD format.' });
+      }
+
+      if (startDateQuery > endDateQuery) {
+        return res.status(400).json({ error: 'Query parameter startDate must be on or before endDate.' });
+      }
+
+      const pool = getPool();
+      const rows = await pool.request()
+        .input('startDate', sql.Date, parseDateOnly(startDateQuery))
+        .input('endDate', sql.Date, parseDateOnly(endDateQuery))
+        .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
+        .query(`
+          SELECT
+            ticker,
+            CONVERT(VARCHAR(10), priceDate, 23) AS priceDate,
+            CONVERT(VARCHAR(10), marketDate, 23) AS marketDate,
+            closePrice,
+            source
+          FROM HistoricalPrices
+          WHERE source = @source
+            AND priceDate >= @startDate
+            AND priceDate <= @endDate
+          ORDER BY priceDate ASC, ticker ASC
+        `);
+
+      return res.json((rows.recordset ?? []).map((row: any) => ({
+        ticker: String(row.ticker || '').toUpperCase(),
+        priceDate: String(row.priceDate || ''),
+        marketDate: String(row.marketDate || ''),
+        closePrice: Number(row.closePrice || 0),
+        source: String(row.source || HISTORICAL_PRICE_SOURCE),
+      })));
+    }
+
     const requestedYear = parseSupportedComparisonYear(req.query.year);
     if (requestedYear == null) {
       return res.status(400).json({ error: 'Query parameter year must be 2021 or 2022.' });
@@ -1993,6 +2040,15 @@ function resolveClosestPriceOnOrBefore(quotes: IPricePoint[], requestedDate: str
 
 function getUtcTodayDateOnly(): Date {
   return parseDateOnly(toIsoDate(new Date()));
+}
+
+function isValidDateOnlyString(dateText: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
+    return false;
+  }
+
+  const parsed = parseDateOnly(dateText);
+  return !Number.isNaN(parsed.getTime()) && toIsoDate(parsed) === dateText;
 }
 
 function parseSupportedComparisonYear(rawYear: unknown): number | null {

@@ -230,25 +230,34 @@ router.get('/ticker/:ticker/splits', async (req: Request, res: Response) => {
       .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, ticker.toUpperCase())
       .query(`
-        SELECT ss.id, ss.ticker, ss.ratioNumerator, ss.ratioDenominator, ss.multiplier, ss.splitDate, ss.createdAt
+        SELECT
+          ss.id,
+          ss.ticker,
+          ss.ratioNumerator,
+          ss.ratioDenominator,
+          ss.multiplier,
+          ss.splitDate,
+          ss.createdAt,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM UserSplitActivations usa
+            WHERE usa.userId = @userId
+              AND usa.splitId = ss.id
+          ) THEN 1 ELSE 0 END AS isActive,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM StockTransactions st
+            WHERE st.userId = @userId
+              AND st.ticker = ss.ticker
+              AND st.transactionDate >= ss.splitDate
+          ) OR EXISTS (
+            SELECT 1
+            FROM HistoricalPrices hp
+            WHERE hp.ticker = ss.ticker
+              AND hp.priceDate >= CONVERT(date, ss.splitDate)
+          ) THEN 1 ELSE 0 END AS canActivate
         FROM StockSplits ss
-        JOIN UserSplitActivations usa ON usa.splitId = ss.id AND usa.userId = @userId
         WHERE ss.ticker = @ticker
-          AND (
-            EXISTS (
-              SELECT 1
-              FROM StockTransactions st
-              WHERE st.userId = @userId
-                AND st.ticker = ss.ticker
-                AND st.transactionDate >= ss.splitDate
-            )
-            OR EXISTS (
-              SELECT 1
-              FROM HistoricalPrices hp
-              WHERE hp.ticker = ss.ticker
-                AND hp.priceDate >= CONVERT(date, ss.splitDate)
-            )
-          )
         ORDER BY ss.splitDate DESC, ss.createdAt DESC
       `);
 
@@ -260,8 +269,8 @@ router.get('/ticker/:ticker/splits', async (req: Request, res: Response) => {
       multiplier: Number(row.multiplier),
       splitDate: row.splitDate,
       createdAt: row.createdAt,
-      isActive: true,
-      canActivate: true,
+      isActive: Number(row.isActive || 0) === 1,
+      canActivate: Number(row.canActivate || 0) === 1,
     })));
   } catch (error) {
     res.status(500).json({ error: String(error) });

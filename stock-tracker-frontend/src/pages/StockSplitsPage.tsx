@@ -95,7 +95,11 @@ export default function StockSplitsPage() {
             <tbody>
               {splitHistory.map((split) => (
                 <tr key={split.id}>
-                  <td>{split.ticker}</td>
+                  <td>
+                    <Link className="link-button" to={`/stocks/${encodeURIComponent(split.ticker)}`}>
+                      {split.ticker}
+                    </Link>
+                  </td>
                   <td>{formatDate(split.splitDate)}</td>
                   <td>{split.ratioNumerator}:{split.ratioDenominator}</td>
                   <td>{split.multiplier.toFixed(8)}x</td>

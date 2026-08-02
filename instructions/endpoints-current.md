@@ -5,41 +5,80 @@ excludeAgent: "code-review"
 
 # API Endpoints (Current Implementation)
 
-All routes are authenticated and user-scoped via middleware.
+Last updated: 2026-08-02
+
+Authentication and scoping notes:
+- `authenticateRequest` middleware is applied globally before route handlers.
+- Data routes are user-scoped via `req.user.id` where applicable.
 
 ## Cash
 
 ### GET /api/cash
-- Returns user cash transactions.
+- Returns all cash transactions for the current user.
+- Ordered by `transactionDate DESC`.
 
 ### GET /api/cash/summary
-- Returns deposits, withdrawals, interest, fees, buys/sells impact, and available cash.
+- Returns computed cash totals using `CashTransactions` plus stock cash impact from `StockTransactions`.
+- Response includes: `deposits`, `withdrawals`, `interest`, `fees`, `buys`, `sells`, `availableCash`, `costBasis`, `adjustments`.
 
 ### POST /api/cash
-- Creates a cash transaction.
+- Creates a cash transaction (`type`, `amount`, `transactionDate`).
+- Returns the inserted row identity payload.
 
 ### PUT /api/cash/:id
-- Updates a cash transaction.
+- Updates one cash transaction owned by the current user.
 
 ### DELETE /api/cash/:id
-- Deletes a cash transaction.
+- Deletes one cash transaction owned by the current user.
 
 ## Stocks
 
+### GET /api/stocks/portfolio/summary
+- Returns one response with:
+  - aggregate cash totals,
+  - `availableCash`,
+  - `cashBasis` and `adjustments`,
+  - stock rollup (`totalStockCostBasis`, `stockCount`),
+  - per-ticker holdings (`ticker`, `totalShares`, `costBasis`, `lotCount`).
+- Uses `PurchaseLots` for holdings calculations.
+
 ### GET /api/stocks
-- Returns user stock transactions.
+- Returns all stock transactions for the current user.
+- Ordered by `transactionDate DESC, ticker ASC`.
 
 ### GET /api/stocks/:ticker
-- Returns transactions for one ticker.
+- Returns all stock transactions for one ticker and user.
+- Ordered by `transactionDate DESC`.
 
 ### GET /api/stocks/:ticker/summary
-- Returns ticker summary (`totalShares`, `numberOfLots`, `costBasis`) with activated splits applied dynamically.
-
-### GET /api/stocks/portfolio/summary
-- Returns full portfolio summary with dynamic split projection.
+- Returns ticker summary from open `PurchaseLots`:
+  - `totalShares`,
+  - `numberOfLots`,
+  - `costBasis`.
 
 ### GET /api/stocks/:transactionId/allocations
-- Returns purchase-lot allocations for a sell transaction.
+- Returns sale allocations (`PurchaseLotAllocations`) joined with lot metadata.
+- Useful for rendering sell lot attribution history.
+
+### POST /api/stocks/historical-prices/sync-year?year=2021|2022
+- Incrementally backfills yearly historical closes (including benchmark tickers `^DJI`, `^IXIC`, `^GSPC`).
+- Prioritizes cash-flow dates and year-end date, then fills remaining dates.
+- Also attempts split discovery per owned ticker in range from first transaction date to today.
+- Writes price rows with idempotent `MERGE` behavior.
+
+### POST /api/stocks/historical-prices/sync-2021
+- Legacy convenience variant for 2021 backfill behavior.
+- Performs date-prioritized historical close sync for 2021.
+
+### GET /api/stocks/historical-prices
+- Dual-mode endpoint:
+  - Date range mode (`startDate` + `endDate`): returns raw historical rows for that range.
+  - Comparison mode (`year=2021|2022`): returns computed portfolio-vs-benchmark time series points.
+- Date-range mode validates `YYYY-MM-DD` format and start/end ordering.
+
+### GET /api/stocks/portfolio/comparison-2021
+- Returns portfolio-vs-benchmark time series points based on stored historical prices up to 2021-12-31.
+- Includes benchmark values for DOW/NASDAQ/S&P500 and missing-ticker diagnostics.
 
 ### POST /api/stocks
 - Creates buy/sell/div transaction.
@@ -47,7 +86,8 @@ All routes are authenticated and user-scoped via middleware.
 - `buy` creates a `PurchaseLots` row and appends quantity to display lots.
 - `div` creates a dividend `PurchaseLots` row only.
 - `sell` updates `PurchaseLots`, writes `PurchaseLotAllocations`, and consumes display quantities smallest-first for purchase-sourced shares.
-- After insert, automatic split catch-up writes activation rows when applicable.
+- On first transaction for a ticker, backend attempts backdated market-data/split discovery (non-blocking on failure).
+- Split discovery does not auto-activate split events for the user.
 
 ### PUT /api/stocks/:id
 - Updates one stock transaction row.
@@ -60,17 +100,24 @@ All routes are authenticated and user-scoped via middleware.
 ## Purchase Lots and Splits
 
 ### GET /api/lots
-- Returns open lots for user.
+- Returns open `PurchaseLots` rows (`remainingQuantity > 0`) for the user.
 
 ### GET /api/lots/:ticker
-- Returns open lots for ticker, optional `sourceType` filter.
+- Returns open lots for ticker, with optional `?sourceType=` filter.
 
 ### GET /api/lots/:ticker/open
-- Returns open purchase-only lots for ticker (`sourceType = purchase`).
+- Returns open purchase-source lots only (`sourceType = 'purchase'`).
 
 ### GET /api/lots/splits
+- Returns all recorded split events with per-user flags:
+  - `isActive` (user has activation row),
+  - `canActivate` (eligibility satisfied).
+
 ### GET /api/lots/ticker/:ticker/splits
-- Returns split history (global split events).
+- Returns all recorded split events for a ticker with per-user flags:
+  - `isActive`,
+  - `canActivate`.
+- Includes inactive known splits.
 
 ### PUT /api/lots/:id
 - Updates lot remaining quantity.
@@ -85,8 +132,13 @@ Request body:
 }
 ```
 - Upserts/finds a global split event in `StockSplits`.
-- Activates it for the calling user in `UserSplitActivations`.
-- Does not bulk-rewrite all historical transaction/lot rows.
+- Does not activate automatically for the calling user.
+- Returns eligibility flags so UI can decide whether activation is currently allowed.
+
+### POST /api/lots/splits/:splitId/activate
+- Activates a split for current user if eligible.
+- Writes `UserSplitActivations` row.
+- Applies multiplier adjustments to eligible `PurchaseLots` (`purchaseDate <= splitDate`) and reconciles display lots.
 
 ## Display Lots
 
@@ -143,6 +195,16 @@ Request body:
 - Deletes one lot entry by index.
 - Deletes the row when it becomes empty.
 
+## User Settings
+
+### GET /api/user-settings/targets
+- Returns user target settings with defaults if row is missing.
+- Fields include sale target percent and buy target thresholds by display-lot count bands.
+
+### PUT /api/user-settings/targets
+- Upserts user target settings.
+- Validates all target fields are finite positive numbers and bounds-checks large values.
+
 ## Health
 
 ### GET /api/health
@@ -150,4 +212,6 @@ Request body:
 
 ## Notes
 
-- Display-lot and split workflows are centered on `DisplayLots.lotsCsv`, `PurchaseLotAllocations`, `StockSplits`, and `UserSplitActivations`.
+- Display-lot workflows are centered on `DisplayLots.lotsCsv` with index-based operations.
+- Sell attribution is explicit and persisted in `PurchaseLotAllocations`.
+- Split workflows use global `StockSplits` plus per-user `UserSplitActivations`.
