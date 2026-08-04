@@ -179,7 +179,7 @@ async function isSplitEligibleForUser(
   ticker: string,
   splitDate: Date
 ): Promise<boolean> {
-  const result = await new sql.Request(db)
+  const result = await db.request()
     .input('userId', sql.NVarChar, userId)
     .input('ticker', sql.NVarChar, ticker)
     .input('splitDate', sql.DateTime2, splitDate)

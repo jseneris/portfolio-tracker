@@ -179,7 +179,8 @@ async function createTablesIfNotExist() {
         closePrice DECIMAL(18, 8) NOT NULL,
         source NVARCHAR(50) NOT NULL DEFAULT 'yahoo-finance',
         createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
-        updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+        updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        stockSplitId UNIQUEIDENTIFIER NULL
       );
 
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Users')

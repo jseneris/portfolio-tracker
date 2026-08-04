@@ -397,6 +397,7 @@ export default function StockHistoryPage() {
 
   const adjustedTransactionValuesById = useMemo(() => {
     const splitTimeline = splitEvents
+      .filter((split) => split.isActive !== false)
       .map((split) => ({
         day: toUtcDayTimestamp(split.splitDate),
         multiplier: Number(split.multiplier),
@@ -452,6 +453,7 @@ export default function StockHistoryPage() {
     }
 
     const splitTimeline = splitEvents
+      .filter((split) => split.isActive !== false)
       .map((split) => ({
         day: toUtcDayTimestamp(split.splitDate),
         multiplier: Number(split.multiplier),

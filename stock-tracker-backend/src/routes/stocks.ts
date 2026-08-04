@@ -536,34 +536,25 @@ router.post('/historical-prices/sync-year', async (req: Request, res: Response) 
           continue;
         }
 
-        await pool.request()
+        const insertResult = await pool.request()
           .input('ticker', sql.NVarChar, ticker)
           .input('priceDate', sql.Date, parseDateOnly(priceDate))
           .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
           .input('closePrice', sql.Decimal(18, 8), matched.close)
           .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
           .query(`
-            MERGE HistoricalPrices AS target
-            USING (
-              SELECT
-                @ticker AS ticker,
-                @priceDate AS priceDate,
-                @source AS source
-            ) AS sourceRow
-            ON target.ticker = sourceRow.ticker
-               AND target.priceDate = sourceRow.priceDate
-               AND target.source = sourceRow.source
-            WHEN MATCHED THEN
-              UPDATE SET
-                marketDate = @marketDate,
-                closePrice = @closePrice,
-                updatedAt = GETUTCDATE()
-            WHEN NOT MATCHED THEN
-              INSERT (id, ticker, priceDate, marketDate, closePrice, source)
-              VALUES (NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source);
+            INSERT INTO HistoricalPrices (id, ticker, priceDate, marketDate, closePrice, source)
+            SELECT NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM HistoricalPrices
+              WHERE ticker = @ticker
+                AND priceDate = @priceDate
+                AND source = @source
+            );
           `);
 
-        storedRows += 1;
+        storedRows += insertResult.rowsAffected?.[0] ?? 0;
       }
     }
 
@@ -738,34 +729,25 @@ router.post('/historical-prices/sync-2021', async (req: Request, res: Response) 
           continue;
         }
 
-        await pool.request()
+        const insertResult = await pool.request()
           .input('ticker', sql.NVarChar, ticker)
           .input('priceDate', sql.Date, parseDateOnly(priceDate))
           .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
           .input('closePrice', sql.Decimal(18, 8), matched.close)
           .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
           .query(`
-            MERGE HistoricalPrices AS target
-            USING (
-              SELECT
-                @ticker AS ticker,
-                @priceDate AS priceDate,
-                @source AS source
-            ) AS sourceRow
-            ON target.ticker = sourceRow.ticker
-               AND target.priceDate = sourceRow.priceDate
-               AND target.source = sourceRow.source
-            WHEN MATCHED THEN
-              UPDATE SET
-                marketDate = @marketDate,
-                closePrice = @closePrice,
-                updatedAt = GETUTCDATE()
-            WHEN NOT MATCHED THEN
-              INSERT (id, ticker, priceDate, marketDate, closePrice, source)
-              VALUES (NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source);
+            INSERT INTO HistoricalPrices (id, ticker, priceDate, marketDate, closePrice, source)
+            SELECT NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source
+            WHERE NOT EXISTS (
+              SELECT 1
+              FROM HistoricalPrices
+              WHERE ticker = @ticker
+                AND priceDate = @priceDate
+                AND source = @source
+            );
           `);
 
-        storedRows += 1;
+        storedRows += insertResult.rowsAffected?.[0] ?? 0;
       }
     }
 

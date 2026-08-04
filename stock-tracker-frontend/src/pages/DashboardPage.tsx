@@ -1,7 +1,12 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  CashTransaction,
   CreateStockInput,
+  HistoricalPrice,
+  SaleAllocation,
+  getCashTransactions,
+  getSaleAllocations,
   getHistoricalPrices,
   PORTFOLIO_UPDATED_EVENT,
   PortfolioSummary,
@@ -52,6 +57,13 @@ function formatDateTime(value: Date | null) {
     return 'Never'
   }
   return value.toLocaleString()
+}
+
+function toDateOnly(value: string): string {
+  if (typeof value !== 'string' || value.length < 10) {
+    return ''
+  }
+  return value.slice(0, 10)
 }
 
 function buildLatestHistoricalPriceByTicker(rows: Array<{ ticker: string; priceDate: string; closePrice: number }>): Record<string, number> {
@@ -149,6 +161,11 @@ export default function DashboardPage() {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
   const [saleTargetsByTicker, setSaleTargetsByTicker] = useState<Record<string, number | null>>({})
   const [buyTargetsByTicker, setBuyTargetsByTicker] = useState<Record<string, number | null>>({})
+  const [snapshotDate, setSnapshotDate] = useState<string>(new Date().toISOString().slice(0, 10))
+  const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([])
+  const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([])
+  const [historicalPrices, setHistoricalPrices] = useState<HistoricalPrice[]>([])
+  const [saleAllocationsBySaleId, setSaleAllocationsBySaleId] = useState<Record<string, SaleAllocation[]>>({})
 
   function normalizePositivePercent(value: unknown, fallback: number): number {
     const parsed = Number(value)
@@ -268,25 +285,208 @@ export default function DashboardPage() {
     ? buyShares * buyPrice
     : NaN
 
-  const [holdingsMarketValue, setHoldingsMarketValue] = useState<number | null>(null)
-  const [stockCostBasisExcludingDividends, setStockCostBasisExcludingDividends] = useState<number | null>(null)
-  const [stockCostBasisExcludingDividendsByTicker, setStockCostBasisExcludingDividendsByTicker] = useState<Record<string, number>>({})
-  const [stockPerformance, setStockPerformance] = useState<number | null>(null)
+  const [latestHistoricalPriceByTicker, setLatestHistoricalPriceByTicker] = useState<Record<string, number>>({})
 
-  const cashBasisExcludingDividends = data
-    ? Number(data.deposits || 0) - Number(data.withdrawals || 0)
-    : null
+  const snapshot = useMemo(() => {
+    const LOT_TOLERANCE = 1e-6
+    const holdingsByTicker = new Map<string, number>()
+
+    for (const tx of stockTransactions) {
+      const txDate = toDateOnly(tx.transactionDate)
+      if (!txDate || txDate > snapshotDate) {
+        continue
+      }
+
+      const ticker = String(tx.ticker || '').toUpperCase()
+      if (!ticker) {
+        continue
+      }
+
+      const quantity = Number(tx.quantity || 0)
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        continue
+      }
+
+      const previous = Number(holdingsByTicker.get(ticker) ?? 0)
+      if (tx.type === 'buy' || tx.type === 'div') {
+        holdingsByTicker.set(ticker, previous + quantity)
+      } else if (tx.type === 'sell') {
+        holdingsByTicker.set(ticker, previous - quantity)
+      }
+    }
+
+    const priceByTicker: Record<string, { date: string; price: number }> = {}
+    for (const row of historicalPrices) {
+      const ticker = String(row.ticker || '').toUpperCase()
+      const priceDate = String(row.priceDate || '')
+      const closePrice = Number(row.closePrice)
+      if (!ticker || !priceDate || priceDate > snapshotDate || !Number.isFinite(closePrice)) {
+        continue
+      }
+
+      const existing = priceByTicker[ticker]
+      if (!existing || priceDate > existing.date) {
+        priceByTicker[ticker] = { date: priceDate, price: closePrice }
+      }
+    }
+
+    const holdings = Array.from(holdingsByTicker.entries())
+      .map(([ticker, shares]) => ({
+        ticker,
+        totalShares: Number(shares),
+      }))
+      .filter((row) => Number.isFinite(row.totalShares) && row.totalShares > 1e-6)
+      .sort((a, b) => a.ticker.localeCompare(b.ticker))
+      .map((row) => {
+        const latestPrice = Number(priceByTicker[row.ticker]?.price)
+        const hasPrice = Number.isFinite(latestPrice)
+        return {
+          ...row,
+          latestPrice: hasPrice ? latestPrice : null,
+          marketValue: hasPrice ? row.totalShares * latestPrice : null,
+        }
+      })
+
+    type SnapshotPurchaseLot = {
+      ticker: string
+      purchaseDate: string
+      unitCost: number
+      remainingQuantity: number
+    }
+
+    const snapshotPurchaseLots: SnapshotPurchaseLot[] = stockTransactions
+      .filter((tx) => {
+        const txDate = toDateOnly(tx.transactionDate)
+        return tx.type === 'buy' && !!txDate && txDate <= snapshotDate
+      })
+      .map((tx) => ({
+        ticker: String(tx.ticker || '').toUpperCase(),
+        purchaseDate: toDateOnly(tx.transactionDate),
+        unitCost: Number(tx.price || 0),
+        remainingQuantity: Number(tx.quantity || 0),
+      }))
+      .filter((lot) => lot.ticker && Number.isFinite(lot.unitCost) && Number.isFinite(lot.remainingQuantity) && lot.remainingQuantity > LOT_TOLERANCE)
+
+    const sellTransactionsUpToSnapshot = stockTransactions
+      .filter((tx) => {
+        const txDate = toDateOnly(tx.transactionDate)
+        return tx.type === 'sell' && !!txDate && txDate <= snapshotDate
+      })
+      .sort((a, b) => new Date(a.transactionDate).getTime() - new Date(b.transactionDate).getTime())
+
+    for (const sellTx of sellTransactionsUpToSnapshot) {
+      const allocations = saleAllocationsBySaleId[sellTx.id] ?? []
+      const purchaseAllocations = allocations
+        .filter((allocation) => String(allocation.sourceType || '').toLowerCase() === 'purchase')
+
+      for (const allocation of purchaseAllocations) {
+        const allocationTicker = String(allocation.ticker || '').toUpperCase()
+        const allocationDate = toDateOnly(allocation.purchaseDate)
+        const allocationUnitCost = Number(allocation.unitCost)
+        let quantityToConsume = Number(allocation.quantity || 0)
+
+        if (!allocationTicker || !allocationDate || !Number.isFinite(allocationUnitCost) || !Number.isFinite(quantityToConsume) || quantityToConsume <= LOT_TOLERANCE) {
+          continue
+        }
+
+        for (const lot of snapshotPurchaseLots) {
+          if (quantityToConsume <= LOT_TOLERANCE) {
+            break
+          }
+
+          if (lot.ticker !== allocationTicker) {
+            continue
+          }
+
+          if (lot.purchaseDate !== allocationDate) {
+            continue
+          }
+
+          if (Math.abs(lot.unitCost - allocationUnitCost) > LOT_TOLERANCE) {
+            continue
+          }
+
+          if (lot.remainingQuantity <= LOT_TOLERANCE) {
+            continue
+          }
+
+          const consumed = Math.min(lot.remainingQuantity, quantityToConsume)
+          lot.remainingQuantity -= consumed
+          quantityToConsume -= consumed
+        }
+      }
+    }
+
+    const snapshotCostBasisByTicker: Record<string, number> = {}
+    const snapshotLotCountByTicker: Record<string, number> = {}
+    for (const lot of snapshotPurchaseLots) {
+      if (lot.remainingQuantity <= LOT_TOLERANCE) {
+        continue
+      }
+
+      snapshotCostBasisByTicker[lot.ticker] = Number(snapshotCostBasisByTicker[lot.ticker] || 0) + (lot.remainingQuantity * lot.unitCost)
+      snapshotLotCountByTicker[lot.ticker] = Number(snapshotLotCountByTicker[lot.ticker] || 0) + 1
+    }
+
+    const stockCostBasisExcludingDividends = Object.values(snapshotCostBasisByTicker).reduce((sum, value) => sum + Number(value || 0), 0)
+
+    const deposits = cashTransactions
+      .filter((tx) => tx.type === 'deposit' && toDateOnly(tx.transactionDate) <= snapshotDate)
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+    const withdrawals = cashTransactions
+      .filter((tx) => tx.type === 'withdrawal' && toDateOnly(tx.transactionDate) <= snapshotDate)
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+    const interest = cashTransactions
+      .filter((tx) => tx.type === 'interest' && toDateOnly(tx.transactionDate) <= snapshotDate)
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+    const fees = cashTransactions
+      .filter((tx) => tx.type === 'fee' && toDateOnly(tx.transactionDate) <= snapshotDate)
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+
+    const buys = stockTransactions
+      .filter((tx) => tx.type === 'buy' && toDateOnly(tx.transactionDate) <= snapshotDate)
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+    const sells = stockTransactions
+      .filter((tx) => tx.type === 'sell' && toDateOnly(tx.transactionDate) <= snapshotDate)
+      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
+
+    const availableCash = deposits - withdrawals + interest - fees - buys + sells
+    const cashBasis = deposits - withdrawals
+    const adjustments = interest - fees
+
+    const missingPrices = holdings.some((row) => row.latestPrice == null)
+    const holdingsMarketValue = missingPrices
+      ? null
+      : holdings.reduce((sum, row) => sum + Number(row.marketValue || 0), 0)
+
+    const portfolioValue = holdingsMarketValue == null ? null : availableCash + holdingsMarketValue
+    const performance = portfolioValue == null ? null : portfolioValue - cashBasis
+
+    return {
+      holdings,
+      availableCash,
+      cashBasis,
+      adjustments,
+      holdingsMarketValue,
+      portfolioValue,
+      performance,
+      stockCount: holdings.length,
+      stockCostBasisExcludingDividends,
+      stockCostBasisExcludingDividendsByTicker: snapshotCostBasisByTicker,
+      lotCountByTicker: snapshotLotCountByTicker,
+    }
+  }, [stockTransactions, cashTransactions, historicalPrices, saleAllocationsBySaleId, snapshotDate])
 
   const hasInsufficientCashForBuy = Boolean(
     data && Number.isFinite(buyTotalCost) && buyTotalCost > Number(data.availableCash)
   )
 
   const performanceClassName =
-    stockPerformance == null || !Number.isFinite(stockPerformance)
+    snapshot.performance == null || !Number.isFinite(snapshot.performance)
       ? 'value'
-      : stockPerformance > 0
+      : snapshot.performance > 0
         ? 'value value-positive'
-        : stockPerformance < 0
+        : snapshot.performance < 0
           ? 'value value-negative'
           : 'value'
 
@@ -300,14 +500,24 @@ export default function DashboardPage() {
 
     try {
       const today = new Date().toISOString().slice(0, 10)
-      const [summary, transactionsResult, settingsResult, displayLotsResult, purchaseLotsResult, historicalPricesResult] = await Promise.all([
+      const [summary, transactionsResult, cashTransactionsResult, settingsResult, displayLotsResult, purchaseLotsResult, historicalPricesResult] = await Promise.all([
         getPortfolioSummary(),
         getStockTransactions(),
+        getCashTransactions(),
         getUserTargetSettings(),
         getDisplayLots(),
         getPurchaseLots(),
         getHistoricalPrices('1980-01-01', today),
       ])
+
+      const sellTransactions = transactionsResult.filter((tx) => tx.type === 'sell')
+      const allocationEntries = await Promise.all(
+        sellTransactions.map(async (tx) => {
+          const rows = await getSaleAllocations(tx.id)
+          return [tx.id, rows] as const
+        })
+      )
+      setSaleAllocationsBySaleId(Object.fromEntries(allocationEntries))
 
       const normalizedSettings = normalizeSettings(settingsResult)
       const latestByTicker = buildLatestBuyOrSellByTicker(transactionsResult)
@@ -324,21 +534,15 @@ export default function DashboardPage() {
       }
 
       setData(summary)
+      setStockTransactions(transactionsResult)
+      setCashTransactions(cashTransactionsResult)
+      setHistoricalPrices(historicalPricesResult)
       setSaleTargetsByTicker(calculateSaleTargetsByTicker(summary, latestByTicker, normalizedSettings.saleTargetPercent))
       setBuyTargetsByTicker(calculateBuyTargetsByTicker(summary, latestByTicker, displayLotCountsByTicker, normalizedSettings))
 
       const latestHistoricalPriceByTicker = buildLatestHistoricalPriceByTicker(historicalPricesResult)
-      const nextHoldingsMarketValue = calculateHoldingsMarketValue(summary, latestHistoricalPriceByTicker)
-      const nextStockCostBasisExcludingDividends = calculateStockCostBasisExcludingDividends(purchaseLotsResult)
-      const nextStockCostBasisExcludingDividendsByTicker = calculateStockCostBasisExcludingDividendsByTicker(purchaseLotsResult)
-      const nextStockPerformance = nextHoldingsMarketValue == null
-        ? null
-        : nextHoldingsMarketValue - nextStockCostBasisExcludingDividends
 
-      setHoldingsMarketValue(nextHoldingsMarketValue)
-      setStockCostBasisExcludingDividends(nextStockCostBasisExcludingDividends)
-      setStockCostBasisExcludingDividendsByTicker(nextStockCostBasisExcludingDividendsByTicker)
-      setStockPerformance(nextStockPerformance)
+      setLatestHistoricalPriceByTicker(latestHistoricalPriceByTicker)
 
       setLastUpdatedAt(new Date())
     } catch (err: unknown) {
@@ -455,10 +659,21 @@ export default function DashboardPage() {
       <div className="panel row-between">
         <div>
           <h2>Dashboard (MVP)</h2>
-          <p>Portfolio summary from a single backend endpoint. Refreshes after cash and stock mutations.</p>
+          <p>Portfolio snapshot by date using transaction history and stored historical prices.</p>
         </div>
         <div className="stack-right">
           <div className="inline-actions">
+            <label>
+              Snapshot Date
+              <input
+                type="date"
+                min="1980-01-01"
+                max={new Date().toISOString().slice(0, 10)}
+                value={snapshotDate}
+                onChange={(event) => setSnapshotDate(event.target.value)}
+                style={{ marginLeft: '0.5rem', marginRight: '0.5rem' }}
+              />
+            </label>
             <button className="button button-primary" type="button" onClick={openAddStockModal}>
               Add Stock
             </button>
@@ -488,13 +703,13 @@ export default function DashboardPage() {
       {!loading && data ? (
         <>
           <div className="panel stat-grid">
-            <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(data.availableCash)}</div></div>
-            <div className="stat"><div className="label">Cash Basis</div><div className="value">{formatCurrency2(data.cashBasis)}</div></div>
-            <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{formatCurrency2(holdingsMarketValue)}</div></div>
-            <div className="stat"><div className="label">Performance</div><div className={performanceClassName}>{formatCurrency2(stockPerformance)}</div></div>
-            <div className="stat"><div className="label">Adjustments</div><div className="value">{formatCurrency2(data.adjustments)}</div></div>
-            <div className="stat"><div className="label">Stock Cost Basis (No Div)</div><div className="value">{formatCurrency2(stockCostBasisExcludingDividends)}</div></div>
-            <div className="stat"><div className="label">Stock Count</div><div className="value">{data.stockCount}</div></div>
+            <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(snapshot.availableCash)}</div></div>
+            <div className="stat"><div className="label">Cash Basis</div><div className="value">{formatCurrency2(snapshot.cashBasis)}</div></div>
+            <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{formatCurrency2(snapshot.holdingsMarketValue)}</div></div>
+            <div className="stat"><div className="label">Performance</div><div className={performanceClassName}>{formatCurrency2(snapshot.performance)}</div></div>
+            <div className="stat"><div className="label">Adjustments</div><div className="value">{formatCurrency2(snapshot.adjustments)}</div></div>
+            <div className="stat"><div className="label">Stock Cost Basis (No Div)</div><div className="value">{formatCurrency2(snapshot.stockCostBasisExcludingDividends)}</div></div>
+            <div className="stat"><div className="label">Stock Count</div><div className="value">{snapshot.stockCount}</div></div>
           </div>
 
           <div className="panel">
@@ -504,6 +719,8 @@ export default function DashboardPage() {
                 <tr>
                   <th>Ticker</th>
                   <th>Total Shares</th>
+                  <th>Price</th>
+                  <th>Market Value</th>
                   <th>Cost Basis</th>
                   <th>Buy Target</th>
                   <th>Sale Target</th>
@@ -511,7 +728,7 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {data.stocks.map((row) => (
+                {snapshot.holdings.map((row) => (
                   <tr key={row.ticker}>
                     <td>
                       <Link className="link-button" to={`/stocks/${encodeURIComponent(row.ticker)}`}>
@@ -519,10 +736,12 @@ export default function DashboardPage() {
                       </Link>
                     </td>
                     <td>{formatShares(row.totalShares)}</td>
-                    <td>{formatCurrency2(stockCostBasisExcludingDividendsByTicker[row.ticker] ?? 0)}</td>
+                    <td>{formatStockPrice4(row.latestPrice)}</td>
+                    <td>{formatCurrency2(row.marketValue)}</td>
+                    <td>{formatCurrency2(snapshot.stockCostBasisExcludingDividendsByTicker[row.ticker] ?? 0)}</td>
                     <td>{formatStockPrice4(buyTargetsByTicker[row.ticker] ?? null)}</td>
                     <td>{formatStockPrice4(saleTargetsByTicker[row.ticker] ?? null)}</td>
-                    <td>{row.lotCount}</td>
+                    <td>{snapshot.lotCountByTicker[row.ticker] ?? 0}</td>
                   </tr>
                 ))}
               </tbody>
