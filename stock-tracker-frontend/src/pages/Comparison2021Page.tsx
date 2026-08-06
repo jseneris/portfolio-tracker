@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   CashTransaction,
   getPortfolioComparisonByYear,
@@ -77,6 +77,7 @@ export default function Comparison2021Page() {
   const [success, setSuccess] = useState<string | null>(null)
   const [missingPriceWarning, setMissingPriceWarning] = useState<string | null>(null)
   const [startingReferencePoint, setStartingReferencePoint] = useState<{ date: string; portfolioValue: number } | null>(null)
+  const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null)
 
   const availableYears = useMemo(() => {
     const years = new Set<number>()
@@ -191,6 +192,15 @@ export default function Comparison2021Page() {
     const margin = { top: 18, right: 16, bottom: 56, left: 80 }
     const plotWidth = width - margin.left - margin.right
     const plotHeight = height - margin.top - margin.bottom
+    const yRange = Math.max(maxY - minY, 1)
+
+    function getXForIndex(index: number): number {
+      return margin.left + (points.length > 1 ? (index * plotWidth) / (points.length - 1) : plotWidth / 2)
+    }
+
+    function getYForValue(value: number): number {
+      return margin.top + plotHeight - ((value - minY) / yRange) * plotHeight
+    }
 
     const portfolioPath = buildPath(
       points,
@@ -211,11 +221,8 @@ export default function Comparison2021Page() {
           return null
         }
 
-        const x =
-          margin.left +
-          (points.length > 1 ? (index * plotWidth) / (points.length - 1) : plotWidth / 2)
-        const yRange = Math.max(maxY - minY, 1)
-        const pointY = margin.top + plotHeight - ((point.cashCostBasis - minY) / yRange) * plotHeight
+        const x = getXForIndex(index)
+        const pointY = getYForValue(point.cashCostBasis)
         const baselineY = margin.top + plotHeight
         const width = Math.max(12, Math.min(40, plotWidth / Math.max(points.length, 1) / 0.9))
         const y = Math.min(pointY, baselineY)
@@ -277,12 +284,29 @@ export default function Comparison2021Page() {
     const xTickStep = Math.max(1, Math.ceil(points.length / maxXTicks))
     const xTicks = points
       .map((point, index) => {
-        const x =
-          margin.left +
-          (points.length > 1 ? (index * plotWidth) / (points.length - 1) : plotWidth / 2)
+        const x = getXForIndex(index)
         return { date: point.date, x, index }
       })
       .filter((tick) => tick.index % xTickStep === 0 || tick.index === points.length - 1)
+
+    const plottedPoints = points.map((point, index) => {
+      const x = getXForIndex(index)
+      return {
+        index,
+        date: point.date,
+        x,
+        portfolioValue: point.portfolioValue,
+        cashCostBasis: point.cashCostBasis,
+        dowBenchmarkValue: point.dowBenchmarkValue,
+        nasdaqBenchmarkValue: point.nasdaqBenchmarkValue,
+        sp500BenchmarkValue: point.sp500BenchmarkValue,
+        portfolioY: getYForValue(point.portfolioValue),
+        cashBasisY: getYForValue(point.cashCostBasis),
+        dowY: getYForValue(point.dowBenchmarkValue),
+        nasdaqY: getYForValue(point.nasdaqBenchmarkValue),
+        sp500Y: getYForValue(point.sp500BenchmarkValue),
+      }
+    })
 
     return {
       width,
@@ -299,8 +323,62 @@ export default function Comparison2021Page() {
       sp500Path,
       yTicks,
       xTicks,
+      plottedPoints,
     }
   }, [points])
+
+  const hoveredPoint = useMemo(() => {
+    if (!chart || hoveredPointIndex == null) {
+      return null
+    }
+
+    return chart.plottedPoints[hoveredPointIndex] ?? null
+  }, [chart, hoveredPointIndex])
+
+  const hoverTooltip = useMemo(() => {
+    if (!chart || !hoveredPoint) {
+      return null
+    }
+
+    const tooltipWidth = 232
+    const tooltipHeight = 128
+    const minX = 8
+    const maxX = chart.width - tooltipWidth - 8
+    const x = Math.max(minX, Math.min(maxX, hoveredPoint.x + 12))
+    const y = chart.margin.top + 8
+
+    return {
+      x,
+      y,
+      width: tooltipWidth,
+      height: tooltipHeight,
+    }
+  }, [chart, hoveredPoint])
+
+  function handleChartMouseMove(event: ReactMouseEvent<SVGSVGElement>) {
+    if (!chart || chart.plottedPoints.length === 0) {
+      return
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect()
+    if (rect.width <= 0) {
+      return
+    }
+
+    const pointerX = ((event.clientX - rect.left) / rect.width) * chart.width
+    const minX = chart.margin.left
+    const maxX = chart.margin.left + chart.plotWidth
+    const clampedX = Math.max(minX, Math.min(maxX, pointerX))
+    const ratio = chart.plotWidth > 0 ? (clampedX - chart.margin.left) / chart.plotWidth : 0
+    const rawIndex = Math.round(ratio * (chart.plottedPoints.length - 1))
+    const nextIndex = Math.max(0, Math.min(chart.plottedPoints.length - 1, rawIndex))
+
+    setHoveredPointIndex((previous) => (previous === nextIndex ? previous : nextIndex))
+  }
+
+  function handleChartMouseLeave() {
+    setHoveredPointIndex(null)
+  }
 
   async function loadTransactions() {
     try {
@@ -535,6 +613,10 @@ export default function Comparison2021Page() {
     void loadComparison(selectedYear)
   }, [selectedYear])
 
+  useEffect(() => {
+    setHoveredPointIndex(null)
+  }, [selectedYear, points])
+
   return (
     <section>
       <div className="panel row-between">
@@ -587,6 +669,8 @@ export default function Comparison2021Page() {
               viewBox={`0 0 ${chart.width} ${chart.height}`}
               role="img"
               aria-label="Portfolio value and cash basis comparison chart"
+              onMouseMove={handleChartMouseMove}
+              onMouseLeave={handleChartMouseLeave}
             >
               <line
                 x1={chart.margin.left}
@@ -664,6 +748,36 @@ export default function Comparison2021Page() {
               <path d={chart.sp500Path} fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
               <path d={chart.dowPath} fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
               <path d={chart.portfolioPath} fill="none" stroke="#16a34a" strokeWidth="3" strokeLinecap="round" />
+
+              {hoveredPoint ? (
+                <>
+                  <line
+                    className="comparison-hover-crosshair"
+                    x1={hoveredPoint.x}
+                    y1={chart.margin.top}
+                    x2={hoveredPoint.x}
+                    y2={chart.margin.top + chart.plotHeight}
+                  />
+
+                  <circle className="comparison-hover-point comparison-hover-point-portfolio" cx={hoveredPoint.x} cy={hoveredPoint.portfolioY} r="4" />
+                  <circle className="comparison-hover-point comparison-hover-point-basis" cx={hoveredPoint.x} cy={hoveredPoint.cashBasisY} r="3.5" />
+                  <circle className="comparison-hover-point comparison-hover-point-dow" cx={hoveredPoint.x} cy={hoveredPoint.dowY} r="3.5" />
+                  <circle className="comparison-hover-point comparison-hover-point-nasdaq" cx={hoveredPoint.x} cy={hoveredPoint.nasdaqY} r="3.5" />
+                  <circle className="comparison-hover-point comparison-hover-point-sp500" cx={hoveredPoint.x} cy={hoveredPoint.sp500Y} r="3.5" />
+
+                  {hoverTooltip ? (
+                    <g className="comparison-hover-tooltip" transform={`translate(${hoverTooltip.x}, ${hoverTooltip.y})`}>
+                      <rect width={hoverTooltip.width} height={hoverTooltip.height} rx="8" />
+                      <text x="12" y="18">Date: {formatDateShort(hoveredPoint.date)}</text>
+                      <text x="12" y="38">Portfolio: {formatCurrency2(hoveredPoint.portfolioValue)}</text>
+                      <text x="12" y="56">Cash Basis: {formatCurrency2(hoveredPoint.cashCostBasis)}</text>
+                      <text x="12" y="74">DOW: {formatCurrency2(hoveredPoint.dowBenchmarkValue)}</text>
+                      <text x="12" y="92">Nasdaq: {formatCurrency2(hoveredPoint.nasdaqBenchmarkValue)}</text>
+                      <text x="12" y="110">S&amp;P 500: {formatCurrency2(hoveredPoint.sp500BenchmarkValue)}</text>
+                    </g>
+                  ) : null}
+                </>
+              ) : null}
             </svg>
             <div className="comparison-legend">
               <span><i className="legend-dot legend-dot-portfolio" />Portfolio Value</span>

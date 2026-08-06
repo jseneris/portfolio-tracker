@@ -25,6 +25,16 @@ function formatDate(value: string) {
   return date.toLocaleDateString(undefined, { timeZone: 'UTC' })
 }
 
+function getPerformanceClassName(value: number) {
+  if (value > 0) {
+    return 'value-positive'
+  }
+  if (value < 0) {
+    return 'value-negative'
+  }
+  return ''
+}
+
 export default function StocksPage() {
   const [allTransactions, setAllTransactions] = useState<StockTransaction[]>([])
   const [transactions, setTransactions] = useState<StockTransaction[]>([])
@@ -51,6 +61,38 @@ export default function StocksPage() {
       .map(([ticker]) => ticker)
       .sort((a, b) => a.localeCompare(b))
   }, [allTransactions])
+
+  const closedHoldingsWithPerformance = useMemo(() => {
+    const byTicker = new Map<string, { buyTotal: number; sellTotal: number }>()
+
+    for (const transaction of allTransactions) {
+      const ticker = String(transaction.ticker || '').toUpperCase()
+      if (!ticker) {
+        continue
+      }
+
+      const amount = Number(transaction.amount)
+      const safeAmount = Number.isFinite(amount) ? amount : 0
+      const existing = byTicker.get(ticker) ?? { buyTotal: 0, sellTotal: 0 }
+
+      if (transaction.type === 'buy') {
+        existing.buyTotal += safeAmount
+      } else if (transaction.type === 'sell') {
+        existing.sellTotal += safeAmount
+      }
+
+      byTicker.set(ticker, existing)
+    }
+
+    return closedHoldings.map((ticker) => {
+      const totals = byTicker.get(ticker) ?? { buyTotal: 0, sellTotal: 0 }
+      const salesPerformance = totals.sellTotal - totals.buyTotal
+      return {
+        ticker,
+        salesPerformance,
+      }
+    })
+  }, [allTransactions, closedHoldings])
 
   async function loadTransactions() {
     setLoading(true)
@@ -101,18 +143,31 @@ export default function StocksPage() {
         <p>Tickers you no longer hold. Use links below to view full stock history.</p>
         {loading ? (
           <p>Loading closed holdings...</p>
-        ) : closedHoldings.length === 0 ? (
+        ) : closedHoldingsWithPerformance.length === 0 ? (
           <p>No closed holdings yet.</p>
         ) : (
-          <ul>
-            {closedHoldings.map((ticker) => (
-              <li key={ticker}>
-                <Link className="link-button" to={`/stocks/${encodeURIComponent(ticker)}`}>
-                  {ticker}
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th>Sales Performance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {closedHoldingsWithPerformance.map((holding) => (
+                <tr key={holding.ticker}>
+                  <td>
+                    <Link className="link-button" to={`/stocks/${encodeURIComponent(holding.ticker)}`}>
+                      {holding.ticker}
+                    </Link>
+                  </td>
+                  <td className={getPerformanceClassName(holding.salesPerformance)}>
+                    {formatCurrency2(holding.salesPerformance)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 

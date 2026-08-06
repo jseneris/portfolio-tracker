@@ -66,29 +66,22 @@ function toDateOnly(value: string): string {
   return value.slice(0, 10)
 }
 
-function buildLatestHistoricalPriceByTicker(rows: Array<{ ticker: string; priceDate: string; closePrice: number }>): Record<string, number> {
-  const latestByTicker: Record<string, { date: string; price: number }> = {}
-
-  for (const row of rows) {
-    const ticker = String(row.ticker || '').toUpperCase()
-    const priceDate = String(row.priceDate || '')
-    const closePrice = Number(row.closePrice)
-
-    if (!ticker || !priceDate || !Number.isFinite(closePrice)) {
-      continue
-    }
-
-    const existing = latestByTicker[ticker]
-    if (!existing || priceDate > existing.date) {
-      latestByTicker[ticker] = { date: priceDate, price: closePrice }
-    }
+function subtractDaysFromDateOnly(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) {
+    return value
   }
+  date.setUTCDate(date.getUTCDate() - days)
+  return date.toISOString().slice(0, 10)
+}
 
-  const flattened: Record<string, number> = {}
-  for (const [ticker, row] of Object.entries(latestByTicker)) {
-    flattened[ticker] = row.price
+function addDaysToDateOnly(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) {
+    return value
   }
-  return flattened
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
 }
 
 function calculateStockCostBasisExcludingDividends(lots: PurchaseLot[]): number {
@@ -156,7 +149,8 @@ export default function DashboardPage() {
   const [addStockSaving, setAddStockSaving] = useState(false)
   const [showAddStockModal, setShowAddStockModal] = useState(false)
   const [addStockForm, setAddStockForm] = useState<AddStockFormState>(EMPTY_ADD_STOCK_FORM)
-  const [loading, setLoading] = useState(true)
+  const [summaryLoading, setSummaryLoading] = useState(true)
+  const [holdingsLoading, setHoldingsLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
   const [saleTargetsByTicker, setSaleTargetsByTicker] = useState<Record<string, number | null>>({})
@@ -166,6 +160,7 @@ export default function DashboardPage() {
   const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([])
   const [historicalPrices, setHistoricalPrices] = useState<HistoricalPrice[]>([])
   const [saleAllocationsBySaleId, setSaleAllocationsBySaleId] = useState<Record<string, SaleAllocation[]>>({})
+  const [historicalLoadedEndDate, setHistoricalLoadedEndDate] = useState<string | null>(null)
 
   function normalizePositivePercent(value: unknown, fallback: number): number {
     const parsed = Number(value)
@@ -284,8 +279,6 @@ export default function DashboardPage() {
   const buyTotalCost = Number.isFinite(buyShares) && Number.isFinite(buyPrice)
     ? buyShares * buyPrice
     : NaN
-
-  const [latestHistoricalPriceByTicker, setLatestHistoricalPriceByTicker] = useState<Record<string, number>>({})
 
   const snapshot = useMemo(() => {
     const LOT_TOLERANCE = 1e-6
@@ -481,6 +474,43 @@ export default function DashboardPage() {
     data && Number.isFinite(buyTotalCost) && buyTotalCost > Number(data.availableCash)
   )
 
+  const summaryHoldings = useMemo(() => {
+    return (data?.stocks ?? [])
+      .map((stock) => ({
+        ticker: String(stock.ticker || '').toUpperCase(),
+        totalShares: Number(stock.totalShares || 0),
+        costBasis: Number(stock.costBasis || 0),
+        lotCount: Number(stock.lotCount || 0),
+      }))
+      .filter((row) => row.ticker && Number.isFinite(row.totalShares) && row.totalShares > 1e-6)
+      .sort((a, b) => a.ticker.localeCompare(b.ticker))
+  }, [data])
+
+  const holdingsRows = useMemo(() => {
+    const snapshotByTicker = new Map(
+      snapshot.holdings.map((row) => [row.ticker, row] as const)
+    )
+
+    return summaryHoldings.map((row) => {
+      const hydrated = snapshotByTicker.get(row.ticker)
+      const hasSnapshotCostBasis = Object.prototype.hasOwnProperty.call(
+        snapshot.stockCostBasisExcludingDividendsByTicker,
+        row.ticker
+      )
+
+      return {
+        ticker: row.ticker,
+        totalShares: hydrated?.totalShares ?? row.totalShares,
+        latestPrice: hydrated?.latestPrice ?? null,
+        marketValue: hydrated?.marketValue ?? null,
+        costBasis: hasSnapshotCostBasis
+          ? Number(snapshot.stockCostBasisExcludingDividendsByTicker[row.ticker] ?? 0)
+          : row.costBasis,
+        lotCount: Number(snapshot.lotCountByTicker[row.ticker] ?? row.lotCount),
+      }
+    })
+  }, [summaryHoldings, snapshot.holdings, snapshot.stockCostBasisExcludingDividendsByTicker, snapshot.lotCountByTicker])
+
   const performanceClassName =
     snapshot.performance == null || !Number.isFinite(snapshot.performance)
       ? 'value'
@@ -494,21 +524,45 @@ export default function DashboardPage() {
     if (backgroundRefresh) {
       setRefreshing(true)
     } else {
-      setLoading(true)
+      setSummaryLoading(true)
     }
+    setHoldingsLoading(true)
     setError(null)
 
     try {
+      const summary = await getPortfolioSummary()
+      setData(summary)
+
       const today = new Date().toISOString().slice(0, 10)
-      const [summary, transactionsResult, cashTransactionsResult, settingsResult, displayLotsResult, purchaseLotsResult, historicalPricesResult] = await Promise.all([
-        getPortfolioSummary(),
+      const historicalEndDate = snapshotDate < today ? snapshotDate : today
+      const [transactionsResult, cashTransactionsResult, settingsResult, displayLotsResult, purchaseLotsResult] = await Promise.all([
         getStockTransactions(),
         getCashTransactions(),
         getUserTargetSettings(),
         getDisplayLots(),
         getPurchaseLots(),
-        getHistoricalPrices('1980-01-01', today),
       ])
+
+      const earliestTransactionDate = transactionsResult.reduce((earliest, tx) => {
+        const txDate = toDateOnly(tx.transactionDate)
+        if (!txDate) {
+          return earliest
+        }
+        if (!earliest || txDate < earliest) {
+          return txDate
+        }
+        return earliest
+      }, '')
+
+      // Include a short pre-transaction buffer so weekend/holiday snapshots can
+      // still resolve to the nearest prior market close.
+      const historicalStartDate = earliestTransactionDate
+        ? subtractDaysFromDateOnly(earliestTransactionDate, 14)
+        : historicalEndDate
+
+      const historicalPricesResult = transactionsResult.length > 0
+        ? await getHistoricalPrices(historicalStartDate, historicalEndDate)
+        : []
 
       const sellTransactions = transactionsResult.filter((tx) => tx.type === 'sell')
       const allocationEntries = await Promise.all(
@@ -537,18 +591,16 @@ export default function DashboardPage() {
       setStockTransactions(transactionsResult)
       setCashTransactions(cashTransactionsResult)
       setHistoricalPrices(historicalPricesResult)
+      setHistoricalLoadedEndDate(historicalEndDate)
       setSaleTargetsByTicker(calculateSaleTargetsByTicker(summary, latestByTicker, normalizedSettings.saleTargetPercent))
       setBuyTargetsByTicker(calculateBuyTargetsByTicker(summary, latestByTicker, displayLotCountsByTicker, normalizedSettings))
-
-      const latestHistoricalPriceByTicker = buildLatestHistoricalPriceByTicker(historicalPricesResult)
-
-      setLatestHistoricalPriceByTicker(latestHistoricalPriceByTicker)
 
       setLastUpdatedAt(new Date())
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to load summary')
     } finally {
-      setLoading(false)
+      setSummaryLoading(false)
+      setHoldingsLoading(false)
       setRefreshing(false)
     }
   }
@@ -566,6 +618,63 @@ export default function DashboardPage() {
       window.removeEventListener(PORTFOLIO_UPDATED_EVENT, handlePortfolioUpdated)
     }
   }, [])
+
+  useEffect(() => {
+    if (stockTransactions.length === 0 || !historicalLoadedEndDate) {
+      return
+    }
+
+    const today = new Date().toISOString().slice(0, 10)
+    const targetEndDate = snapshotDate < today ? snapshotDate : today
+    if (targetEndDate <= historicalLoadedEndDate) {
+      return
+    }
+
+    const incrementalStartDate = addDaysToDateOnly(historicalLoadedEndDate, 1)
+    if (incrementalStartDate > targetEndDate) {
+      return
+    }
+
+    let cancelled = false
+
+    async function loadForwardHistoricalRange() {
+      setHoldingsLoading(true)
+      try {
+        const nextRows = await getHistoricalPrices(incrementalStartDate, targetEndDate)
+        if (cancelled) {
+          return
+        }
+
+        if (nextRows.length > 0) {
+          setHistoricalPrices((previous) => {
+            const merged = [...previous, ...nextRows]
+            const deduped = new Map<string, HistoricalPrice>()
+            for (const row of merged) {
+              const key = `${String(row.ticker || '').toUpperCase()}|${String(row.priceDate || '')}|${String(row.source || '')}`
+              deduped.set(key, row)
+            }
+            return Array.from(deduped.values())
+          })
+        }
+
+        setHistoricalLoadedEndDate(targetEndDate)
+      } catch (err: unknown) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Unable to load historical prices for selected snapshot date')
+        }
+      } finally {
+        if (!cancelled) {
+          setHoldingsLoading(false)
+        }
+      }
+    }
+
+    void loadForwardHistoricalRange()
+
+    return () => {
+      cancelled = true
+    }
+  }, [snapshotDate, stockTransactions.length, historicalLoadedEndDate])
 
   function openAddStockModal() {
     setAddStockError(null)
@@ -687,7 +796,7 @@ export default function DashboardPage() {
 
       {error ? <div className="panel status status-error">{error}</div> : null}
 
-      {loading ? (
+      {summaryLoading && !data ? (
         <>
           <div className="panel skeleton-grid">
             <div className="skeleton-card" />
@@ -700,20 +809,21 @@ export default function DashboardPage() {
         </>
       ) : null}
 
-      {!loading && data ? (
+      {data ? (
         <>
           <div className="panel stat-grid">
-            <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(snapshot.availableCash)}</div></div>
-            <div className="stat"><div className="label">Cash Basis</div><div className="value">{formatCurrency2(snapshot.cashBasis)}</div></div>
-            <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{formatCurrency2(snapshot.holdingsMarketValue)}</div></div>
-            <div className="stat"><div className="label">Performance</div><div className={performanceClassName}>{formatCurrency2(snapshot.performance)}</div></div>
-            <div className="stat"><div className="label">Adjustments</div><div className="value">{formatCurrency2(snapshot.adjustments)}</div></div>
-            <div className="stat"><div className="label">Stock Cost Basis (No Div)</div><div className="value">{formatCurrency2(snapshot.stockCostBasisExcludingDividends)}</div></div>
-            <div className="stat"><div className="label">Stock Count</div><div className="value">{snapshot.stockCount}</div></div>
+            <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(data.availableCash)}</div></div>
+            <div className="stat"><div className="label">Cash Basis</div><div className="value">{formatCurrency2(data.cashBasis)}</div></div>
+            <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(snapshot.holdingsMarketValue)}</div></div>
+            <div className="stat"><div className="label">Performance</div><div className={performanceClassName}>{holdingsLoading ? 'Loading...' : formatCurrency2(snapshot.performance)}</div></div>
+            <div className="stat"><div className="label">Adjustments</div><div className="value">{formatCurrency2(data.adjustments)}</div></div>
+            <div className="stat"><div className="label">Stock Cost Basis (No Div)</div><div className="value">{formatCurrency2(data.totalStockCostBasis)}</div></div>
+            <div className="stat"><div className="label">Stock Count</div><div className="value">{data.stockCount}</div></div>
           </div>
 
           <div className="panel">
             <h3>Holdings</h3>
+            {holdingsLoading ? <p>Loading prices and market values...</p> : null}
             <table className="table">
               <thead>
                 <tr>
@@ -728,7 +838,7 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {snapshot.holdings.map((row) => (
+                {holdingsRows.map((row) => (
                   <tr key={row.ticker}>
                     <td>
                       <Link className="link-button" to={`/stocks/${encodeURIComponent(row.ticker)}`}>
@@ -736,12 +846,36 @@ export default function DashboardPage() {
                       </Link>
                     </td>
                     <td>{formatShares(row.totalShares)}</td>
-                    <td>{formatStockPrice4(row.latestPrice)}</td>
-                    <td>{formatCurrency2(row.marketValue)}</td>
-                    <td>{formatCurrency2(snapshot.stockCostBasisExcludingDividendsByTicker[row.ticker] ?? 0)}</td>
-                    <td>{formatStockPrice4(buyTargetsByTicker[row.ticker] ?? null)}</td>
-                    <td>{formatStockPrice4(saleTargetsByTicker[row.ticker] ?? null)}</td>
-                    <td>{snapshot.lotCountByTicker[row.ticker] ?? 0}</td>
+                    <td>
+                      {holdingsLoading && row.latestPrice == null ? (
+                        <span className="table-skeleton table-skeleton-sm" aria-label="Loading price" />
+                      ) : (
+                        formatStockPrice4(row.latestPrice)
+                      )}
+                    </td>
+                    <td>
+                      {holdingsLoading && row.marketValue == null ? (
+                        <span className="table-skeleton table-skeleton-md" aria-label="Loading market value" />
+                      ) : (
+                        formatCurrency2(row.marketValue)
+                      )}
+                    </td>
+                    <td>{formatCurrency2(row.costBasis)}</td>
+                    <td>
+                      {holdingsLoading && buyTargetsByTicker[row.ticker] == null ? (
+                        <span className="table-skeleton table-skeleton-sm" aria-label="Loading buy target" />
+                      ) : (
+                        formatStockPrice4(buyTargetsByTicker[row.ticker] ?? null)
+                      )}
+                    </td>
+                    <td>
+                      {holdingsLoading && saleTargetsByTicker[row.ticker] == null ? (
+                        <span className="table-skeleton table-skeleton-sm" aria-label="Loading sale target" />
+                      ) : (
+                        formatStockPrice4(saleTargetsByTicker[row.ticker] ?? null)
+                      )}
+                    </td>
+                    <td>{row.lotCount}</td>
                   </tr>
                 ))}
               </tbody>

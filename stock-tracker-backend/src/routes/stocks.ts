@@ -13,7 +13,6 @@ const HISTORICAL_PRICE_SOURCE = 'yahoo-finance';
 const HISTORICAL_2021_START_DATE = '2021-01-01';
 const HISTORICAL_2021_END_DATE = '2021-12-31';
 const HISTORICAL_SYNC_2021_MAX_ROWS_PER_RUN = 10000;
-const BACKDATED_LOOKAHEAD_DAYS = 180;
 const DOW_BENCHMARK_TICKER = '^DJI';
 const NASDAQ_BENCHMARK_TICKER = '^IXIC';
 const SP500_BENCHMARK_TICKER = '^GSPC';
@@ -355,7 +354,7 @@ router.post('/historical-prices/sync-year', async (req: Request, res: Response) 
       .filter((d) => !!d)
       .sort();
 
-    const firstAnchorDate = cashPriorityDates[0] ?? targetEndDate;
+    const firstAnchorDate = targetStartDate;
 
     const priorityDateSet = new Set<string>(
       (dateRows.recordset ?? [])
@@ -399,50 +398,6 @@ router.post('/historical-prices/sync-year', async (req: Request, res: Response) 
       .map((row: any) => String(row.ticker || '').toUpperCase())
       .filter((t) => !!t);
 
-    const firstTransactionRows = await pool.request()
-      .input('userId', sql.NVarChar, userId)
-      .input('targetEndDate', sql.Date, parseDateOnly(targetEndDate))
-      .query(`
-        SELECT
-          ticker,
-          CONVERT(VARCHAR(10), MIN(transactionDate), 23) AS firstTransactionDate
-        FROM StockTransactions
-        WHERE userId = @userId
-          AND transactionDate <= @targetEndDate
-        GROUP BY ticker
-      `);
-
-    const firstTransactionDateByTicker = new Map<string, string>();
-    for (const row of firstTransactionRows.recordset ?? []) {
-      const ticker = String((row as any).ticker || '').toUpperCase();
-      const firstTransactionDate = String((row as any).firstTransactionDate || '');
-      if (!ticker || !firstTransactionDate) {
-        continue;
-      }
-      firstTransactionDateByTicker.set(ticker, firstTransactionDate);
-    }
-
-    let splitsDiscovered = 0;
-    let splitsInserted = 0;
-    const splitSearchEndDate = toIsoDate(getUtcTodayDateOnly());
-    for (const ticker of userTickers) {
-      const splitStartDate = firstTransactionDateByTicker.get(ticker);
-      if (!splitStartDate) {
-        continue;
-      }
-
-      const splitSummary = await fetchAndPersistMissingSplitsForTicker(
-        pool,
-        userId,
-        ticker,
-        splitStartDate,
-        splitSearchEndDate
-      );
-
-      splitsDiscovered += splitSummary.splitsDiscovered;
-      splitsInserted += splitSummary.splitsInserted;
-    }
-
     const tickers = Array.from(new Set([
       ...userTickers,
       DOW_BENCHMARK_TICKER,
@@ -461,10 +416,10 @@ router.post('/historical-prices/sync-year', async (req: Request, res: Response) 
         tickers,
         storedRows: 0,
         missingPrices: [],
-        splitCheckPerformed: true,
-        splitTickersChecked: userTickers.length,
-        splitsDiscovered,
-        splitsInserted,
+        splitCheckPerformed: false,
+        splitTickersChecked: 0,
+        splitsDiscovered: 0,
+        splitsInserted: 0,
       });
     }
 
@@ -514,47 +469,67 @@ router.post('/historical-prices/sync-year', async (req: Request, res: Response) 
         tickers,
         storedRows: 0,
         missingPrices: [],
-        splitCheckPerformed: true,
-        splitTickersChecked: userTickers.length,
-        splitsDiscovered,
-        splitsInserted,
+        splitCheckPerformed: false,
+        splitTickersChecked: 0,
+        splitsDiscovered: 0,
+        splitsInserted: 0,
       });
     }
 
     const earliestRequestedDate = requestedDates[0];
     const latestRequestedDate = requestedDates[requestedDates.length - 1];
     const missingPrices: Array<{ ticker: string; priceDate: string }> = [];
+    const failedTickers: Array<{ ticker: string; error: string }> = [];
     let storedRows = 0;
 
     for (const ticker of tickers) {
-      const quotes = await fetchYahooDailyCloses(ticker, earliestRequestedDate, latestRequestedDate);
+      const missingDatesForTicker = requestedDates.filter((priceDate) => {
+        const coveredTickers = coverageByDate.get(priceDate);
+        return !coveredTickers || !coveredTickers.has(ticker);
+      });
 
-      for (const priceDate of requestedDates) {
-        const matched = resolveClosestPriceOnOrBefore(quotes, priceDate);
-        if (!matched) {
-          missingPrices.push({ ticker, priceDate });
-          continue;
+      if (missingDatesForTicker.length === 0) {
+        continue;
+      }
+
+      const earliestMissingDate = missingDatesForTicker[0];
+      const latestMissingDate = missingDatesForTicker[missingDatesForTicker.length - 1];
+
+      try {
+        const quotes = await fetchYahooDailyCloses(ticker, earliestMissingDate, latestMissingDate);
+
+        for (const priceDate of missingDatesForTicker) {
+          const matched = resolveClosestPriceOnOrBefore(quotes, priceDate);
+          if (!matched) {
+            missingPrices.push({ ticker, priceDate });
+            continue;
+          }
+
+          const insertResult = await pool.request()
+            .input('ticker', sql.NVarChar, ticker)
+            .input('priceDate', sql.Date, parseDateOnly(priceDate))
+            .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
+            .input('closePrice', sql.Decimal(18, 8), matched.close)
+            .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
+            .query(`
+              INSERT INTO HistoricalPrices (id, ticker, priceDate, marketDate, closePrice, source)
+              SELECT NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM HistoricalPrices
+                WHERE ticker = @ticker
+                  AND priceDate = @priceDate
+                  AND source = @source
+              );
+            `);
+
+          storedRows += insertResult.rowsAffected?.[0] ?? 0;
         }
-
-        const insertResult = await pool.request()
-          .input('ticker', sql.NVarChar, ticker)
-          .input('priceDate', sql.Date, parseDateOnly(priceDate))
-          .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
-          .input('closePrice', sql.Decimal(18, 8), matched.close)
-          .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
-          .query(`
-            INSERT INTO HistoricalPrices (id, ticker, priceDate, marketDate, closePrice, source)
-            SELECT NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source
-            WHERE NOT EXISTS (
-              SELECT 1
-              FROM HistoricalPrices
-              WHERE ticker = @ticker
-                AND priceDate = @priceDate
-                AND source = @source
-            );
-          `);
-
-        storedRows += insertResult.rowsAffected?.[0] ?? 0;
+      } catch (tickerError) {
+        failedTickers.push({
+          ticker,
+          error: tickerError instanceof Error ? tickerError.message : String(tickerError),
+        });
       }
     }
 
@@ -568,10 +543,11 @@ router.post('/historical-prices/sync-year', async (req: Request, res: Response) 
       tickers,
       storedRows,
       missingPrices,
-      splitCheckPerformed: true,
-      splitTickersChecked: userTickers.length,
-      splitsDiscovered,
-      splitsInserted,
+      failedTickers,
+      splitCheckPerformed: false,
+      splitTickersChecked: 0,
+      splitsDiscovered: 0,
+      splitsInserted: 0,
     });
   } catch (error) {
     res.status(500).json({ error: String(error) });
@@ -602,7 +578,7 @@ router.post('/historical-prices/sync-2021', async (req: Request, res: Response) 
       .filter((d) => !!d)
       .sort();
 
-    const firstAnchorDate = cashPriorityDates[0] ?? targetEndDate;
+    const firstAnchorDate = HISTORICAL_2021_START_DATE;
 
     const priorityDateSet = new Set<string>(
       (dateRows.recordset ?? [])
@@ -717,37 +693,57 @@ router.post('/historical-prices/sync-2021', async (req: Request, res: Response) 
     const earliestRequestedDate = requestedDates[0];
     const latestRequestedDate = requestedDates[requestedDates.length - 1];
     const missingPrices: Array<{ ticker: string; priceDate: string }> = [];
+    const failedTickers: Array<{ ticker: string; error: string }> = [];
     let storedRows = 0;
 
     for (const ticker of tickers) {
-      const quotes = await fetchYahooDailyCloses(ticker, earliestRequestedDate, latestRequestedDate);
+      const missingDatesForTicker = requestedDates.filter((priceDate) => {
+        const coveredTickers = coverageByDate.get(priceDate);
+        return !coveredTickers || !coveredTickers.has(ticker);
+      });
 
-      for (const priceDate of requestedDates) {
-        const matched = resolveClosestPriceOnOrBefore(quotes, priceDate);
-        if (!matched) {
-          missingPrices.push({ ticker, priceDate });
-          continue;
+      if (missingDatesForTicker.length === 0) {
+        continue;
+      }
+
+      const earliestMissingDate = missingDatesForTicker[0];
+      const latestMissingDate = missingDatesForTicker[missingDatesForTicker.length - 1];
+
+      try {
+        const quotes = await fetchYahooDailyCloses(ticker, earliestMissingDate, latestMissingDate);
+
+        for (const priceDate of missingDatesForTicker) {
+          const matched = resolveClosestPriceOnOrBefore(quotes, priceDate);
+          if (!matched) {
+            missingPrices.push({ ticker, priceDate });
+            continue;
+          }
+
+          const insertResult = await pool.request()
+            .input('ticker', sql.NVarChar, ticker)
+            .input('priceDate', sql.Date, parseDateOnly(priceDate))
+            .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
+            .input('closePrice', sql.Decimal(18, 8), matched.close)
+            .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
+            .query(`
+              INSERT INTO HistoricalPrices (id, ticker, priceDate, marketDate, closePrice, source)
+              SELECT NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source
+              WHERE NOT EXISTS (
+                SELECT 1
+                FROM HistoricalPrices
+                WHERE ticker = @ticker
+                  AND priceDate = @priceDate
+                  AND source = @source
+              );
+            `);
+
+          storedRows += insertResult.rowsAffected?.[0] ?? 0;
         }
-
-        const insertResult = await pool.request()
-          .input('ticker', sql.NVarChar, ticker)
-          .input('priceDate', sql.Date, parseDateOnly(priceDate))
-          .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
-          .input('closePrice', sql.Decimal(18, 8), matched.close)
-          .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
-          .query(`
-            INSERT INTO HistoricalPrices (id, ticker, priceDate, marketDate, closePrice, source)
-            SELECT NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source
-            WHERE NOT EXISTS (
-              SELECT 1
-              FROM HistoricalPrices
-              WHERE ticker = @ticker
-                AND priceDate = @priceDate
-                AND source = @source
-            );
-          `);
-
-        storedRows += insertResult.rowsAffected?.[0] ?? 0;
+      } catch (tickerError) {
+        failedTickers.push({
+          ticker,
+          error: tickerError instanceof Error ? tickerError.message : String(tickerError),
+        });
       }
     }
 
@@ -759,7 +755,8 @@ router.post('/historical-prices/sync-2021', async (req: Request, res: Response) 
       remainingDates: Math.max(0, unsyncedDates.length - requestedDates.length),
       tickers,
       storedRows,
-      missingPrices
+      missingPrices,
+      failedTickers
     });
   } catch (error) {
     res.status(500).json({ error: String(error) });
@@ -792,7 +789,6 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
       const rows = await pool.request()
         .input('startDate', sql.Date, parseDateOnly(startDateQuery))
         .input('endDate', sql.Date, parseDateOnly(endDateQuery))
-        .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
         .query(`
           SELECT
             ticker,
@@ -801,8 +797,7 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
             closePrice,
             source
           FROM HistoricalPrices
-          WHERE source = @source
-            AND priceDate >= @startDate
+          WHERE priceDate >= @startDate
             AND priceDate <= @endDate
           ORDER BY priceDate ASC, ticker ASC
         `);
@@ -828,12 +823,10 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
     const dateRows = await pool.request()
       .input('startDate', sql.Date, parseDateOnly(targetStartDate))
       .input('endDate', sql.Date, parseDateOnly(targetEndDate))
-      .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
       .query(`
         SELECT DISTINCT CONVERT(VARCHAR(10), priceDate, 23) AS priceDate
         FROM HistoricalPrices
-        WHERE source = @source
-          AND priceDate >= @startDate
+        WHERE priceDate >= @startDate
           AND priceDate <= @endDate
         ORDER BY priceDate ASC
       `);
@@ -878,15 +871,13 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
     const priceRows = await pool.request()
       .input('startDate', sql.Date, parseDateOnly(earliestDate))
       .input('endDate', sql.Date, parseDateOnly(latestDate))
-      .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
       .query(`
         SELECT
           ticker,
           CONVERT(VARCHAR(10), priceDate, 23) AS priceDate,
           closePrice
         FROM HistoricalPrices
-        WHERE source = @source
-          AND priceDate >= @startDate
+        WHERE priceDate >= @startDate
           AND priceDate <= @endDate
       `);
 
@@ -1102,12 +1093,10 @@ router.get('/portfolio/comparison-2021', async (req: Request, res: Response) => 
 
     const dateRows = await pool.request()
       .input('endDate', sql.Date, parseDateOnly(HISTORICAL_2021_END_DATE))
-      .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
       .query(`
         SELECT DISTINCT CONVERT(VARCHAR(10), priceDate, 23) AS priceDate
         FROM HistoricalPrices
-        WHERE source = @source
-          AND priceDate <= @endDate
+        WHERE priceDate <= @endDate
         ORDER BY priceDate ASC
       `);
 
@@ -1154,15 +1143,13 @@ router.get('/portfolio/comparison-2021', async (req: Request, res: Response) => 
     const priceRows = await pool.request()
       .input('startDate', sql.Date, parseDateOnly(earliestDate))
       .input('endDate', sql.Date, parseDateOnly(latestDate))
-      .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
       .query(`
         SELECT
           ticker,
           CONVERT(VARCHAR(10), priceDate, 23) AS priceDate,
           closePrice
         FROM HistoricalPrices
-        WHERE source = @source
-          AND priceDate >= @startDate
+        WHERE priceDate >= @startDate
           AND priceDate <= @endDate
       `);
 
@@ -2313,98 +2300,21 @@ async function ensureBackfilledMarketDataForBackdatedTransaction(
   };
 
   const todayUtc = getUtcTodayDateOnly();
-  if (transactionDate.getTime() >= todayUtc.getTime()) {
+  const startDate = toIsoDate(transactionDate);
+  const endDate = toIsoDate(todayUtc);
+  if (startDate > endDate) {
     return summary;
   }
 
   summary.backdatedCheckPerformed = true;
 
-  const startDate = toIsoDate(transactionDate);
-  const backfillCandidateEnd = addUtcDays(parseDateOnly(startDate), BACKDATED_LOOKAHEAD_DAYS);
-  const backfillEnd = backfillCandidateEnd.getTime() < todayUtc.getTime() ? backfillCandidateEnd : todayUtc;
-  const backfillEndDate = toIsoDate(backfillEnd);
-
-  // Only backfill the 180-day window when the transaction date itself is missing.
-  const hasPriceForTransactionDate = await pool.request()
-    .input('ticker', sql.NVarChar, ticker)
-    .input('priceDate', sql.Date, parseDateOnly(startDate))
-    .query(`
-      SELECT TOP 1 id
-      FROM HistoricalPrices
-      WHERE ticker = @ticker
-        AND priceDate = @priceDate
-    `);
-
-  if (hasPriceForTransactionDate.recordset.length === 0) {
-    const requestedDates = buildDateRangeInclusive(startDate, backfillEndDate);
-
-    const existingRows = await pool.request()
-      .input('ticker', sql.NVarChar, ticker)
-      .input('startDate', sql.Date, parseDateOnly(startDate))
-      .input('endDate', sql.Date, parseDateOnly(backfillEndDate))
-      .query(`
-        SELECT CONVERT(VARCHAR(10), priceDate, 23) AS priceDate
-        FROM HistoricalPrices
-        WHERE ticker = @ticker
-          AND priceDate >= @startDate
-          AND priceDate <= @endDate
-      `);
-
-    const existingDates = new Set(
-      (existingRows.recordset ?? [])
-        .map((row: any) => String(row.priceDate || ''))
-        .filter((d) => !!d)
-    );
-
-    const missingDates = requestedDates.filter((dateText) => !existingDates.has(dateText));
-    if (missingDates.length > 0) {
-      const quotes = await fetchYahooDailyCloses(ticker, startDate, backfillEndDate);
-
-      for (const priceDate of missingDates) {
-        const matched = resolveClosestPriceOnOrBefore(quotes, priceDate);
-        if (!matched) {
-          continue;
-        }
-
-        await pool.request()
-          .input('ticker', sql.NVarChar, ticker)
-          .input('priceDate', sql.Date, parseDateOnly(priceDate))
-          .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
-          .input('closePrice', sql.Decimal(18, 8), matched.close)
-          .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
-          .query(`
-            MERGE HistoricalPrices AS target
-            USING (
-              SELECT
-                @ticker AS ticker,
-                @priceDate AS priceDate,
-                @source AS source
-            ) AS sourceRow
-            ON target.ticker = sourceRow.ticker
-               AND target.priceDate = sourceRow.priceDate
-               AND target.source = sourceRow.source
-            WHEN MATCHED THEN
-              UPDATE SET
-                marketDate = @marketDate,
-                closePrice = @closePrice,
-                updatedAt = GETUTCDATE()
-            WHEN NOT MATCHED THEN
-              INSERT (id, ticker, priceDate, marketDate, closePrice, source)
-              VALUES (NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source);
-          `);
-
-        summary.historicalPricesInserted += 1;
-      }
-    }
-  }
-
-  // Also ensure stock split rows from transaction date through today exist in DB.
+  // Ensure stock split rows from transaction date through today exist in DB.
   const splitSummary = await fetchAndPersistMissingSplitsForTicker(
     pool,
     userId,
     ticker,
     startDate,
-    toIsoDate(todayUtc)
+    endDate
   );
   summary.splitCheckPerformed = splitSummary.splitCheckPerformed;
   summary.splitsDiscovered = splitSummary.splitsDiscovered;
