@@ -45,6 +45,11 @@ interface IPricePoint {
   close: number;
 }
 
+interface IHistoricalClosePoint {
+  priceDate: string;
+  close: number;
+}
+
 interface ISplitPoint {
   splitDate: string;
   ratioNumerator: number;
@@ -846,6 +851,20 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
     const earliestDate = dates[0];
     const latestDate = dates[dates.length - 1];
 
+    const firstDepositRow = await pool.request()
+      .input('userId', sql.NVarChar, userId)
+      .input('endDate', sql.Date, parseDateOnly(latestDate))
+      .query(`
+        SELECT TOP 1 CONVERT(VARCHAR(10), transactionDate, 23) AS firstDepositDate
+        FROM CashTransactions
+        WHERE userId = @userId
+          AND type = 'deposit'
+          AND transactionDate <= DATEADD(day, 1, @endDate)
+        ORDER BY transactionDate ASC
+      `);
+
+    const referenceStartDate = String(firstDepositRow.recordset?.[0]?.firstDepositDate || earliestDate);
+
     const cashRows = await pool.request()
       .input('userId', sql.NVarChar, userId)
       .input('endDate', sql.Date, parseDateOnly(latestDate))
@@ -869,7 +888,7 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
       `);
 
     const priceRows = await pool.request()
-      .input('startDate', sql.Date, parseDateOnly(earliestDate))
+      .input('startDate', sql.Date, parseDateOnly(referenceStartDate))
       .input('endDate', sql.Date, parseDateOnly(latestDate))
       .query(`
         SELECT
@@ -896,6 +915,7 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
     }));
 
     const pricesByDate = new Map<string, Map<string, number>>();
+    const benchmarkQuotesByTicker = new Map<string, Map<string, number>>();
     for (const row of priceRows.recordset ?? []) {
       const date = String((row as any).priceDate || '');
       const ticker = String((row as any).ticker || '').toUpperCase();
@@ -906,7 +926,21 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
       const byTicker = pricesByDate.get(date) ?? new Map<string, number>();
       byTicker.set(ticker, closePrice);
       pricesByDate.set(date, byTicker);
+
+      const quotesByDate = benchmarkQuotesByTicker.get(ticker) ?? new Map<string, number>();
+      quotesByDate.set(date, closePrice);
+      benchmarkQuotesByTicker.set(ticker, quotesByDate);
     }
+
+    const dowBenchmarkQuotes = Array.from(benchmarkQuotesByTicker.get(DOW_BENCHMARK_TICKER)?.entries() ?? [])
+      .map(([priceDate, close]) => ({ priceDate, close: Number(close) }))
+      .sort((a, b) => a.priceDate.localeCompare(b.priceDate));
+    const nasdaqBenchmarkQuotes = Array.from(benchmarkQuotesByTicker.get(NASDAQ_BENCHMARK_TICKER)?.entries() ?? [])
+      .map(([priceDate, close]) => ({ priceDate, close: Number(close) }))
+      .sort((a, b) => a.priceDate.localeCompare(b.priceDate));
+    const sp500BenchmarkQuotes = Array.from(benchmarkQuotesByTicker.get(SP500_BENCHMARK_TICKER)?.entries() ?? [])
+      .map(([priceDate, close]) => ({ priceDate, close: Number(close) }))
+      .sort((a, b) => a.priceDate.localeCompare(b.priceDate));
 
     let cashIndex = 0;
     let stockIndex = 0;
@@ -918,10 +952,9 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
     let buys = 0;
     let sells = 0;
 
-    type BenchmarkLot = { shares: number };
-    const dowBenchmarkLots: BenchmarkLot[] = [];
-    const nasdaqBenchmarkLots: BenchmarkLot[] = [];
-    const sp500BenchmarkLots: BenchmarkLot[] = [];
+    let dowBenchmarkUnits = 0;
+    let nasdaqBenchmarkUnits = 0;
+    let sp500BenchmarkUnits = 0;
 
     const holdings = new Map<string, number>();
     const points: IComparisonPoint[] = [];
@@ -936,75 +969,32 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
           hasCashFlowEvent = true;
         }
 
-        const pricesForEventDate = pricesByDate.get(event.date) ?? new Map<string, number>();
-        const dowBenchmarkPrice = Number(pricesForEventDate.get(DOW_BENCHMARK_TICKER));
-        const nasdaqBenchmarkPrice = Number(pricesForEventDate.get(NASDAQ_BENCHMARK_TICKER));
-        const sp500BenchmarkPrice = Number(pricesForEventDate.get(SP500_BENCHMARK_TICKER));
-
         if (event.type === 'deposit') deposits += event.amount;
         else if (event.type === 'withdrawal') withdrawals += event.amount;
         else if (event.type === 'interest') interest += event.amount;
         else if (event.type === 'fee') fees += event.amount;
 
-        if (Number.isFinite(dowBenchmarkPrice) && dowBenchmarkPrice > 0) {
-          if (event.type === 'deposit') {
-            const purchasedShares = Number(event.amount || 0) / dowBenchmarkPrice;
-            if (purchasedShares > ALLOCATION_TOLERANCE) {
-              dowBenchmarkLots.push({ shares: purchasedShares });
-            }
-          } else if (event.type === 'withdrawal') {
-            let sharesToSell = Number(event.amount || 0) / dowBenchmarkPrice;
-            while (sharesToSell > ALLOCATION_TOLERANCE && dowBenchmarkLots.length > 0) {
-              const lot = dowBenchmarkLots[0];
-              const consumedShares = Math.min(lot.shares, sharesToSell);
-              lot.shares -= consumedShares;
-              sharesToSell -= consumedShares;
-              if (lot.shares <= ALLOCATION_TOLERANCE) {
-                dowBenchmarkLots.shift();
-              }
-            }
-          }
-        }
-
-        if (Number.isFinite(nasdaqBenchmarkPrice) && nasdaqBenchmarkPrice > 0) {
-          if (event.type === 'deposit') {
-            const purchasedShares = Number(event.amount || 0) / nasdaqBenchmarkPrice;
-            if (purchasedShares > ALLOCATION_TOLERANCE) {
-              nasdaqBenchmarkLots.push({ shares: purchasedShares });
-            }
-          } else if (event.type === 'withdrawal') {
-            let sharesToSell = Number(event.amount || 0) / nasdaqBenchmarkPrice;
-            while (sharesToSell > ALLOCATION_TOLERANCE && nasdaqBenchmarkLots.length > 0) {
-              const lot = nasdaqBenchmarkLots[0];
-              const consumedShares = Math.min(lot.shares, sharesToSell);
-              lot.shares -= consumedShares;
-              sharesToSell -= consumedShares;
-              if (lot.shares <= ALLOCATION_TOLERANCE) {
-                nasdaqBenchmarkLots.shift();
-              }
-            }
-          }
-        }
-
-        if (Number.isFinite(sp500BenchmarkPrice) && sp500BenchmarkPrice > 0) {
-          if (event.type === 'deposit') {
-            const purchasedShares = Number(event.amount || 0) / sp500BenchmarkPrice;
-            if (purchasedShares > ALLOCATION_TOLERANCE) {
-              sp500BenchmarkLots.push({ shares: purchasedShares });
-            }
-          } else if (event.type === 'withdrawal') {
-            let sharesToSell = Number(event.amount || 0) / sp500BenchmarkPrice;
-            while (sharesToSell > ALLOCATION_TOLERANCE && sp500BenchmarkLots.length > 0) {
-              const lot = sp500BenchmarkLots[0];
-              const consumedShares = Math.min(lot.shares, sharesToSell);
-              lot.shares -= consumedShares;
-              sharesToSell -= consumedShares;
-              if (lot.shares <= ALLOCATION_TOLERANCE) {
-                sp500BenchmarkLots.shift();
-              }
-            }
-          }
-        }
+        dowBenchmarkUnits = applyCashFlowToBenchmarkUnits(
+          dowBenchmarkUnits,
+          event.type,
+          event.amount,
+          event.date,
+          dowBenchmarkQuotes
+        );
+        nasdaqBenchmarkUnits = applyCashFlowToBenchmarkUnits(
+          nasdaqBenchmarkUnits,
+          event.type,
+          event.amount,
+          event.date,
+          nasdaqBenchmarkQuotes
+        );
+        sp500BenchmarkUnits = applyCashFlowToBenchmarkUnits(
+          sp500BenchmarkUnits,
+          event.type,
+          event.amount,
+          event.date,
+          sp500BenchmarkQuotes
+        );
 
         cashIndex += 1;
       }
@@ -1041,23 +1031,14 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
 
       const availableCash = deposits - withdrawals + interest - fees - buys + sells;
       const cashCostBasis = deposits - withdrawals;
-      const dowBenchmarkShares = dowBenchmarkLots.reduce((sum, lot) => sum + lot.shares, 0);
-      const dowPriceOnPointDate = Number(pricesForDate.get(DOW_BENCHMARK_TICKER));
-      const dowBenchmarkValue = Number.isFinite(dowPriceOnPointDate)
-        ? dowBenchmarkShares * dowPriceOnPointDate
-        : 0;
+      const dowBenchmarkShares = dowBenchmarkUnits;
+      const dowBenchmarkValue = calculateBenchmarkValueAtPoint(dowBenchmarkUnits, pointDate, dowBenchmarkQuotes);
 
-      const nasdaqBenchmarkShares = nasdaqBenchmarkLots.reduce((sum, lot) => sum + lot.shares, 0);
-      const nasdaqPriceOnPointDate = Number(pricesForDate.get(NASDAQ_BENCHMARK_TICKER));
-      const nasdaqBenchmarkValue = Number.isFinite(nasdaqPriceOnPointDate)
-        ? nasdaqBenchmarkShares * nasdaqPriceOnPointDate
-        : 0;
+      const nasdaqBenchmarkShares = nasdaqBenchmarkUnits;
+      const nasdaqBenchmarkValue = calculateBenchmarkValueAtPoint(nasdaqBenchmarkUnits, pointDate, nasdaqBenchmarkQuotes);
 
-      const sp500BenchmarkShares = sp500BenchmarkLots.reduce((sum, lot) => sum + lot.shares, 0);
-      const sp500PriceOnPointDate = Number(pricesForDate.get(SP500_BENCHMARK_TICKER));
-      const sp500BenchmarkValue = Number.isFinite(sp500PriceOnPointDate)
-        ? sp500BenchmarkShares * sp500PriceOnPointDate
-        : 0;
+      const sp500BenchmarkShares = sp500BenchmarkUnits;
+      const sp500BenchmarkValue = calculateBenchmarkValueAtPoint(sp500BenchmarkUnits, pointDate, sp500BenchmarkQuotes);
 
       points.push({
         date: pointDate,
@@ -1114,34 +1095,44 @@ router.get('/portfolio/comparison-2021', async (req: Request, res: Response) => 
     const earliestDate = dates[0];
     const latestDate = dates[dates.length - 1];
 
+    const firstDepositRow = await pool.request()
+      .input('userId', sql.NVarChar, userId)
+      .input('endDate', sql.Date, parseDateOnly(latestDate))
+      .query(`
+        SELECT TOP 1 CONVERT(VARCHAR(10), transactionDate, 23) AS firstDepositDate
+        FROM CashTransactions
+        WHERE userId = @userId
+          AND type = 'deposit'
+          AND transactionDate <= DATEADD(day, 1, @endDate)
+        ORDER BY transactionDate ASC
+      `);
+
+    const referenceStartDate = String(firstDepositRow.recordset?.[0]?.firstDepositDate || earliestDate);
+
     const cashRows = await pool.request()
       .input('userId', sql.NVarChar, userId)
-      .input('startDate', sql.Date, parseDateOnly(earliestDate))
       .input('endDate', sql.Date, parseDateOnly(latestDate))
       .query(`
         SELECT type, amount, transactionDate
         FROM CashTransactions
         WHERE userId = @userId
-          AND transactionDate >= @startDate
           AND transactionDate <= DATEADD(day, 1, @endDate)
         ORDER BY transactionDate ASC
       `);
 
     const stockRows = await pool.request()
       .input('userId', sql.NVarChar, userId)
-      .input('startDate', sql.Date, parseDateOnly(earliestDate))
       .input('endDate', sql.Date, parseDateOnly(latestDate))
       .query(`
         SELECT ticker, type, quantity, amount, transactionDate
         FROM StockTransactions
         WHERE userId = @userId
-          AND transactionDate >= @startDate
           AND transactionDate <= DATEADD(day, 1, @endDate)
         ORDER BY transactionDate ASC
       `);
 
     const priceRows = await pool.request()
-      .input('startDate', sql.Date, parseDateOnly(earliestDate))
+      .input('startDate', sql.Date, parseDateOnly(referenceStartDate))
       .input('endDate', sql.Date, parseDateOnly(latestDate))
       .query(`
         SELECT
@@ -1168,6 +1159,7 @@ router.get('/portfolio/comparison-2021', async (req: Request, res: Response) => 
     }));
 
     const pricesByDate = new Map<string, Map<string, number>>();
+    const benchmarkQuotesByTicker = new Map<string, Map<string, number>>();
     for (const row of priceRows.recordset ?? []) {
       const date = String((row as any).priceDate || '');
       const ticker = String((row as any).ticker || '').toUpperCase();
@@ -1178,7 +1170,21 @@ router.get('/portfolio/comparison-2021', async (req: Request, res: Response) => 
       const byTicker = pricesByDate.get(date) ?? new Map<string, number>();
       byTicker.set(ticker, closePrice);
       pricesByDate.set(date, byTicker);
+
+      const quotesByDate = benchmarkQuotesByTicker.get(ticker) ?? new Map<string, number>();
+      quotesByDate.set(date, closePrice);
+      benchmarkQuotesByTicker.set(ticker, quotesByDate);
     }
+
+    const dowBenchmarkQuotes = Array.from(benchmarkQuotesByTicker.get(DOW_BENCHMARK_TICKER)?.entries() ?? [])
+      .map(([priceDate, close]) => ({ priceDate, close: Number(close) }))
+      .sort((a, b) => a.priceDate.localeCompare(b.priceDate));
+    const nasdaqBenchmarkQuotes = Array.from(benchmarkQuotesByTicker.get(NASDAQ_BENCHMARK_TICKER)?.entries() ?? [])
+      .map(([priceDate, close]) => ({ priceDate, close: Number(close) }))
+      .sort((a, b) => a.priceDate.localeCompare(b.priceDate));
+    const sp500BenchmarkQuotes = Array.from(benchmarkQuotesByTicker.get(SP500_BENCHMARK_TICKER)?.entries() ?? [])
+      .map(([priceDate, close]) => ({ priceDate, close: Number(close) }))
+      .sort((a, b) => a.priceDate.localeCompare(b.priceDate));
 
     let cashIndex = 0;
     let stockIndex = 0;
@@ -1190,10 +1196,9 @@ router.get('/portfolio/comparison-2021', async (req: Request, res: Response) => 
     let buys = 0;
     let sells = 0;
 
-    type BenchmarkLot = { shares: number };
-    const dowBenchmarkLots: BenchmarkLot[] = [];
-    const nasdaqBenchmarkLots: BenchmarkLot[] = [];
-    const sp500BenchmarkLots: BenchmarkLot[] = [];
+    let dowBenchmarkUnits = 0;
+    let nasdaqBenchmarkUnits = 0;
+    let sp500BenchmarkUnits = 0;
 
     const holdings = new Map<string, number>();
     const points: IComparisonPoint[] = [];
@@ -1208,75 +1213,32 @@ router.get('/portfolio/comparison-2021', async (req: Request, res: Response) => 
           hasCashFlowEvent = true;
         }
 
-        const pricesForEventDate = pricesByDate.get(event.date) ?? new Map<string, number>();
-        const dowBenchmarkPrice = Number(pricesForEventDate.get(DOW_BENCHMARK_TICKER));
-        const nasdaqBenchmarkPrice = Number(pricesForEventDate.get(NASDAQ_BENCHMARK_TICKER));
-        const sp500BenchmarkPrice = Number(pricesForEventDate.get(SP500_BENCHMARK_TICKER));
-
         if (event.type === 'deposit') deposits += event.amount;
         else if (event.type === 'withdrawal') withdrawals += event.amount;
         else if (event.type === 'interest') interest += event.amount;
         else if (event.type === 'fee') fees += event.amount;
 
-        if (Number.isFinite(dowBenchmarkPrice) && dowBenchmarkPrice > 0) {
-          if (event.type === 'deposit') {
-            const purchasedShares = Number(event.amount || 0) / dowBenchmarkPrice;
-            if (purchasedShares > ALLOCATION_TOLERANCE) {
-              dowBenchmarkLots.push({ shares: purchasedShares });
-            }
-          } else if (event.type === 'withdrawal') {
-            let sharesToSell = Number(event.amount || 0) / dowBenchmarkPrice;
-            while (sharesToSell > ALLOCATION_TOLERANCE && dowBenchmarkLots.length > 0) {
-              const lot = dowBenchmarkLots[0];
-              const consumedShares = Math.min(lot.shares, sharesToSell);
-              lot.shares -= consumedShares;
-              sharesToSell -= consumedShares;
-              if (lot.shares <= ALLOCATION_TOLERANCE) {
-                dowBenchmarkLots.shift();
-              }
-            }
-          }
-        }
-
-        if (Number.isFinite(nasdaqBenchmarkPrice) && nasdaqBenchmarkPrice > 0) {
-          if (event.type === 'deposit') {
-            const purchasedShares = Number(event.amount || 0) / nasdaqBenchmarkPrice;
-            if (purchasedShares > ALLOCATION_TOLERANCE) {
-              nasdaqBenchmarkLots.push({ shares: purchasedShares });
-            }
-          } else if (event.type === 'withdrawal') {
-            let sharesToSell = Number(event.amount || 0) / nasdaqBenchmarkPrice;
-            while (sharesToSell > ALLOCATION_TOLERANCE && nasdaqBenchmarkLots.length > 0) {
-              const lot = nasdaqBenchmarkLots[0];
-              const consumedShares = Math.min(lot.shares, sharesToSell);
-              lot.shares -= consumedShares;
-              sharesToSell -= consumedShares;
-              if (lot.shares <= ALLOCATION_TOLERANCE) {
-                nasdaqBenchmarkLots.shift();
-              }
-            }
-          }
-        }
-
-        if (Number.isFinite(sp500BenchmarkPrice) && sp500BenchmarkPrice > 0) {
-          if (event.type === 'deposit') {
-            const purchasedShares = Number(event.amount || 0) / sp500BenchmarkPrice;
-            if (purchasedShares > ALLOCATION_TOLERANCE) {
-              sp500BenchmarkLots.push({ shares: purchasedShares });
-            }
-          } else if (event.type === 'withdrawal') {
-            let sharesToSell = Number(event.amount || 0) / sp500BenchmarkPrice;
-            while (sharesToSell > ALLOCATION_TOLERANCE && sp500BenchmarkLots.length > 0) {
-              const lot = sp500BenchmarkLots[0];
-              const consumedShares = Math.min(lot.shares, sharesToSell);
-              lot.shares -= consumedShares;
-              sharesToSell -= consumedShares;
-              if (lot.shares <= ALLOCATION_TOLERANCE) {
-                sp500BenchmarkLots.shift();
-              }
-            }
-          }
-        }
+        dowBenchmarkUnits = applyCashFlowToBenchmarkUnits(
+          dowBenchmarkUnits,
+          event.type,
+          event.amount,
+          event.date,
+          dowBenchmarkQuotes
+        );
+        nasdaqBenchmarkUnits = applyCashFlowToBenchmarkUnits(
+          nasdaqBenchmarkUnits,
+          event.type,
+          event.amount,
+          event.date,
+          nasdaqBenchmarkQuotes
+        );
+        sp500BenchmarkUnits = applyCashFlowToBenchmarkUnits(
+          sp500BenchmarkUnits,
+          event.type,
+          event.amount,
+          event.date,
+          sp500BenchmarkQuotes
+        );
 
         cashIndex += 1;
       }
@@ -1313,23 +1275,14 @@ router.get('/portfolio/comparison-2021', async (req: Request, res: Response) => 
 
       const availableCash = deposits - withdrawals + interest - fees - buys + sells;
       const cashCostBasis = deposits - withdrawals;
-      const dowBenchmarkShares = dowBenchmarkLots.reduce((sum, lot) => sum + lot.shares, 0);
-      const dowPriceOnPointDate = Number(pricesForDate.get(DOW_BENCHMARK_TICKER));
-      const dowBenchmarkValue = Number.isFinite(dowPriceOnPointDate)
-        ? dowBenchmarkShares * dowPriceOnPointDate
-        : 0;
+      const dowBenchmarkShares = dowBenchmarkUnits;
+      const dowBenchmarkValue = calculateBenchmarkValueAtPoint(dowBenchmarkUnits, pointDate, dowBenchmarkQuotes);
 
-      const nasdaqBenchmarkShares = nasdaqBenchmarkLots.reduce((sum, lot) => sum + lot.shares, 0);
-      const nasdaqPriceOnPointDate = Number(pricesForDate.get(NASDAQ_BENCHMARK_TICKER));
-      const nasdaqBenchmarkValue = Number.isFinite(nasdaqPriceOnPointDate)
-        ? nasdaqBenchmarkShares * nasdaqPriceOnPointDate
-        : 0;
+      const nasdaqBenchmarkShares = nasdaqBenchmarkUnits;
+      const nasdaqBenchmarkValue = calculateBenchmarkValueAtPoint(nasdaqBenchmarkUnits, pointDate, nasdaqBenchmarkQuotes);
 
-      const sp500BenchmarkShares = sp500BenchmarkLots.reduce((sum, lot) => sum + lot.shares, 0);
-      const sp500PriceOnPointDate = Number(pricesForDate.get(SP500_BENCHMARK_TICKER));
-      const sp500BenchmarkValue = Number.isFinite(sp500PriceOnPointDate)
-        ? sp500BenchmarkShares * sp500PriceOnPointDate
-        : 0;
+      const sp500BenchmarkShares = sp500BenchmarkUnits;
+      const sp500BenchmarkValue = calculateBenchmarkValueAtPoint(sp500BenchmarkUnits, pointDate, sp500BenchmarkQuotes);
 
       points.push({
         date: pointDate,
@@ -1989,6 +1942,65 @@ function buildDateRangeInclusive(startDate: string, endDate: string): string[] {
   }
 
   return range;
+}
+
+function resolveClosestHistoricalCloseOnOrBefore(quotes: IHistoricalClosePoint[], requestedDate: string): IHistoricalClosePoint | null {
+  const requested = parseDateOnly(requestedDate).getTime();
+  let best: IHistoricalClosePoint | null = null;
+
+  for (const quote of quotes) {
+    const quoteTs = parseDateOnly(quote.priceDate).getTime();
+    if (quoteTs <= requested) {
+      if (!best || quoteTs > parseDateOnly(best.priceDate).getTime()) {
+        best = quote;
+      }
+    }
+  }
+
+  return best;
+}
+
+function applyCashFlowToBenchmarkUnits(
+  currentUnits: number,
+  eventType: string,
+  amount: number,
+  eventDate: string,
+  quotes: IHistoricalClosePoint[]
+): number {
+  if ((eventType !== 'deposit' && eventType !== 'withdrawal') || !Number.isFinite(amount) || amount <= 0) {
+    return currentUnits;
+  }
+
+  const baseQuote = resolveClosestHistoricalCloseOnOrBefore(quotes, eventDate);
+  const baseClose = Number(baseQuote?.close);
+  if (!Number.isFinite(baseClose) || baseClose <= 0) {
+    return currentUnits;
+  }
+
+  const unitsDelta = amount / baseClose;
+  if (eventType === 'deposit') {
+    return currentUnits + unitsDelta;
+  }
+
+  return Math.max(0, currentUnits - unitsDelta);
+}
+
+function calculateBenchmarkValueAtPoint(
+  units: number,
+  pointDate: string,
+  quotes: IHistoricalClosePoint[]
+): number {
+  if (!Number.isFinite(units) || units <= ALLOCATION_TOLERANCE) {
+    return 0;
+  }
+
+  const pointQuote = resolveClosestHistoricalCloseOnOrBefore(quotes, pointDate);
+  const pointClose = Number(pointQuote?.close);
+  if (!Number.isFinite(pointClose) || pointClose <= 0) {
+    return 0;
+  }
+
+  return units * pointClose;
 }
 
 function resolveClosestPriceOnOrBefore(quotes: IPricePoint[], requestedDate: string): IPricePoint | null {

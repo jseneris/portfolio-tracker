@@ -393,27 +393,6 @@ export default function Comparison2021Page() {
     }
   }
 
-  function withBenchmarkCarry(
-    basePoints: PortfolioComparisonPoint[],
-    carry: { dowBenchmarkValue: number; nasdaqBenchmarkValue: number; sp500BenchmarkValue: number } | null
-  ): PortfolioComparisonPoint[] {
-    if (!carry || basePoints.length === 0) {
-      return basePoints
-    }
-
-    const firstPoint = basePoints[0]
-    const dowOffset = Number(carry.dowBenchmarkValue || 0) - Number(firstPoint.dowBenchmarkValue || 0)
-    const nasdaqOffset = Number(carry.nasdaqBenchmarkValue || 0) - Number(firstPoint.nasdaqBenchmarkValue || 0)
-    const sp500Offset = Number(carry.sp500BenchmarkValue || 0) - Number(firstPoint.sp500BenchmarkValue || 0)
-
-    return basePoints.map((point) => ({
-      ...point,
-      dowBenchmarkValue: Number(point.dowBenchmarkValue || 0) + dowOffset,
-      nasdaqBenchmarkValue: Number(point.nasdaqBenchmarkValue || 0) + nasdaqOffset,
-      sp500BenchmarkValue: Number(point.sp500BenchmarkValue || 0) + sp500Offset,
-    }))
-  }
-
   function updateMissingPriceWarning(year: number, nextPoints: PortfolioComparisonPoint[]) {
     const missingDates = new Set<string>()
     const missingTickers = new Set<string>()
@@ -450,28 +429,18 @@ export default function Comparison2021Page() {
         }
 
         const combinedPoints: PortfolioComparisonPoint[] = []
-        let carry: { dowBenchmarkValue: number; nasdaqBenchmarkValue: number; sp500BenchmarkValue: number } | null = null
         const missingDates = new Set<string>()
         const missingTickers = new Set<string>()
 
         for (const year of yearsAscending) {
           const response = await getPortfolioComparisonByYear(year)
-          const adjustedYearPoints = withBenchmarkCarry(response.points ?? [], carry)
+          const yearPoints = response.points ?? []
 
-          for (const point of adjustedYearPoints) {
+          for (const point of yearPoints) {
             combinedPoints.push(point)
             if (Array.isArray(point.missingTickers) && point.missingTickers.length > 0) {
               missingDates.add(point.date)
               point.missingTickers.forEach((ticker) => missingTickers.add(ticker))
-            }
-          }
-
-          if (adjustedYearPoints.length > 0) {
-            const lastPoint = adjustedYearPoints[adjustedYearPoints.length - 1]
-            carry = {
-              dowBenchmarkValue: Number(lastPoint.dowBenchmarkValue || 0),
-              nasdaqBenchmarkValue: Number(lastPoint.nasdaqBenchmarkValue || 0),
-              sp500BenchmarkValue: Number(lastPoint.sp500BenchmarkValue || 0),
             }
           }
         }
@@ -493,37 +462,11 @@ export default function Comparison2021Page() {
       }
 
       const response = await getPortfolioComparisonByYear(yearSelection)
-
-      const previousYear = yearSelection - 1
-      let carry: { dowBenchmarkValue: number; nasdaqBenchmarkValue: number; sp500BenchmarkValue: number } | null = null
-      let previousYearEndPortfolioValueRef: { date: string; portfolioValue: number } | null = null
-      if (previousYear >= Math.min(...SUPPORTED_COMPARISON_YEARS)) {
-        try {
-          const previousYearResponse = await getPortfolioComparisonByYear(previousYear)
-          const previousYearPoints = previousYearResponse.points ?? []
-          if (previousYearPoints.length > 0) {
-            const previousYearEnd = previousYearPoints[previousYearPoints.length - 1]
-            carry = {
-              dowBenchmarkValue: Number(previousYearEnd.dowBenchmarkValue || 0),
-              nasdaqBenchmarkValue: Number(previousYearEnd.nasdaqBenchmarkValue || 0),
-              sp500BenchmarkValue: Number(previousYearEnd.sp500BenchmarkValue || 0),
-            }
-            previousYearEndPortfolioValueRef = {
-              date: String(previousYearEnd.date || ''),
-              portfolioValue: Number(previousYearEnd.portfolioValue || 0),
-            }
-          }
-        } catch {
-          carry = null
-          previousYearEndPortfolioValueRef = null
-        }
-      }
-
-      const adjustedPoints = withBenchmarkCarry(response.points ?? [], carry)
-      setPoints(adjustedPoints)
-      setStartingReferencePoint(previousYearEndPortfolioValueRef)
-      updateMissingPriceWarning(yearSelection, adjustedPoints)
-      if (adjustedPoints.length === 0) {
+      const yearPoints = response.points ?? []
+      setPoints(yearPoints)
+      setStartingReferencePoint(null)
+      updateMissingPriceWarning(yearSelection, yearPoints)
+      if (yearPoints.length === 0) {
         setSuccess(`No comparison points found yet for ${yearSelection}. Run sync first.`)
       }
     } catch (err: unknown) {

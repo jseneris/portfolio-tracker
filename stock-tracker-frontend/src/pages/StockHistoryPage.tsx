@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
   CreateStockInput,
@@ -193,6 +193,7 @@ export default function StockHistoryPage() {
   const [lotsError, setLotsError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const addTransactionFormRef = useRef<HTMLFormElement | null>(null)
 
   const displayLotEntries = useMemo<DisplayLotEntry[]>(() => {
     const entries: DisplayLotEntry[] = []
@@ -552,6 +553,20 @@ export default function StockHistoryPage() {
 
   function setAllocation(lotId: string, value: string) {
     setAllocations((prev) => ({ ...prev, [lotId]: value }))
+  }
+
+  function onAllocationInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== 'Enter') {
+      return
+    }
+
+    event.preventDefault()
+
+    if (!canSubmit || saving || hasInsufficientCashForBuy) {
+      return
+    }
+
+    addTransactionFormRef.current?.requestSubmit()
   }
 
   function buildAllocationPayload() {
@@ -1196,11 +1211,11 @@ export default function StockHistoryPage() {
 
       {showAddTransactionModal ? (
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="add-stock-history-transaction-title">
-          <div className="modal-card">
+          <div className="modal-card modal-card-wide modal-card-scrollable">
             <h3 id="add-stock-history-transaction-title">Add Transaction ({ticker})</h3>
             <p>Enter date, transaction type, shares, and price.</p>
 
-            <form className="form-grid" onSubmit={onSubmit}>
+            <form ref={addTransactionFormRef} className="form-grid" onSubmit={onSubmit}>
               <label>
                 Date
                 <input
@@ -1349,6 +1364,7 @@ export default function StockHistoryPage() {
                                 placeholder="0.00000000"
                                 value={allocations[lot.id] ?? ''}
                                 onChange={(event) => setAllocation(lot.id, event.target.value)}
+                                onKeyDown={onAllocationInputKeyDown}
                                 disabled={saving}
                                 className="allocation-input"
                               />

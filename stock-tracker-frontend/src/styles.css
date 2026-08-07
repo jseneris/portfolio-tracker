@@ -343,18 +343,18 @@ body {
 
 .allocation-table {
   width: 100%;
-  min-width: 540px;
-  table-layout: fixed;
+  min-width: 620px;
+  table-layout: auto;
 }
 
 .allocation-input-cell {
-  width: 120px;
+  width: 152px;
 }
 
 .allocation-input {
   width: 100%;
-  max-width: 100%;
-  min-width: 0;
+  max-width: 9.5rem;
+  min-width: 7.5rem;
   border: 1px solid #cbd5e1;
   border-radius: 0.4rem;
   padding: 0.45rem 0.5rem;
@@ -455,9 +455,10 @@ body {
   inset: 0;
   background: rgba(15, 23, 42, 0.55);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 1rem;
+  overflow-y: auto;
   z-index: 50;
 }
 
@@ -468,6 +469,15 @@ body {
   border-radius: 0.75rem;
   padding: 1rem;
   box-shadow: 0 24px 56px rgba(15, 23, 42, 0.2);
+}
+
+.modal-card-wide {
+  width: min(860px, 100%);
+}
+
+.modal-card-scrollable {
+  max-height: calc(100vh - 2rem);
+  overflow-y: auto;
 }
 
 .comparison-chart-wrap {
