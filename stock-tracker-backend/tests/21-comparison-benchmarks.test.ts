@@ -3,7 +3,7 @@ import sql from 'mssql';
 import request from 'supertest';
 import app from '../src/index.js';
 import { initializeDatabase, getPool } from '../src/db/connection.js';
-import { clearUserData, depositCash, TEST_USER_ID } from './setup.js';
+import { buyStock, clearUserData, depositCash, TEST_USER_ID } from './setup.js';
 
 async function seedHistoricalPrice(ticker: string, priceDate: string, closePrice: number) {
   const pool = getPool();
@@ -123,5 +123,78 @@ describe('21. Comparison Benchmarks', () => {
     expect(Number(jan10.dowBenchmarkValue)).toBeCloseTo(1200, 6);
     expect(Number(jan10.nasdaqBenchmarkValue)).toBeCloseTo(1200, 6);
     expect(Number(jan10.sp500BenchmarkValue)).toBeCloseTo(1050, 6);
+  });
+
+  it('returns yearly compare data as a subsection of the all-series timeline', async () => {
+    await seedHistoricalPrice('^DJI', '2021-12-31', 100);
+    await seedHistoricalPrice('^IXIC', '2021-12-31', 200);
+    await seedHistoricalPrice('^GSPC', '2021-12-31', 400);
+
+    await seedHistoricalPrice('^DJI', '2022-01-03', 110);
+    await seedHistoricalPrice('^IXIC', '2022-01-03', 220);
+    await seedHistoricalPrice('^GSPC', '2022-01-03', 380);
+
+    await seedHistoricalPrice('^DJI', '2022-01-10', 120);
+    await seedHistoricalPrice('^IXIC', '2022-01-10', 240);
+    await seedHistoricalPrice('^GSPC', '2022-01-10', 420);
+
+    await depositCash(1000, new Date('2021-12-31T00:00:00Z'));
+    await depositCash(500, new Date('2022-01-10T00:00:00Z'));
+
+    const allResponse = await request(app)
+      .get('/api/stocks/portfolio/comparison-2021')
+      .set('x-user-id', TEST_USER_ID)
+      .expect(200);
+
+    const yearResponse = await request(app)
+      .get('/api/stocks/historical-prices?year=2022')
+      .set('x-user-id', TEST_USER_ID)
+      .expect(200);
+
+    const allPoints = Array.isArray(allResponse.body?.points) ? allResponse.body.points : [];
+    const yearPoints = Array.isArray(yearResponse.body?.points) ? yearResponse.body.points : [];
+    const all2022Points = allPoints.filter((point: any) => String(point.date || '').startsWith('2022-'));
+
+    expect(all2022Points.map((point: any) => point.date)).toEqual(yearPoints.map((point: any) => point.date));
+    expect(all2022Points.map((point: any) => Number(point.dowBenchmarkValue))).toEqual(
+      yearPoints.map((point: any) => Number(point.dowBenchmarkValue))
+    );
+    expect(all2022Points.map((point: any) => Number(point.nasdaqBenchmarkValue))).toEqual(
+      yearPoints.map((point: any) => Number(point.nasdaqBenchmarkValue))
+    );
+    expect(all2022Points.map((point: any) => Number(point.sp500BenchmarkValue))).toEqual(
+      yearPoints.map((point: any) => Number(point.sp500BenchmarkValue))
+    );
+  });
+
+  it('carries forward stock prices on non-trading compare dates', async () => {
+    await seedHistoricalPrice('TEST', '2022-12-31', 100);
+    await seedHistoricalPrice('^DJI', '2022-12-31', 100);
+    await seedHistoricalPrice('^IXIC', '2022-12-31', 200);
+    await seedHistoricalPrice('^GSPC', '2022-12-31', 400);
+
+    await seedHistoricalPrice('^DJI', '2023-01-01', 100);
+    await seedHistoricalPrice('^IXIC', '2023-01-01', 200);
+    await seedHistoricalPrice('^GSPC', '2023-01-01', 400);
+
+    await depositCash(1000, new Date('2022-12-30T00:00:00Z'));
+    await buyStock('TEST', 1, 100, new Date('2022-12-30T00:00:00Z'));
+
+    const response = await request(app)
+      .get('/api/stocks/portfolio/comparison-2021')
+      .set('x-user-id', TEST_USER_ID)
+      .expect(200);
+
+    const points = Array.isArray(response.body?.points) ? response.body.points : [];
+    const dec31 = points.find((point: any) => point.date === '2022-12-31');
+    const jan1 = points.find((point: any) => point.date === '2023-01-01');
+
+    expect(dec31).toBeDefined();
+    expect(jan1).toBeDefined();
+
+    expect(Number(dec31.stockValue)).toBeCloseTo(100, 6);
+    expect(Number(jan1.stockValue)).toBeCloseTo(100, 6);
+    expect(Number(dec31.portfolioValue)).toBeCloseTo(1000, 6);
+    expect(Number(jan1.portfolioValue)).toBeCloseTo(1000, 6);
   });
 });

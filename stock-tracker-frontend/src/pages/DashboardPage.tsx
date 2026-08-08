@@ -142,6 +142,19 @@ function calculateHoldingsMarketValue(
   return total
 }
 
+function getPerformanceClassName(value: number | null) {
+  if (value == null || !Number.isFinite(value)) {
+    return ''
+  }
+  if (value > 0) {
+    return 'value-positive'
+  }
+  if (value < 0) {
+    return 'value-negative'
+  }
+  return ''
+}
+
 export default function DashboardPage() {
   const [data, setData] = useState<PortfolioSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -367,7 +380,16 @@ export default function DashboardPage() {
       })
       .sort((a, b) => new Date(a.transactionDate).getTime() - new Date(b.transactionDate).getTime())
 
+    const realizedSalesProceedsByTicker: Record<string, number> = {}
+    const realizedSalesCostBasisByTicker: Record<string, number> = {}
+
     for (const sellTx of sellTransactionsUpToSnapshot) {
+      const sellTicker = String(sellTx.ticker || '').toUpperCase()
+      const sellAmount = Number(sellTx.amount || 0)
+      if (sellTicker && Number.isFinite(sellAmount)) {
+        realizedSalesProceedsByTicker[sellTicker] = Number(realizedSalesProceedsByTicker[sellTicker] || 0) + sellAmount
+      }
+
       const allocations = saleAllocationsBySaleId[sellTx.id] ?? []
       const purchaseAllocations = allocations
         .filter((allocation) => String(allocation.sourceType || '').toLowerCase() === 'purchase')
@@ -381,6 +403,9 @@ export default function DashboardPage() {
         if (!allocationTicker || !allocationDate || !Number.isFinite(allocationUnitCost) || !Number.isFinite(quantityToConsume) || quantityToConsume <= LOT_TOLERANCE) {
           continue
         }
+
+        realizedSalesCostBasisByTicker[allocationTicker] = Number(realizedSalesCostBasisByTicker[allocationTicker] || 0)
+          + (allocationUnitCost * quantityToConsume)
 
         for (const lot of snapshotPurchaseLots) {
           if (quantityToConsume <= LOT_TOLERANCE) {
@@ -419,6 +444,15 @@ export default function DashboardPage() {
 
       snapshotCostBasisByTicker[lot.ticker] = Number(snapshotCostBasisByTicker[lot.ticker] || 0) + (lot.remainingQuantity * lot.unitCost)
       snapshotLotCountByTicker[lot.ticker] = Number(snapshotLotCountByTicker[lot.ticker] || 0) + 1
+    }
+
+    const realizedSalesPerformanceByTicker: Record<string, number> = {}
+    for (const ticker of new Set([
+      ...Object.keys(realizedSalesProceedsByTicker),
+      ...Object.keys(realizedSalesCostBasisByTicker),
+    ])) {
+      realizedSalesPerformanceByTicker[ticker] = Number(realizedSalesProceedsByTicker[ticker] || 0)
+        - Number(realizedSalesCostBasisByTicker[ticker] || 0)
     }
 
     const stockCostBasisExcludingDividends = Object.values(snapshotCostBasisByTicker).reduce((sum, value) => sum + Number(value || 0), 0)
@@ -466,6 +500,7 @@ export default function DashboardPage() {
       stockCount: holdings.length,
       stockCostBasisExcludingDividends,
       stockCostBasisExcludingDividendsByTicker: snapshotCostBasisByTicker,
+      realizedSalesPerformanceByTicker,
       lotCountByTicker: snapshotLotCountByTicker,
     }
   }, [stockTransactions, cashTransactions, historicalPrices, saleAllocationsBySaleId, snapshotDate])
@@ -498,18 +533,27 @@ export default function DashboardPage() {
         row.ticker
       )
 
+      const costBasis = hasSnapshotCostBasis
+        ? Number(snapshot.stockCostBasisExcludingDividendsByTicker[row.ticker] ?? 0)
+        : row.costBasis
+      const performance = hydrated?.marketValue == null
+        ? null
+        : Number(hydrated.marketValue) - costBasis
+      const gainLoss = performance == null
+        ? null
+        : performance + Number(snapshot.realizedSalesPerformanceByTicker[row.ticker] ?? 0)
+
       return {
         ticker: row.ticker,
         totalShares: hydrated?.totalShares ?? row.totalShares,
         latestPrice: hydrated?.latestPrice ?? null,
         marketValue: hydrated?.marketValue ?? null,
-        costBasis: hasSnapshotCostBasis
-          ? Number(snapshot.stockCostBasisExcludingDividendsByTicker[row.ticker] ?? 0)
-          : row.costBasis,
+        costBasis,
+        gainLoss,
         lotCount: Number(snapshot.lotCountByTicker[row.ticker] ?? row.lotCount),
       }
     })
-  }, [summaryHoldings, snapshot.holdings, snapshot.stockCostBasisExcludingDividendsByTicker, snapshot.lotCountByTicker])
+  }, [summaryHoldings, snapshot.holdings, snapshot.stockCostBasisExcludingDividendsByTicker, snapshot.realizedSalesPerformanceByTicker, snapshot.lotCountByTicker])
 
   const performanceClassName =
     snapshot.performance == null || !Number.isFinite(snapshot.performance)
@@ -832,6 +876,7 @@ export default function DashboardPage() {
                   <th>Price</th>
                   <th>Market Value</th>
                   <th>Cost Basis</th>
+                  <th>Gain/Loss</th>
                   <th>Buy Target</th>
                   <th>Sale Target</th>
                   <th>Lots</th>
@@ -861,6 +906,7 @@ export default function DashboardPage() {
                       )}
                     </td>
                     <td>{formatCurrency2(row.costBasis)}</td>
+                    <td className={getPerformanceClassName(row.gainLoss)}>{formatCurrency2(row.gainLoss)}</td>
                     <td>
                       {holdingsLoading && buyTargetsByTicker[row.ticker] == null ? (
                         <span className="table-skeleton table-skeleton-sm" aria-label="Loading buy target" />

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   CashTransaction,
+  getPortfolioComparison2021,
   getPortfolioComparisonByYear,
   PortfolioComparisonPoint,
   StockTransaction,
@@ -11,8 +12,6 @@ import {
 import { formatCurrency2 } from '../formatters'
 
 type YearSelection = number | 'all'
-
-const SUPPORTED_COMPARISON_YEARS = [2021, 2022] as const
 
 function formatDate(value: string) {
   const date = new Date(`${value}T00:00:00Z`)
@@ -66,6 +65,12 @@ function buildPath(
     .join(' ')
 }
 
+function filterPointsByYear(points: PortfolioComparisonPoint[], year: number) {
+  const startDate = `${year}-01-01`
+  const endDate = `${year}-12-31`
+  return points.filter((point) => point.date >= startDate && point.date <= endDate)
+}
+
 export default function Comparison2021Page() {
   const [selectedYear, setSelectedYear] = useState<YearSelection | null>(null)
   const [points, setPoints] = useState<PortfolioComparisonPoint[]>([])
@@ -87,13 +92,39 @@ export default function Comparison2021Page() {
         years.add(date.getUTCFullYear())
       }
     }
+    for (const transaction of cashTransactions) {
+      const date = new Date(transaction.transactionDate)
+      if (!Number.isNaN(date.getTime())) {
+        years.add(date.getUTCFullYear())
+      }
+    }
     return Array.from(years).sort((a, b) => b - a)
-  }, [stockTransactions])
+  }, [stockTransactions, cashTransactions])
 
   const comparisonYears = useMemo(() => {
-    const supported = new Set<number>(SUPPORTED_COMPARISON_YEARS)
-    return availableYears.filter((year) => supported.has(year)).sort((a, b) => b - a)
+    return [...availableYears].sort((a, b) => b - a)
   }, [availableYears])
+
+  const allComparisonSyncYears = useMemo(() => {
+    const depositYears = cashTransactions
+      .filter((transaction) => String(transaction.type || '').toLowerCase() === 'deposit')
+      .map((transaction) => new Date(transaction.transactionDate))
+      .filter((date) => !Number.isNaN(date.getTime()))
+      .map((date) => date.getUTCFullYear())
+
+    const firstYear = depositYears.length > 0
+      ? Math.min(...depositYears)
+      : (comparisonYears.length > 0 ? Math.min(...comparisonYears) : null)
+    const latestYear = comparisonYears.length > 0
+      ? Math.min(new Date().getUTCFullYear(), Math.max(...comparisonYears))
+      : null
+
+    if (firstYear == null || latestYear == null || latestYear < firstYear) {
+      return [] as number[]
+    }
+
+    return Array.from({ length: latestYear - firstYear + 1 }, (_, index) => firstYear + index)
+  }, [cashTransactions, comparisonYears])
 
   const yearlyStockTransactionSummary = useMemo(() => {
     const summary = {
@@ -419,33 +450,27 @@ export default function Comparison2021Page() {
     setError(null)
     setSuccess(null)
     try {
+      const allResponse = await getPortfolioComparison2021()
+      const allPoints = allResponse.points ?? []
+
       if (yearSelection === 'all') {
-        const yearsAscending = [...comparisonYears].sort((a, b) => a - b)
-        if (yearsAscending.length === 0) {
+        if (allComparisonSyncYears.length === 0) {
           setPoints([])
           setMissingPriceWarning(null)
-          setSuccess('No supported comparison years available yet.')
+          setSuccess('No comparison years available yet.')
           return
         }
-
-        const combinedPoints: PortfolioComparisonPoint[] = []
         const missingDates = new Set<string>()
         const missingTickers = new Set<string>()
 
-        for (const year of yearsAscending) {
-          const response = await getPortfolioComparisonByYear(year)
-          const yearPoints = response.points ?? []
-
-          for (const point of yearPoints) {
-            combinedPoints.push(point)
-            if (Array.isArray(point.missingTickers) && point.missingTickers.length > 0) {
-              missingDates.add(point.date)
-              point.missingTickers.forEach((ticker) => missingTickers.add(ticker))
-            }
+        for (const point of allPoints) {
+          if (Array.isArray(point.missingTickers) && point.missingTickers.length > 0) {
+            missingDates.add(point.date)
+            point.missingTickers.forEach((ticker) => missingTickers.add(ticker))
           }
         }
 
-        setPoints(combinedPoints)
+        setPoints(allPoints)
         setStartingReferencePoint(null)
         if (missingDates.size > 0) {
           setMissingPriceWarning(
@@ -455,19 +480,25 @@ export default function Comparison2021Page() {
           setMissingPriceWarning(null)
         }
 
-        if (combinedPoints.length === 0) {
+        if (allPoints.length === 0) {
           setSuccess('No comparison points found yet. Run sync first.')
         }
         return
       }
 
-      const response = await getPortfolioComparisonByYear(yearSelection)
-      const yearPoints = response.points ?? []
+      const yearPoints = filterPointsByYear(allPoints, yearSelection)
       setPoints(yearPoints)
       setStartingReferencePoint(null)
       updateMissingPriceWarning(yearSelection, yearPoints)
       if (yearPoints.length === 0) {
-        setSuccess(`No comparison points found yet for ${yearSelection}. Run sync first.`)
+        const fallbackResponse = await getPortfolioComparisonByYear(yearSelection)
+        const fallbackPoints = fallbackResponse.points ?? []
+        if (fallbackPoints.length > 0) {
+          setPoints(fallbackPoints)
+          updateMissingPriceWarning(yearSelection, fallbackPoints)
+        } else {
+          setSuccess(`No comparison points found yet for ${yearSelection}. Run sync first.`)
+        }
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to load comparison data.')
@@ -486,7 +517,7 @@ export default function Comparison2021Page() {
     setSuccess(null)
     try {
       if (selectedYear === 'all') {
-        const yearsAscending = [...comparisonYears].sort((a, b) => a - b)
+        const yearsAscending = [...allComparisonSyncYears]
         let totalRows = 0
         let totalDatesProcessed = 0
         let totalDatesRemaining = 0
@@ -560,12 +591,14 @@ export default function Comparison2021Page() {
     setHoveredPointIndex(null)
   }, [selectedYear, points])
 
+  const selectedYearLabel = selectedYear === 'all' ? 'All Years' : selectedYear ?? '--'
+
   return (
     <section>
       <div className="panel row-between">
         <div>
-          <h2>Portfolio vs Cash Basis ({selectedYear === 'all' ? 'All Years' : selectedYear ?? '--'})</h2>
-          <p>Uses Yahoo closes on cash deposit/withdrawal dates plus the year-end date for the selected year.</p>
+          <h2>Portfolio vs Cash Basis ({selectedYearLabel})</h2>
+          <p>Uses Yahoo closes on cash deposit/withdrawal dates plus the year-end date for each selected year.</p>
         </div>
         <div className="inline-actions">
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -735,7 +768,7 @@ export default function Comparison2021Page() {
       </div>
 
       <div className="panel">
-        <h3>{selectedYear ?? '--'} Stock Transaction Summary</h3>
+        <h3>{selectedYearLabel} Stock Transaction Summary</h3>
         <table className="table">
           <thead>
             <tr>
@@ -765,7 +798,7 @@ export default function Comparison2021Page() {
       </div>
 
       <div className="panel">
-        <h3>{selectedYear ?? '--'} Cash Transaction Summary</h3>
+        <h3>{selectedYearLabel} Cash Transaction Summary</h3>
         <table className="table">
           <thead>
             <tr>
