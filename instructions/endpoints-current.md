@@ -5,7 +5,7 @@ excludeAgent: "code-review"
 
 # API Endpoints (Current Implementation)
 
-Last updated: 2026-08-02
+Last updated: 2026-08-08
 
 Authentication and scoping notes:
 - `authenticateRequest` middleware is applied globally before route handlers.
@@ -60,8 +60,8 @@ Authentication and scoping notes:
 - Returns sale allocations (`PurchaseLotAllocations`) joined with lot metadata.
 - Useful for rendering sell lot attribution history.
 
-### POST /api/stocks/historical-prices/sync-year?year=2021|2022
-- Incrementally backfills yearly historical closes (including benchmark tickers `^DJI`, `^IXIC`, `^GSPC`).
+### POST /api/stocks/historical-prices/sync-year?year=YYYY
+- Incrementally backfills yearly historical closes for any valid 4-digit year (including benchmark tickers `^DJI`, `^IXIC`, `^GSPC`).
 - Prioritizes cash-flow dates and year-end date, then fills remaining dates.
 - Also attempts split discovery per owned ticker in range from first transaction date to today.
 - Writes price rows with idempotent `MERGE` behavior.
@@ -73,11 +73,19 @@ Authentication and scoping notes:
 ### GET /api/stocks/historical-prices
 - Dual-mode endpoint:
   - Date range mode (`startDate` + `endDate`): returns raw historical rows for that range.
-  - Comparison mode (`year=2021|2022`): returns computed portfolio-vs-benchmark time series points.
+  - Comparison mode (`year=YYYY`): returns computed portfolio-vs-benchmark time series points for the requested year.
 - Date-range mode validates `YYYY-MM-DD` format and start/end ordering.
+- Comparison mode behavior:
+  - builds one continuous reference series from the earliest cash deposit through `min(today, end of latest transaction year)`,
+  - applies all prior cash and stock history needed to value the requested year correctly,
+  - returns only the requested year's subsection of that continuous series,
+  - values benchmark lines using closest-on-or-before closes,
+  - values held stocks using closest-on-or-before closes so non-trading days inherit the prior market close.
 
 ### GET /api/stocks/portfolio/comparison-2021
-- Returns portfolio-vs-benchmark time series points based on stored historical prices up to 2021-12-31.
+- Legacy-named route that now returns the continuous portfolio-vs-benchmark series used by the Compare page.
+- Series starts at the earliest cash deposit date (or latest transaction date if no deposit exists).
+- Series ends at `min(today, last day of the year of the latest cash or stock transaction)`.
 - Includes benchmark values for DOW/NASDAQ/S&P500 and missing-ticker diagnostics.
 
 ### POST /api/stocks
