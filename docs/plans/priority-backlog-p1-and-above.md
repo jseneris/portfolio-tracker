@@ -16,6 +16,9 @@ This backlog includes items with priority P1, P2, and P3.
 10. Daily close job: persist close records with uniqueness on ticker + priceDate + source and MERGE/upsert semantics for safe reruns.
 11. Daily close job: implement single-run safeguards with JobLocks + JobRuns status transitions (running/succeeded/failed).
 12. Daily close job: wire external scheduler trigger (not frontend session) and secure invocation via service credential/header.
+13. Improve stock history load path by using cash-summary instead of portfolio-summary when only available cash is needed.
+14. Add latest price by ticker endpoint to avoid stock page full-range historical fetch on initial load.
+15. Add frontend query cache (stale-while-revalidate) for shared summary/cash endpoints used across dashboard and stock pages.
 
 ## P2
 
@@ -27,6 +30,7 @@ This backlog includes items with priority P1, P2, and P3.
 6. Daily close job: add admin replay/backfill endpoint(s) for date or date-range reruns with bounded batch controls.
 7. Daily close job: add stale-close alerting and partial-failure retry policy with capped exponential backoff.
 8. Daily close job: add observability endpoint/query for recent runs, duration, ticker coverage, and latest successful market date.
+9. Add route-level timing instrumentation for dashboard-to-stock transitions and page API waterfalls.
 
 ## P3
 

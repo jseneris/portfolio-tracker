@@ -27,6 +27,7 @@ Legend:
 ### DESCRIPTION
     -on dashboard page show current price for each stock
     -as temporary measure until cron job set up, retrieve current stock prices when update price button on dashboard is hit
+    -Reference architecture: [Live Price Updates, Target Alerts, and Background Execution Plan](live-price-alerts-background-architecture.md)
 ### PLAN
     [ ] 1. Add a market-data provider abstraction for quote retrieval and response normalization.
     [ ] 2. Implement backend endpoint to refresh current prices for all tickers in portfolio on demand.
@@ -35,6 +36,20 @@ Legend:
     [ ] 5. Wire dashboard Update Price button to call refresh endpoint and update each ticker row.
     [ ] 6. Handle partial failures gracefully with per-ticker error statuses.
     [ ] 7. Add tests for provider mapping, endpoint behavior, throttling, and frontend refresh flow.
+
+## DASHBOARD TO STOCK PAGE SPEED
+### DESCRIPTION
+    -reduce load time when moving between dashboard and stock history pages
+    -avoid recalculating and refetching large portfolio data when only available cash is needed
+    -avoid full historical range fetches during stock page initial load
+### PLAN
+    [ ] 1. On stock history page, replace portfolio-summary call with cash-summary call when only available cash is required for buy validation.
+    [ ] 2. Add client-side cache strategy (stale-while-revalidate) for shared summary endpoints so route changes reuse warm data.
+    [ ] 3. Keep available cash in shared app state and invalidate on portfolio write events (buy/sell/div/cash edits).
+    [ ] 4. Replace broad historical fetch on stock page load with lightweight latest-price endpoint or bounded date range.
+    [ ] 5. Defer secondary page data (allocation details and long history) until after above-the-fold content is rendered.
+    [ ] 6. Add timing instrumentation for route transitions and API calls to confirm latency improvements and prevent regressions.
+    [ ] 7. Add frontend tests for cache invalidation and backend tests for latest-price endpoint behavior.
 
 ## STORE CLOSING PRICES
 ### DESCRIPTION
