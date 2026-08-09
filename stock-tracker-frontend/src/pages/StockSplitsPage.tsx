@@ -106,9 +106,7 @@ export default function StockSplitsPage() {
                   <td>
                     {split.isActive
                       ? 'Active'
-                      : split.canActivate
-                        ? 'Inactive - Eligible'
-                        : 'Inactive - Waiting'}
+                      : 'Inactive'}
                   </td>
                   <td>
                     {split.isActive ? (
@@ -118,7 +116,7 @@ export default function StockSplitsPage() {
                         className="button button-primary"
                         type="button"
                         onClick={() => onActivateSplit(split.id)}
-                        disabled={!split.canActivate || activatingSplitId === split.id}
+                        disabled={activatingSplitId === split.id}
                       >
                         {activatingSplitId === split.id ? 'Activating...' : 'Activate'}
                       </button>

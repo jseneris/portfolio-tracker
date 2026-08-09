@@ -244,18 +244,7 @@ router.get('/ticker/:ticker/splits', async (req: Request, res: Response) => {
             WHERE usa.userId = @userId
               AND usa.splitId = ss.id
           ) THEN 1 ELSE 0 END AS isActive,
-          CASE WHEN EXISTS (
-            SELECT 1
-            FROM StockTransactions st
-            WHERE st.userId = @userId
-              AND st.ticker = ss.ticker
-              AND st.transactionDate >= ss.splitDate
-          ) OR EXISTS (
-            SELECT 1
-            FROM HistoricalPrices hp
-            WHERE hp.ticker = ss.ticker
-              AND hp.priceDate >= CONVERT(date, ss.splitDate)
-          ) THEN 1 ELSE 0 END AS canActivate
+          1 AS canActivate
         FROM StockSplits ss
         WHERE ss.ticker = @ticker
         ORDER BY ss.splitDate DESC, ss.createdAt DESC
@@ -296,18 +285,7 @@ router.get('/splits', async (req: Request, res: Response) => {
             SELECT 1 FROM UserSplitActivations usa
             WHERE usa.userId = @userId AND usa.splitId = ss.id
           ) THEN 1 ELSE 0 END AS isActive,
-          CASE WHEN EXISTS (
-            SELECT 1
-            FROM StockTransactions st
-            WHERE st.userId = @userId
-              AND st.ticker = ss.ticker
-              AND st.transactionDate >= ss.splitDate
-          ) OR EXISTS (
-            SELECT 1
-            FROM HistoricalPrices hp
-            WHERE hp.ticker = ss.ticker
-              AND hp.priceDate >= CONVERT(date, ss.splitDate)
-          ) THEN 1 ELSE 0 END AS canActivate
+          1 AS canActivate
         FROM StockSplits ss
         ORDER BY ss.splitDate DESC, ss.createdAt DESC
       `);
@@ -473,8 +451,6 @@ router.post('/ticker/:ticker/split', async (req: Request, res: Response) => {
       splitId = String(insertSplit.recordset[0]?.id || '');
     }
 
-    const canActivate = await isSplitEligibleForUser(transaction, actorUserId, normalizedTicker, parsedSplitDate);
-
     await transaction.commit();
     began = false;
 
@@ -486,7 +462,7 @@ router.post('/ticker/:ticker/split', async (req: Request, res: Response) => {
       ratioDenominator: Number(ratioDenominator),
       multiplier,
       isActive: false,
-      canActivate,
+      canActivate: true,
     });
   } catch (error) {
     if (began) {
@@ -554,12 +530,6 @@ router.post('/splits/:splitId/activate', async (req: Request, res: Response) => 
       });
     }
 
-    const canActivate = await isSplitEligibleForUser(transaction, actorUserId, ticker, splitDate);
-    if (!canActivate) {
-      await transaction.rollback();
-      return res.status(409).json({ error: 'Split cannot be activated until a transaction or historical price exists on or after the split date.' });
-    }
-
     await new sql.Request(transaction)
       .input('id', sql.UniqueIdentifier, uuidv4())
       .input('userId', sql.NVarChar, actorUserId)
@@ -587,6 +557,7 @@ router.post('/splits/:splitId/activate', async (req: Request, res: Response) => 
         WHERE userId = @userId
           AND ticker = @ticker
           AND purchaseDate <= @splitDate
+          AND remainingQuantity > 0
       `);
 
     await reconcileDisplayLotsAfterSplit(transaction, actorUserId, ticker);

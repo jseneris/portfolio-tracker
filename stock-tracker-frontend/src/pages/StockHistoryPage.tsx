@@ -408,6 +408,23 @@ export default function StockHistoryPage() {
     const values: Record<string, { quantity: number | null; price: number | null; hadSplitAdjustments: boolean }> = {}
 
     for (const transaction of transactions) {
+      if (transaction.type === 'sell') {
+        values[transaction.id] = {
+          quantity: transaction.quantity == null
+            ? null
+            : Number.isFinite(Number(transaction.quantity))
+              ? Number(transaction.quantity)
+              : null,
+          price: transaction.price == null
+            ? null
+            : Number.isFinite(Number(transaction.price))
+              ? Number(transaction.price)
+              : null,
+          hadSplitAdjustments: false,
+        }
+        continue
+      }
+
       const transactionDay = toUtcDayTimestamp(transaction.transactionDate)
       let cumulativeMultiplier = 1
 
