@@ -20,6 +20,8 @@ import {
   getStockTransactions,
   UserTargetSettings,
   getUserTargetSettings,
+  getAllStockSplits,
+  StockSplitEvent,
 } from '../api'
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
 
@@ -174,6 +176,7 @@ export default function DashboardPage() {
   const [historicalPrices, setHistoricalPrices] = useState<HistoricalPrice[]>([])
   const [saleAllocationsBySaleId, setSaleAllocationsBySaleId] = useState<Record<string, SaleAllocation[]>>({})
   const [historicalLoadedEndDate, setHistoricalLoadedEndDate] = useState<string | null>(null)
+  const [splitEvents, setSplitEvents] = useState<StockSplitEvent[]>([])
 
   function normalizePositivePercent(value: unknown, fallback: number): number {
     const parsed = Number(value)
@@ -297,6 +300,31 @@ export default function DashboardPage() {
     const LOT_TOLERANCE = 1e-6
     const holdingsByTicker = new Map<string, number>()
 
+    const activeSplits = splitEvents
+      .filter((split) => split.isActive !== false)
+      .map((split) => ({
+        ticker: String(split.ticker || '').toUpperCase(),
+        splitDate: toDateOnly(split.splitDate),
+        multiplier: Number(split.multiplier),
+      }))
+      .filter((split) => split.ticker && split.splitDate && Number.isFinite(split.multiplier) && split.multiplier > 0 && split.splitDate <= snapshotDate)
+
+    function getCumulativeSplitMultiplierForDate(ticker: string, transactionDate: string): number {
+      let cumulativeMultiplier = 1
+
+      for (const split of activeSplits) {
+        if (split.ticker !== ticker) {
+          continue
+        }
+
+        if (transactionDate <= split.splitDate) {
+          cumulativeMultiplier *= split.multiplier
+        }
+      }
+
+      return cumulativeMultiplier
+    }
+
     for (const tx of stockTransactions) {
       const txDate = toDateOnly(tx.transactionDate)
       if (!txDate || txDate > snapshotDate) {
@@ -313,11 +341,17 @@ export default function DashboardPage() {
         continue
       }
 
+      const splitMultiplier = getCumulativeSplitMultiplierForDate(ticker, txDate)
+      const adjustedQuantity = quantity * splitMultiplier
+      if (!Number.isFinite(adjustedQuantity) || adjustedQuantity <= 0) {
+        continue
+      }
+
       const previous = Number(holdingsByTicker.get(ticker) ?? 0)
       if (tx.type === 'buy' || tx.type === 'div') {
-        holdingsByTicker.set(ticker, previous + quantity)
+        holdingsByTicker.set(ticker, previous + adjustedQuantity)
       } else if (tx.type === 'sell') {
-        holdingsByTicker.set(ticker, previous - quantity)
+        holdingsByTicker.set(ticker, previous - adjustedQuantity)
       }
     }
 
@@ -365,12 +399,20 @@ export default function DashboardPage() {
         const txDate = toDateOnly(tx.transactionDate)
         return tx.type === 'buy' && !!txDate && txDate <= snapshotDate
       })
-      .map((tx) => ({
-        ticker: String(tx.ticker || '').toUpperCase(),
-        purchaseDate: toDateOnly(tx.transactionDate),
-        unitCost: Number(tx.price || 0),
-        remainingQuantity: Number(tx.quantity || 0),
-      }))
+      .map((tx) => {
+        const ticker = String(tx.ticker || '').toUpperCase()
+        const purchaseDate = toDateOnly(tx.transactionDate)
+        const quantity = Number(tx.quantity || 0)
+        const unitCost = Number(tx.price || 0)
+        const splitMultiplier = ticker && purchaseDate ? getCumulativeSplitMultiplierForDate(ticker, purchaseDate) : 1
+
+        return {
+          ticker,
+          purchaseDate,
+          unitCost: splitMultiplier > 0 ? (unitCost / splitMultiplier) : unitCost,
+          remainingQuantity: quantity * splitMultiplier,
+        }
+      })
       .filter((lot) => lot.ticker && Number.isFinite(lot.unitCost) && Number.isFinite(lot.remainingQuantity) && lot.remainingQuantity > LOT_TOLERANCE)
 
     const sellTransactionsUpToSnapshot = stockTransactions
@@ -397,8 +439,16 @@ export default function DashboardPage() {
       for (const allocation of purchaseAllocations) {
         const allocationTicker = String(allocation.ticker || '').toUpperCase()
         const allocationDate = toDateOnly(allocation.purchaseDate)
-        const allocationUnitCost = Number(allocation.unitCost)
-        let quantityToConsume = Number(allocation.quantity || 0)
+        const rawAllocationUnitCost = Number(allocation.unitCost)
+        const rawAllocationQuantity = Number(allocation.quantity || 0)
+        const splitMultiplier = allocationTicker && allocationDate
+          ? getCumulativeSplitMultiplierForDate(allocationTicker, allocationDate)
+          : 1
+
+        const allocationUnitCost = splitMultiplier > 0
+          ? (rawAllocationUnitCost / splitMultiplier)
+          : rawAllocationUnitCost
+        let quantityToConsume = rawAllocationQuantity * splitMultiplier
 
         if (!allocationTicker || !allocationDate || !Number.isFinite(allocationUnitCost) || !Number.isFinite(quantityToConsume) || quantityToConsume <= LOT_TOLERANCE) {
           continue
@@ -503,7 +553,7 @@ export default function DashboardPage() {
       realizedSalesPerformanceByTicker,
       lotCountByTicker: snapshotLotCountByTicker,
     }
-  }, [stockTransactions, cashTransactions, historicalPrices, saleAllocationsBySaleId, snapshotDate])
+  }, [stockTransactions, cashTransactions, historicalPrices, saleAllocationsBySaleId, snapshotDate, splitEvents])
 
   const hasInsufficientCashForBuy = Boolean(
     data && Number.isFinite(buyTotalCost) && buyTotalCost > Number(data.availableCash)
@@ -579,12 +629,13 @@ export default function DashboardPage() {
 
       const today = new Date().toISOString().slice(0, 10)
       const historicalEndDate = snapshotDate < today ? snapshotDate : today
-      const [transactionsResult, cashTransactionsResult, settingsResult, displayLotsResult, purchaseLotsResult] = await Promise.all([
+      const [transactionsResult, cashTransactionsResult, settingsResult, displayLotsResult, purchaseLotsResult, splitEventsResult] = await Promise.all([
         getStockTransactions(),
         getCashTransactions(),
         getUserTargetSettings(),
         getDisplayLots(),
         getPurchaseLots(),
+        getAllStockSplits(),
       ])
 
       const earliestTransactionDate = transactionsResult.reduce((earliest, tx) => {
@@ -635,6 +686,7 @@ export default function DashboardPage() {
       setStockTransactions(transactionsResult)
       setCashTransactions(cashTransactionsResult)
       setHistoricalPrices(historicalPricesResult)
+      setSplitEvents(splitEventsResult)
       setHistoricalLoadedEndDate(historicalEndDate)
       setSaleTargetsByTicker(calculateSaleTargetsByTicker(summary, latestByTicker, normalizedSettings.saleTargetPercent))
       setBuyTargetsByTicker(calculateBuyTargetsByTicker(summary, latestByTicker, displayLotCountsByTicker, normalizedSettings))
