@@ -244,31 +244,33 @@ export default function Comparison2021Page() {
       margin.top
     )
 
-    const cashBasisBars = points
-      .map((point, index) => {
-        const previousBasis = index > 0 ? Number(points[index - 1].cashCostBasis) : 0
-        const changed = Math.abs(Number(point.cashCostBasis) - previousBasis) > 1e-6
-        if (!changed) {
-          return null
-        }
+    const baselineY = margin.top + plotHeight
+    let cashBasisAreaPath = ''
+    if (points.length > 0) {
+      const firstX = getXForIndex(0)
+      const firstY = getYForValue(points[0].cashCostBasis)
+      const commands: string[] = [
+        `M ${firstX.toFixed(2)} ${baselineY.toFixed(2)}`,
+        `L ${firstX.toFixed(2)} ${firstY.toFixed(2)}`,
+      ]
 
+      for (let index = 1; index < points.length; index += 1) {
         const x = getXForIndex(index)
-        const pointY = getYForValue(point.cashCostBasis)
-        const baselineY = margin.top + plotHeight
-        const width = Math.max(12, Math.min(40, plotWidth / Math.max(points.length, 1) / 0.9))
-        const y = Math.min(pointY, baselineY)
-        const height = Math.max(1, Math.abs(baselineY - pointY))
+        const prevY = getYForValue(points[index - 1].cashCostBasis)
+        const currentY = getYForValue(points[index].cashCostBasis)
 
-        return {
-          x: x - width / 2,
-          y,
-          width,
-          height,
-          date: point.date,
-          value: point.cashCostBasis,
-        }
-      })
-      .filter((bar): bar is NonNullable<typeof bar> => bar !== null)
+        // Step-style area: extend previous cash basis level to the next date,
+        // then move vertically to the new basis level at that same x.
+        commands.push(`L ${x.toFixed(2)} ${prevY.toFixed(2)}`)
+        commands.push(`L ${x.toFixed(2)} ${currentY.toFixed(2)}`)
+      }
+
+      const lastX = getXForIndex(points.length - 1)
+      commands.push(`L ${lastX.toFixed(2)} ${baselineY.toFixed(2)}`)
+      commands.push('Z')
+
+      cashBasisAreaPath = commands.join(' ')
+    }
 
     const dowPath = buildPath(
       points,
@@ -348,7 +350,7 @@ export default function Comparison2021Page() {
       plotWidth,
       plotHeight,
       portfolioPath,
-      cashBasisBars,
+      cashBasisAreaPath,
       dowPath,
       nasdaqPath,
       sp500Path,
@@ -709,17 +711,9 @@ export default function Comparison2021Page() {
                 </g>
               ))}
 
-              {chart.cashBasisBars.map((bar) => (
-                <rect
-                  key={`basis-bar-${bar.date}`}
-                  x={bar.x}
-                  y={bar.y}
-                  width={bar.width}
-                  height={bar.height}
-                  fill="#0ea5e9"
-                  opacity="0.35"
-                />
-              ))}
+              {chart.cashBasisAreaPath ? (
+                <path d={chart.cashBasisAreaPath} fill="#0ea5e9" opacity="0.24" />
+              ) : null}
               <path d={chart.nasdaqPath} fill="none" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
               <path d={chart.sp500Path} fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
               <path d={chart.dowPath} fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" opacity="0.55" />

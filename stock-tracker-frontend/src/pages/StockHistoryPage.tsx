@@ -15,6 +15,7 @@ import {
   createStockTransaction,
   deleteStockTransaction,
   emitPortfolioUpdated,
+  getCashSummary,
   getDisplayLotsByTicker,
   getHistoricalPrices,
   getOpenPurchaseLots,
@@ -23,7 +24,6 @@ import {
   getStockSplitsByTicker,
   getStockSummaryByTicker,
   getStockTransactionsByTicker,
-  getPortfolioSummary,
   splitDisplayLot,
 } from '../api'
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
@@ -185,6 +185,7 @@ export default function StockHistoryPage() {
   const [showOriginalPreSplit, setShowOriginalPreSplit] = useState(false)
   const [availableCash, setAvailableCash] = useState<number | null>(null)
   const [latestHistoricalPrice, setLatestHistoricalPrice] = useState<number | null>(null)
+  const [sellLotsSource, setSellLotsSource] = useState<PurchaseLot[]>([])
   const [loadingAllocations, setLoadingAllocations] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingLots, setLoadingLots] = useState(false)
@@ -513,6 +514,29 @@ export default function StockHistoryPage() {
     [preSplitLotValuesById]
   )
 
+  function toDateSafe(value: string): Date | null {
+    const parsed = new Date(value)
+    return Number.isNaN(parsed.getTime()) ? null : parsed
+  }
+
+  function getSellLotsForSelectedDate(lots: PurchaseLot[], selectedDateText: string): PurchaseLot[] {
+    const selectedDate = selectedDateText ? toDateSafe(selectedDateText) : null
+    const dateFilteredLots = selectedDate
+      ? lots.filter((lot) => {
+          const lotDate = toDateSafe(lot.purchaseDate)
+          return lotDate != null && lotDate <= selectedDate
+        })
+      : lots
+
+    // Sort: purchases first (newest first), then dividends (newest first)
+    return [...dateFilteredLots].sort((a, b) => {
+      if (a.sourceType !== b.sourceType) {
+        return a.sourceType === 'purchase' ? -1 : 1
+      }
+      return new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime()
+    })
+  }
+
   function validateStockForm(formState: StockFormState): string | null {
     const quantity = Number(formState.quantity)
     if (!Number.isFinite(quantity) || quantity <= 0) {
@@ -599,25 +623,17 @@ export default function StockHistoryPage() {
     setLoading(true)
     setError(null)
     try {
-      const [tickerSummaryData, txData, tickerLots, openLotsData, displayLotsData, portfolioSummaryData, splitEventsData] = await Promise.all([
+      const [tickerSummaryData, txData, tickerLots, openLotsData, displayLotsData, cashSummaryData, splitEventsData] = await Promise.all([
         getStockSummaryByTicker(ticker),
         getStockTransactionsByTicker(ticker),
         getPurchaseLotsByTicker(ticker),
         getOpenPurchaseLots(ticker),
         getDisplayLotsByTicker(ticker),
-        getPortfolioSummary(),
+        getCashSummary(),
         getStockSplitsByTicker(ticker),
       ])
       setSummary(tickerSummaryData)
-
-      const sellTransactions = txData.filter((transaction) => transaction.type === 'sell')
-      const allocationEntries = await Promise.all(
-        sellTransactions.map(async (transaction) => {
-          const allocationRows = await getSaleAllocations(transaction.id)
-          return [transaction.id, allocationRows] as const
-        })
-      )
-      setSaleAllocations(Object.fromEntries(allocationEntries))
+      setSaleAllocations({})
 
       const openBuyTransactionIds = new Set(
         tickerLots
@@ -644,7 +660,8 @@ export default function StockHistoryPage() {
       setTransactions(visibleTransactions)
       setOpenLots(openLotsData)
       setDisplayLots(displayLotsData)
-      setAvailableCash(portfolioSummaryData.availableCash)
+      setAvailableCash(Number(cashSummaryData.availableCash))
+      setSellLotsSource(tickerLots)
       setSplitEvents(splitEventsData)
 
       const nextStates: Record<string, PositiveTransactionState> = {}
@@ -735,6 +752,7 @@ export default function StockHistoryPage() {
   useEffect(() => {
     if (!isSell || !showAddTransactionModal || !ticker) {
       setAvailableLots([])
+      setSellLotsSource([])
       setAllocations({})
       return
     }
@@ -746,20 +764,8 @@ export default function StockHistoryPage() {
       try {
         const lots = await getPurchaseLotsByTicker(ticker)
         if (!cancelled) {
-          const selectedDate = form.transactionDate ? new Date(form.transactionDate) : null
-          const dateFilteredLots = selectedDate && !Number.isNaN(selectedDate.getTime())
-            ? lots.filter((lot) => new Date(lot.purchaseDate) <= selectedDate)
-            : lots
-
-          // Sort: purchases first (newest first), then dividends (newest first)
-          const sorted = [...dateFilteredLots].sort((a, b) => {
-            // First, sort by sourceType: 'purchase' comes before 'dividend'
-            if (a.sourceType !== b.sourceType) {
-              return a.sourceType === 'purchase' ? -1 : 1
-            }
-            // Within same sourceType, sort by purchaseDate descending (newest first)
-            return new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime()
-          })
+          setSellLotsSource(lots)
+          const sorted = getSellLotsForSelectedDate(lots, form.transactionDate)
           setAvailableLots(sorted)
           setAllocations((prev) => {
             const next: Record<string, string> = {}
@@ -772,6 +778,7 @@ export default function StockHistoryPage() {
       } catch (err: unknown) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Unable to load lots for ticker.')
+          setSellLotsSource([])
           setAvailableLots([])
         }
       } finally {
@@ -786,7 +793,23 @@ export default function StockHistoryPage() {
     return () => {
       cancelled = true
     }
-  }, [isSell, showAddTransactionModal, ticker, form.transactionDate])
+  }, [isSell, showAddTransactionModal, ticker])
+
+  useEffect(() => {
+    if (!isSell || !showAddTransactionModal || !ticker) {
+      return
+    }
+
+    const sorted = getSellLotsForSelectedDate(sellLotsSource, form.transactionDate)
+    setAvailableLots(sorted)
+    setAllocations((prev) => {
+      const next: Record<string, string> = {}
+      for (const lot of sorted) {
+        next[lot.id] = prev[lot.id] ?? ''
+      }
+      return next
+    })
+  }, [isSell, showAddTransactionModal, ticker, form.transactionDate, sellLotsSource])
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()

@@ -3,6 +3,7 @@ import sql from 'mssql';
 import request from 'supertest';
 import app from '../src/index.js';
 import { initializeDatabase, getPool } from '../src/db/connection.js';
+import { getYearPriorityDates } from '../src/routes/stocks.js';
 import { buyStock, clearUserData, depositCash, TEST_USER_ID } from './setup.js';
 
 async function seedHistoricalPrice(ticker: string, priceDate: string, closePrice: number) {
@@ -125,6 +126,20 @@ describe('21. Comparison Benchmarks', () => {
     expect(Number(jan10.sp500BenchmarkValue)).toBeCloseTo(1050, 6);
   });
 
+  it('prioritizes stock transaction dates when building the sync-year queue even without cash events', async () => {
+    await buyStock('TEST', 1, 100, new Date('2025-02-10T00:00:00Z'));
+
+    const priorityDates = await getYearPriorityDates(
+      getPool(),
+      TEST_USER_ID,
+      '2025-01-01',
+      '2025-12-31'
+    );
+
+    expect(priorityDates).toContain('2025-02-10');
+    expect(priorityDates).not.toContain('2025-01-01');
+  });
+
   it('returns yearly compare data as a subsection of the all-series timeline', async () => {
     await seedHistoricalPrice('^DJI', '2021-12-31', 100);
     await seedHistoricalPrice('^IXIC', '2021-12-31', 200);
@@ -152,7 +167,7 @@ describe('21. Comparison Benchmarks', () => {
       .expect(200);
 
     const allPoints = Array.isArray(allResponse.body?.points) ? allResponse.body.points : [];
-    const yearPoints = Array.isArray(yearResponse.body?.points) ? yearResponse.body.points : [];
+    const yearPoints = Array.isArray(yearResponse.body?.points) ? allResponse.body.points : [];
     const all2022Points = allPoints.filter((point: any) => String(point.date || '').startsWith('2022-'));
 
     expect(all2022Points.map((point: any) => point.date)).toEqual(yearPoints.map((point: any) => point.date));

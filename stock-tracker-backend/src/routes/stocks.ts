@@ -326,8 +326,8 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
-// Sync historical closes for 2021 comparison in priority order:
-// 1) cash deposit/withdrawal dates, 2) 2021-12-31, 3) remaining 2021 dates.
+// Sync historical closes for a requested year in priority order:
+// 1) any cash or stock transaction dates in the year, 2) year-end date, 3) remaining dates in the year.
 // Runs are capped so repeated clicks incrementally backfill without aggressive API usage.
 // HistoricalPrices are global (shared across users).
 router.post('/historical-prices/sync-year', async (req: Request, res: Response) => {
@@ -341,31 +341,11 @@ router.post('/historical-prices/sync-year', async (req: Request, res: Response) 
     const pool = getPool();
     const { startDate: targetStartDate, endDate: targetEndDate } = getYearRange(requestedYear);
 
-    const dateRows = await pool.request()
-      .input('userId', sql.NVarChar, userId)
-      .input('targetStartDate', sql.Date, parseDateOnly(targetStartDate))
-      .input('targetEndDate', sql.Date, parseDateOnly(targetEndDate))
-      .query(`
-        SELECT DISTINCT CONVERT(VARCHAR(10), transactionDate, 23) AS priceDate
-        FROM CashTransactions
-        WHERE userId = @userId
-          AND type IN ('deposit', 'withdrawal')
-          AND transactionDate >= @targetStartDate
-          AND transactionDate <= @targetEndDate
-      `);
-
-    const cashPriorityDates = (dateRows.recordset ?? [])
-      .map((row: any) => String(row.priceDate))
-      .filter((d) => !!d)
-      .sort();
+    const priorityDates = await getYearPriorityDates(pool, userId, targetStartDate, targetEndDate);
 
     const firstAnchorDate = targetStartDate;
 
-    const priorityDateSet = new Set<string>(
-      (dateRows.recordset ?? [])
-        .map((row: any) => String(row.priceDate))
-        .filter((d) => !!d)
-    );
+    const priorityDateSet = new Set<string>(priorityDates);
     priorityDateSet.add(targetEndDate);
 
     const remainingYearDates = buildDateRangeInclusive(firstAnchorDate, targetEndDate)
@@ -380,7 +360,7 @@ router.post('/historical-prices/sync-year', async (req: Request, res: Response) 
       }
     };
 
-    for (const dateText of cashPriorityDates) {
+    for (const dateText of priorityDates) {
       pushPriorityDate(dateText);
     }
     pushPriorityDate(targetEndDate);
@@ -565,31 +545,11 @@ router.post('/historical-prices/sync-2021', async (req: Request, res: Response) 
     const pool = getPool();
     const targetEndDate = HISTORICAL_2021_END_DATE;
 
-    const dateRows = await pool.request()
-      .input('userId', sql.NVarChar, userId)
-      .input('targetStartDate', sql.Date, parseDateOnly(HISTORICAL_2021_START_DATE))
-      .input('targetEndDate', sql.Date, parseDateOnly(targetEndDate))
-      .query(`
-        SELECT DISTINCT CONVERT(VARCHAR(10), transactionDate, 23) AS priceDate
-        FROM CashTransactions
-        WHERE userId = @userId
-          AND type IN ('deposit', 'withdrawal')
-          AND transactionDate >= @targetStartDate
-          AND transactionDate <= @targetEndDate
-      `);
-
-    const cashPriorityDates = (dateRows.recordset ?? [])
-      .map((row: any) => String(row.priceDate))
-      .filter((d) => !!d)
-      .sort();
+    const priorityDates = await getYearPriorityDates(pool, userId, HISTORICAL_2021_START_DATE, targetEndDate);
 
     const firstAnchorDate = HISTORICAL_2021_START_DATE;
 
-    const priorityDateSet = new Set<string>(
-      (dateRows.recordset ?? [])
-        .map((row: any) => String(row.priceDate))
-        .filter((d) => !!d)
-    );
+    const priorityDateSet = new Set<string>(priorityDates);
     priorityDateSet.add(targetEndDate);
 
     const remainingYearDates = buildDateRangeInclusive(firstAnchorDate, targetEndDate)
@@ -604,7 +564,7 @@ router.post('/historical-prices/sync-2021', async (req: Request, res: Response) 
       }
     };
 
-    for (const dateText of cashPriorityDates) {
+    for (const dateText of priorityDates) {
       pushPriorityDate(dateText);
     }
     pushPriorityDate(targetEndDate);
@@ -1511,6 +1471,44 @@ function addUtcDays(date: Date, days: number): Date {
   const copy = new Date(date);
   copy.setUTCDate(copy.getUTCDate() + days);
   return copy;
+}
+
+export async function getYearPriorityDates(
+  pool: sql.ConnectionPool,
+  userId: string,
+  startDate: string,
+  endDate: string
+): Promise<string[]> {
+  const rows = await pool.request()
+    .input('userId', sql.NVarChar, userId)
+    .input('startDate', sql.Date, parseDateOnly(startDate))
+    .input('endDate', sql.Date, parseDateOnly(endDate))
+    .query(`
+      SELECT DISTINCT CONVERT(VARCHAR(10), priorityDate, 23) AS priorityDate
+      FROM (
+        SELECT transactionDate AS priorityDate
+        FROM CashTransactions
+        WHERE userId = @userId
+          AND type IN ('deposit', 'withdrawal')
+          AND transactionDate >= @startDate
+          AND transactionDate <= @endDate
+
+        UNION ALL
+
+        SELECT transactionDate AS priorityDate
+        FROM StockTransactions
+        WHERE userId = @userId
+          AND transactionDate >= @startDate
+          AND transactionDate <= @endDate
+      ) allPriorityDates
+      ORDER BY priorityDate ASC
+    `);
+
+  return Array.from(new Set(
+    (rows.recordset ?? [])
+      .map((row: any) => String(row.priorityDate || ''))
+      .filter((dateText) => !!dateText)
+  ));
 }
 
 function buildDateRangeInclusive(startDate: string, endDate: string): string[] {
