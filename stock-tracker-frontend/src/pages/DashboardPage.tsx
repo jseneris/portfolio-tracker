@@ -51,7 +51,7 @@ function normalizeTicker(value: string) {
 }
 
 function formatShares(value: number) {
-  return value.toFixed(6)
+  return Number(value.toFixed(6)).toString()
 }
 
 function formatDateTime(value: Date | null) {

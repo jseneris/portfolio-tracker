@@ -319,7 +319,8 @@ router.get('/:ticker', async (req: Request, res: Response) => {
       .input('ticker', sql.NVarChar, ticker.toUpperCase());
 
     let query = `
-      SELECT * FROM PurchaseLots 
+      SELECT id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate, createdAt, updatedAt
+      FROM PurchaseLots 
       WHERE userId = @userId AND ticker = @ticker AND remainingQuantity > 0
     `;
 
@@ -342,18 +343,35 @@ router.get('/:ticker', async (req: Request, res: Response) => {
 router.get('/:ticker/open', async (req: Request, res: Response) => {
   try {
     const { ticker } = req.params;
+    const { asOfDate } = req.query as { asOfDate?: string };
     const userId = req.user?.id!;
+    const request = getPool().request();
 
-    const result = await getPool().request()
+    request
       .input('userId', sql.NVarChar, userId)
-      .input('ticker', sql.NVarChar, ticker.toUpperCase())
-      .query(`
-        SELECT * FROM PurchaseLots
-        WHERE userId = @userId AND ticker = @ticker
-          AND sourceType = 'purchase'
-          AND remainingQuantity > 0
-        ORDER BY purchaseDate ASC
-      `);
+      .input('ticker', sql.NVarChar, ticker.toUpperCase());
+
+    let query = `
+      SELECT id, userId, ticker, transactionId, sourceType, remainingQuantity, unitCost, purchaseDate
+      FROM PurchaseLots
+      WHERE userId = @userId AND ticker = @ticker
+        AND sourceType = 'purchase'
+        AND remainingQuantity > 0
+    `;
+
+    if (asOfDate) {
+      const parsedAsOfDate = new Date(asOfDate);
+      if (Number.isNaN(parsedAsOfDate.getTime())) {
+        return res.status(400).json({ error: 'Invalid asOfDate' });
+      }
+
+      request.input('asOfDate', sql.DateTime2, parsedAsOfDate);
+      query += ' AND purchaseDate <= @asOfDate';
+    }
+
+    query += ' ORDER BY purchaseDate ASC';
+
+    const result = await request.query(query);
 
     res.json(result.recordset);
   } catch (error) {

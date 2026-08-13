@@ -196,6 +196,12 @@ export default function StockHistoryPage() {
   const [success, setSuccess] = useState<string | null>(null)
   const addTransactionFormRef = useRef<HTMLFormElement | null>(null)
 
+  const currentSaleDay = useMemo(() => toUtcDayTimestamp(new Date().toISOString().slice(0, 10)), [])
+
+  function getOpenPurchaseLotsFromCache(lots: PurchaseLot[]) {
+    return lots.filter((lot) => String(lot.sourceType).toLowerCase() === 'purchase' && Number(lot.remainingQuantity) > ALLOCATION_TOLERANCE)
+  }
+
   const displayLotEntries = useMemo<DisplayLotEntry[]>(() => {
     const entries: DisplayLotEntry[] = []
     for (const row of displayLots) {
@@ -623,11 +629,10 @@ export default function StockHistoryPage() {
     setLoading(true)
     setError(null)
     try {
-      const [tickerSummaryData, txData, tickerLots, openLotsData, displayLotsData, cashSummaryData, splitEventsData] = await Promise.all([
+      const [tickerSummaryData, txData, tickerLots, displayLotsData, cashSummaryData, splitEventsData] = await Promise.all([
         getStockSummaryByTicker(ticker),
         getStockTransactionsByTicker(ticker),
         getPurchaseLotsByTicker(ticker),
-        getOpenPurchaseLots(ticker),
         getDisplayLotsByTicker(ticker),
         getCashSummary(),
         getStockSplitsByTicker(ticker),
@@ -658,10 +663,10 @@ export default function StockHistoryPage() {
       })
 
       setTransactions(visibleTransactions)
-      setOpenLots(openLotsData)
       setDisplayLots(displayLotsData)
       setAvailableCash(Number(cashSummaryData.availableCash))
       setSellLotsSource(tickerLots)
+      setOpenLots(getOpenPurchaseLotsFromCache(tickerLots))
       setSplitEvents(splitEventsData)
 
       const nextStates: Record<string, PositiveTransactionState> = {}
@@ -752,7 +757,6 @@ export default function StockHistoryPage() {
   useEffect(() => {
     if (!isSell || !showAddTransactionModal || !ticker) {
       setAvailableLots([])
-      setSellLotsSource([])
       setAllocations({})
       return
     }
@@ -762,9 +766,15 @@ export default function StockHistoryPage() {
     async function loadLots() {
       setLoadingLots(true)
       try {
-        const lots = await getPurchaseLotsByTicker(ticker)
+        const selectedSaleDay = toUtcDayTimestamp(form.transactionDate)
+        const hasValidSelectedDate = Number.isFinite(selectedSaleDay)
+        const useCachedLots = hasValidSelectedDate && selectedSaleDay === currentSaleDay && sellLotsSource.length > 0
+        const lots = useCachedLots
+          ? sellLotsSource
+          : hasValidSelectedDate
+            ? await getOpenPurchaseLots(ticker, form.transactionDate)
+            : sellLotsSource
         if (!cancelled) {
-          setSellLotsSource(lots)
           const sorted = getSellLotsForSelectedDate(lots, form.transactionDate)
           setAvailableLots(sorted)
           setAllocations((prev) => {
@@ -793,7 +803,7 @@ export default function StockHistoryPage() {
     return () => {
       cancelled = true
     }
-  }, [isSell, showAddTransactionModal, ticker])
+  }, [isSell, showAddTransactionModal, ticker, form.transactionDate, sellLotsSource, currentSaleDay])
 
   useEffect(() => {
     if (!isSell || !showAddTransactionModal || !ticker) {
@@ -863,15 +873,15 @@ export default function StockHistoryPage() {
     setSaving(true)
     try {
       await createStockTransaction(payload)
+      setSaving(false)
       setSuccess('Transaction created.')
       emitPortfolioUpdated()
       setShowAddTransactionModal(false)
       resetForm()
-      await loadTransactions()
+      void loadTransactions()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unable to create transaction.')
-    } finally {
       setSaving(false)
+      setError(err instanceof Error ? err.message : 'Unable to create transaction.')
     }
   }
 
@@ -1022,7 +1032,18 @@ export default function StockHistoryPage() {
       {error ? <div className="panel status status-error">{error}</div> : null}
       {success ? <div className="panel status status-success">{success}</div> : null}
 
-      {loading ? <div className="panel">Loading transactions...</div> : null}
+      {loading ? (
+        <>
+          <div className="panel skeleton-grid">
+            <div className="skeleton-card" />
+            <div className="skeleton-card" />
+            <div className="skeleton-card" />
+            <div className="skeleton-card" />
+            <div className="skeleton-card" />
+          </div>
+          <div className="panel">Loading transactions...</div>
+        </>
+      ) : null}
 
       {!loading && !error && summary ? (
         <>

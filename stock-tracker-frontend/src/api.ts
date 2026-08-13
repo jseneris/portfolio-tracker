@@ -465,8 +465,9 @@ export async function getPurchaseLotsByTicker(ticker: string): Promise<PurchaseL
   return requestApi<PurchaseLot[]>(`/api/lots/${encodeURIComponent(ticker)}`)
 }
 
-export async function getOpenPurchaseLots(ticker: string): Promise<PurchaseLot[]> {
-  return requestApi<PurchaseLot[]>(`/api/lots/${encodeURIComponent(ticker)}/open`)
+export async function getOpenPurchaseLots(ticker: string, asOfDate?: string): Promise<PurchaseLot[]> {
+  const query = asOfDate ? `?asOfDate=${encodeURIComponent(asOfDate)}` : ''
+  return requestApi<PurchaseLot[]>(`/api/lots/${encodeURIComponent(ticker)}/open${query}`)
 }
 
 // ============================================================================
