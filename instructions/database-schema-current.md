@@ -14,7 +14,7 @@ This document reflects the schema currently created by [stock-tracker-backend/sr
 - Amount precision: `DECIMAL(18,4)`.
 
 ### StockTransactions
-- Purpose: user stock ledger (`buy`, `sell`, `div`).
+- Purpose: user stock ledger (`buy`, `sell`, `div`, `exchange`).
 - Quantity/price precision: `DECIMAL(18,8)`.
 - Includes legacy split tracking columns:
 - `splitAdjusted` (BIT)

@@ -12,7 +12,7 @@ export function emitPortfolioUpdated() {
 // ============================================================================
 
 export type CashTransactionType = 'deposit' | 'withdrawal' | 'interest' | 'fee'
-export type StockTransactionType = 'buy' | 'sell' | 'div'
+export type StockTransactionType = 'buy' | 'sell' | 'div' | 'exchange'
 
 // ============================================================================
 // Cash Types
@@ -59,6 +59,8 @@ export type StockTransaction = {
   price: number | null
   amount: number | null
   transactionDate: string
+  isDeletionLocked?: boolean
+  exchangeSourceQuantity?: number
   createdAt?: string
   updatedAt?: string
 }
@@ -112,6 +114,8 @@ export type CreateStockInput = {
   amount?: number
   transactionDate: string
   allocations?: AllocationInput[]
+  newTicker?: string
+  exchangeRate?: number
 }
 
 // ============================================================================

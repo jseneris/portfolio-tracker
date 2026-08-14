@@ -35,6 +35,14 @@ interface IPurchaseLot {
   sourceType?: string;
 }
 
+interface IExchangeSourceLot {
+  id: string;
+  transactionId: string;
+  remainingQuantity: number;
+  unitCost: number;
+  purchaseDate: Date;
+}
+
 interface IExistingSplit {
   id: string;
   multiplier: number;
@@ -318,9 +326,50 @@ router.get('/', async (req: Request, res: Response) => {
     
     const result = await request
       .input('userId', sql.NVarChar, userId)
-      .query('SELECT * FROM StockTransactions WHERE userId = @userId ORDER BY transactionDate DESC, ticker ASC');
-    
-    res.json(result.recordset);
+      .query(`
+        WITH LockedTransactions AS (
+          SELECT sourceTransactionId AS transactionId
+          FROM StockExchangeLotMappings
+          WHERE userId = @userId
+          UNION
+          SELECT targetTransactionId AS transactionId
+          FROM StockExchangeLotMappings
+          WHERE userId = @userId
+        )
+        SELECT
+          st.*,
+          CASE WHEN lt.transactionId IS NOT NULL
+            OR (
+              st.type <> 'exchange'
+              AND EXISTS (
+                SELECT 1
+                FROM StockExchanges sourceExchange
+                WHERE sourceExchange.userId = @userId
+                  AND sourceExchange.sourceTicker = st.ticker
+                  AND sourceExchange.transactionDate >= st.transactionDate
+              )
+            )
+            THEN 1 ELSE 0 END AS isDeletionLocked,
+          COALESCE(exchangeSource.exchangeSourceQuantity, 0) AS exchangeSourceQuantity
+        FROM StockTransactions st
+        LEFT JOIN LockedTransactions lt ON lt.transactionId = st.id
+        LEFT JOIN StockExchanges exchangeEvent
+          ON exchangeEvent.exchangeTransactionId = st.id
+          AND exchangeEvent.userId = @userId
+        OUTER APPLY (
+          SELECT SUM(mapping.sourceRemainingBefore) AS exchangeSourceQuantity
+          FROM StockExchangeLotMappings mapping
+          WHERE mapping.exchangeId = exchangeEvent.id
+            AND mapping.userId = @userId
+        ) exchangeSource
+        WHERE st.userId = @userId
+        ORDER BY st.transactionDate DESC, st.ticker ASC
+      `);
+
+    res.json((result.recordset ?? []).map((row: any) => ({
+      ...row,
+      isDeletionLocked: Number(row.isDeletionLocked || 0) === 1,
+    })));
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
@@ -863,12 +912,39 @@ router.get('/:ticker', async (req: Request, res: Response) => {
       .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, ticker.toUpperCase())
       .query(`
-        SELECT * FROM StockTransactions 
-        WHERE userId = @userId AND ticker = @ticker 
-        ORDER BY transactionDate DESC
+        WITH LockedTransactions AS (
+          SELECT sourceTransactionId AS transactionId
+          FROM StockExchangeLotMappings
+          WHERE userId = @userId
+          UNION
+          SELECT targetTransactionId AS transactionId
+          FROM StockExchangeLotMappings
+          WHERE userId = @userId
+        )
+        SELECT
+          st.*,
+          CASE WHEN lt.transactionId IS NOT NULL
+            OR (
+              st.type <> 'exchange'
+              AND EXISTS (
+                SELECT 1
+                FROM StockExchanges sourceExchange
+                WHERE sourceExchange.userId = @userId
+                  AND sourceExchange.sourceTicker = st.ticker
+                  AND sourceExchange.transactionDate >= st.transactionDate
+              )
+            )
+            THEN 1 ELSE 0 END AS isDeletionLocked
+        FROM StockTransactions st
+        LEFT JOIN LockedTransactions lt ON lt.transactionId = st.id
+        WHERE st.userId = @userId AND st.ticker = @ticker
+        ORDER BY st.transactionDate DESC
       `);
-    
-    res.json(result.recordset);
+
+    res.json((result.recordset ?? []).map((row: any) => ({
+      ...row,
+      isDeletionLocked: Number(row.isDeletionLocked || 0) === 1,
+    })));
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
@@ -945,13 +1021,15 @@ router.get('/:transactionId/allocations', async (req: Request, res: Response) =>
 // CREATE stock transaction
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const { ticker, type, quantity, price, transactionDate, allocations } = req.body as {
+    const { ticker, type, quantity, price, transactionDate, allocations, newTicker, exchangeRate } = req.body as {
       ticker: string;
       type: string;
       quantity?: number;
       price?: number;
       transactionDate: string;
       allocations?: IAllocation[];
+      newTicker?: string;
+      exchangeRate?: number;
     };
     const userId = req.user?.id!;    
 
@@ -1004,6 +1082,23 @@ router.post('/', async (req: Request, res: Response) => {
         return res.status(400).json({ error: `${type} transactions require quantity and price` });
       }
       amount = quantity * price;
+    }
+
+    let normalizedNewTicker = '';
+    let parsedExchangeRate = 0;
+    if (type === 'exchange') {
+      normalizedNewTicker = String(newTicker || '').trim().toUpperCase();
+      parsedExchangeRate = Number(exchangeRate);
+
+      if (!normalizedNewTicker) {
+        return res.status(400).json({ error: 'Exchange transactions require newTicker' });
+      }
+      if (normalizedNewTicker === normalizedTicker) {
+        return res.status(400).json({ error: 'Exchange target ticker must be different from source ticker' });
+      }
+      if (!Number.isFinite(parsedExchangeRate) || parsedExchangeRate <= 0) {
+        return res.status(400).json({ error: 'Exchange transactions require exchangeRate > 0' });
+      }
     }
 
     let sellConsumptionPlan: IAllocation[] = [];
@@ -1268,6 +1363,184 @@ router.post('/', async (req: Request, res: Response) => {
         }
       }
 
+      if (type === 'exchange') {
+        const sourceOpenLotsResult = await new sql.Request(tx)
+          .input('userId', sql.NVarChar, userId)
+          .input('sourceTicker', sql.NVarChar, normalizedTicker)
+          .query(`
+            SELECT id, transactionId, remainingQuantity, unitCost, purchaseDate
+            FROM PurchaseLots
+            WHERE userId = @userId
+              AND ticker = @sourceTicker
+              AND sourceType = 'purchase'
+              AND remainingQuantity > 0
+            ORDER BY purchaseDate ASC, id ASC
+          `);
+
+        const sourceOpenLots = (sourceOpenLotsResult.recordset ?? []).map((row) => ({
+          id: String((row as any).id),
+          transactionId: String((row as any).transactionId),
+          remainingQuantity: Number((row as any).remainingQuantity),
+          unitCost: Number((row as any).unitCost),
+          purchaseDate: new Date((row as any).purchaseDate),
+        } as IExchangeSourceLot));
+
+        if (sourceOpenLots.length === 0) {
+          throw new Error(`VALIDATION:No open purchase lots available to exchange for ${normalizedTicker}`);
+        }
+
+        const sourceDisplayBefore = await getDisplayLotsCsvForTicker(tx, userId, normalizedTicker);
+        const targetDisplayBefore = await getDisplayLotsCsvForTicker(tx, userId, normalizedNewTicker);
+        const sourceDisplayLotsCsvBefore = sourceDisplayBefore ? serializeDisplayLotsCsv(sourceDisplayBefore.lots) : null;
+        const targetDisplayLotsCsvBefore = targetDisplayBefore ? serializeDisplayLotsCsv(targetDisplayBefore.lots) : null;
+
+        const exchangeId = uuidv4();
+        await new sql.Request(tx)
+          .input('exchangeId', sql.UniqueIdentifier, exchangeId)
+          .input('userId', sql.NVarChar, userId)
+          .input('exchangeTransactionId', sql.UniqueIdentifier, id)
+          .input('sourceTicker', sql.NVarChar, normalizedTicker)
+          .input('targetTicker', sql.NVarChar, normalizedNewTicker)
+          .input('exchangeRate', sql.Decimal(18, 8), parsedExchangeRate)
+          .input('transactionDate', sql.DateTime2, parsedTransactionDate)
+          .input('sourceDisplayLotsCsvBefore', sql.NVarChar(sql.MAX), sourceDisplayLotsCsvBefore)
+          .input('targetDisplayLotsCsvBefore', sql.NVarChar(sql.MAX), targetDisplayLotsCsvBefore)
+          .query(`
+            INSERT INTO StockExchanges (
+              id,
+              userId,
+              exchangeTransactionId,
+              sourceTicker,
+              targetTicker,
+              exchangeRate,
+              transactionDate,
+              sourceDisplayLotsCsvBefore,
+              targetDisplayLotsCsvBefore
+            )
+            VALUES (
+              @exchangeId,
+              @userId,
+              @exchangeTransactionId,
+              @sourceTicker,
+              @targetTicker,
+              @exchangeRate,
+              @transactionDate,
+              @sourceDisplayLotsCsvBefore,
+              @targetDisplayLotsCsvBefore
+            )
+          `);
+
+        let totalSourceConsumed = 0;
+
+        for (const sourceLot of sourceOpenLots) {
+          const sourceRemaining = Number(sourceLot.remainingQuantity);
+          const sourceUnitCost = Number(sourceLot.unitCost);
+          if (!Number.isFinite(sourceRemaining) || sourceRemaining <= ALLOCATION_TOLERANCE) {
+            continue;
+          }
+          if (!Number.isFinite(sourceUnitCost) || sourceUnitCost <= 0) {
+            throw new Error(`VALIDATION:Invalid source unit cost for lot ${sourceLot.id}`);
+          }
+
+          const targetQuantity = Number((sourceRemaining * parsedExchangeRate).toFixed(8));
+          if (!Number.isFinite(targetQuantity) || targetQuantity <= ALLOCATION_TOLERANCE) {
+            throw new Error(`VALIDATION:Exchange rate produced invalid quantity for lot ${sourceLot.id}`);
+          }
+
+          const sourceCostBasis = sourceRemaining * sourceUnitCost;
+          const targetUnitCost = Number((sourceCostBasis / targetQuantity).toFixed(8));
+
+          const targetTransactionId = uuidv4();
+          const targetLotId = uuidv4();
+
+          await new sql.Request(tx)
+            .input('targetTransactionId', sql.UniqueIdentifier, targetTransactionId)
+            .input('userId', sql.NVarChar, userId)
+            .input('targetTicker', sql.NVarChar, normalizedNewTicker)
+            .input('quantity', sql.Decimal(18, 8), targetQuantity)
+            .input('price', sql.Decimal(18, 8), targetUnitCost)
+            .input('amount', sql.Decimal(18, 4), sourceCostBasis)
+            .input('transactionDate', sql.DateTime2, parsedTransactionDate)
+            .query(`
+              INSERT INTO StockTransactions (id, userId, ticker, type, quantity, price, amount, transactionDate)
+              VALUES (@targetTransactionId, @userId, @targetTicker, 'buy', @quantity, @price, @amount, @transactionDate)
+            `);
+
+          await new sql.Request(tx)
+            .input('targetLotId', sql.UniqueIdentifier, targetLotId)
+            .input('userId', sql.NVarChar, userId)
+            .input('targetTicker', sql.NVarChar, normalizedNewTicker)
+            .input('targetTransactionId', sql.UniqueIdentifier, targetTransactionId)
+            .input('quantity', sql.Decimal(18, 8), targetQuantity)
+            .input('unitCost', sql.Decimal(18, 8), targetUnitCost)
+            .input('purchaseDate', sql.DateTime2, sourceLot.purchaseDate)
+            .query(`
+              INSERT INTO PurchaseLots (id, userId, ticker, transactionId, sourceType, originalQuantity, remainingQuantity, unitCost, purchaseDate)
+              VALUES (@targetLotId, @userId, @targetTicker, @targetTransactionId, 'purchase', @quantity, @quantity, @unitCost, @purchaseDate)
+            `);
+
+          await new sql.Request(tx)
+            .input('sourceLotId', sql.UniqueIdentifier, sourceLot.id)
+            .input('userId', sql.NVarChar, userId)
+            .query(`
+              UPDATE PurchaseLots
+              SET remainingQuantity = 0, updatedAt = GETUTCDATE()
+              WHERE id = @sourceLotId AND userId = @userId
+            `);
+
+          await new sql.Request(tx)
+            .input('id', sql.UniqueIdentifier, uuidv4())
+            .input('exchangeId', sql.UniqueIdentifier, exchangeId)
+            .input('userId', sql.NVarChar, userId)
+            .input('sourceLotId', sql.UniqueIdentifier, sourceLot.id)
+            .input('sourceTransactionId', sql.UniqueIdentifier, sourceLot.transactionId)
+            .input('sourceRemainingBefore', sql.Decimal(18, 8), sourceRemaining)
+            .input('sourceUnitCost', sql.Decimal(18, 8), sourceUnitCost)
+            .input('sourcePurchaseDate', sql.DateTime2, sourceLot.purchaseDate)
+            .input('targetTransactionId', sql.UniqueIdentifier, targetTransactionId)
+            .input('targetLotId', sql.UniqueIdentifier, targetLotId)
+            .input('targetQuantity', sql.Decimal(18, 8), targetQuantity)
+            .input('targetUnitCost', sql.Decimal(18, 8), targetUnitCost)
+            .query(`
+              INSERT INTO StockExchangeLotMappings (
+                id,
+                exchangeId,
+                userId,
+                sourceLotId,
+                sourceTransactionId,
+                sourceRemainingBefore,
+                sourceUnitCost,
+                sourcePurchaseDate,
+                targetTransactionId,
+                targetLotId,
+                targetQuantity,
+                targetUnitCost
+              )
+              VALUES (
+                @id,
+                @exchangeId,
+                @userId,
+                @sourceLotId,
+                @sourceTransactionId,
+                @sourceRemainingBefore,
+                @sourceUnitCost,
+                @sourcePurchaseDate,
+                @targetTransactionId,
+                @targetLotId,
+                @targetQuantity,
+                @targetUnitCost
+              )
+            `);
+
+          await appendDisplayLotQuantity(tx, userId, normalizedNewTicker, targetQuantity);
+          totalSourceConsumed += sourceRemaining;
+        }
+
+        if (totalSourceConsumed > ALLOCATION_TOLERANCE) {
+          await consumeDisplayLotQuantitySmallestFirst(tx, userId, normalizedTicker, totalSourceConsumed);
+        }
+      }
+
       await tx.commit();
       res.status(201).json({
         id,
@@ -1277,12 +1550,17 @@ router.post('/', async (req: Request, res: Response) => {
         price,
         amount,
         transactionDate,
+        newTicker: type === 'exchange' ? normalizedNewTicker : undefined,
+        exchangeRate: type === 'exchange' ? parsedExchangeRate : undefined,
       });
     } catch (innerError) {
       await tx.rollback();
       throw innerError;
     }
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith('VALIDATION:')) {
+      return res.status(400).json({ error: error.message.replace('VALIDATION:', '') });
+    }
     res.status(500).json({ error: String(error) });
   }
 });
@@ -1340,11 +1618,99 @@ router.delete('/:id', async (req: Request, res: Response) => {
     }
 
     const transactionType = String(transactionLookup.recordset[0].type || '').toLowerCase();
+
+    if (transactionType !== 'exchange') {
+      const lockLookup = await pool.request()
+        .input('id', sql.UniqueIdentifier, id)
+        .input('userId', sql.NVarChar, userId)
+        .query(`
+          SELECT TOP 1 id
+          FROM StockExchangeLotMappings
+          WHERE userId = @userId
+            AND (sourceTransactionId = @id OR targetTransactionId = @id)
+        `);
+
+      if (lockLookup.recordset.length > 0) {
+        return res.status(409).json({
+          error: 'This transaction is locked by an exchange event and cannot be deleted directly. Delete the exchange transaction to rollback both tickers.'
+        });
+      }
+    }
+
     const tx = new sql.Transaction(pool);
     await tx.begin();
 
     try {
-      if (transactionType === 'sell') {
+      if (transactionType === 'exchange') {
+        const exchangeLookup = await new sql.Request(tx)
+          .input('exchangeTransactionId', sql.UniqueIdentifier, id)
+          .input('userId', sql.NVarChar, userId)
+          .query(`
+            SELECT TOP 1 id, sourceTicker, targetTicker, sourceDisplayLotsCsvBefore, targetDisplayLotsCsvBefore
+            FROM StockExchanges
+            WHERE exchangeTransactionId = @exchangeTransactionId AND userId = @userId
+          `);
+
+        if (exchangeLookup.recordset.length === 0) {
+          throw new Error('Exchange record not found for transaction rollback');
+        }
+
+        const exchangeRow = exchangeLookup.recordset[0] as any;
+        const exchangeId = String(exchangeRow.id || '');
+        const sourceTicker = String(exchangeRow.sourceTicker || '').toUpperCase();
+        const targetTicker = String(exchangeRow.targetTicker || '').toUpperCase();
+
+        const mappingRows = await new sql.Request(tx)
+          .input('exchangeId', sql.UniqueIdentifier, exchangeId)
+          .input('userId', sql.NVarChar, userId)
+          .query(`
+            SELECT sourceLotId, sourceRemainingBefore, targetLotId, targetTransactionId
+            FROM StockExchangeLotMappings
+            WHERE exchangeId = @exchangeId AND userId = @userId
+            ORDER BY createdAt DESC
+          `);
+
+        for (const mapping of mappingRows.recordset as any[]) {
+          await new sql.Request(tx)
+            .input('sourceLotId', sql.UniqueIdentifier, mapping.sourceLotId)
+            .input('sourceRemainingBefore', sql.Decimal(18, 8), Number(mapping.sourceRemainingBefore || 0))
+            .input('userId', sql.NVarChar, userId)
+            .query(`
+              UPDATE PurchaseLots
+              SET remainingQuantity = @sourceRemainingBefore, updatedAt = GETUTCDATE()
+              WHERE id = @sourceLotId AND userId = @userId
+            `);
+
+          await new sql.Request(tx)
+            .input('targetLotId', sql.UniqueIdentifier, mapping.targetLotId)
+            .input('userId', sql.NVarChar, userId)
+            .query(`
+              DELETE FROM PurchaseLots
+              WHERE id = @targetLotId AND userId = @userId
+            `);
+
+          await new sql.Request(tx)
+            .input('targetTransactionId', sql.UniqueIdentifier, mapping.targetTransactionId)
+            .input('userId', sql.NVarChar, userId)
+            .query(`
+              DELETE FROM StockTransactions
+              WHERE id = @targetTransactionId AND userId = @userId
+            `);
+        }
+
+        const sourceDisplayBeforeLots = parseDisplayLotsCsv(String(exchangeRow.sourceDisplayLotsCsvBefore || ''));
+        const targetDisplayBeforeLots = parseDisplayLotsCsv(String(exchangeRow.targetDisplayLotsCsvBefore || ''));
+        await persistDisplayLotsCsvForTicker(tx, userId, sourceTicker, sourceDisplayBeforeLots);
+        await persistDisplayLotsCsvForTicker(tx, userId, targetTicker, targetDisplayBeforeLots);
+
+        await new sql.Request(tx)
+          .input('exchangeId', sql.UniqueIdentifier, exchangeId)
+          .input('userId', sql.NVarChar, userId)
+          .query(`
+            DELETE FROM StockExchanges
+            WHERE id = @exchangeId AND userId = @userId
+          `);
+      } else if (transactionType === 'sell') {
         // All allocations handled via PurchaseLotAllocations below
 
         const purchaseAllocations = await new sql.Request(tx)

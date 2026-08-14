@@ -47,12 +47,21 @@ export default function StocksPage() {
 
     for (const transaction of allTransactions) {
       const quantity = Number(transaction.quantity)
-      if (!Number.isFinite(quantity) || quantity <= 0) {
+      const exchangeSourceQuantity = Number(transaction.exchangeSourceQuantity)
+      const exchangeQuantity = Number.isFinite(exchangeSourceQuantity) && exchangeSourceQuantity > 0
+        ? exchangeSourceQuantity
+        : 0
+      const quantityToApply = transaction.type === 'exchange' ? exchangeQuantity : quantity
+      if (!Number.isFinite(quantityToApply) || quantityToApply <= 0) {
         continue
       }
 
       const previous = sharesByTicker.get(transaction.ticker) ?? 0
-      const next = transaction.type === 'sell' ? previous - quantity : previous + quantity
+      const next = transaction.type === 'sell'
+        ? previous - quantityToApply
+        : transaction.type === 'exchange'
+          ? previous - quantityToApply
+          : previous + quantityToApply
       sharesByTicker.set(transaction.ticker, next)
     }
 
@@ -203,9 +212,11 @@ export default function StocksPage() {
                   <td>{formatStockPrice4(transaction.price)}</td>
                   <td>{formatCurrency2(transaction.amount)}</td>
                   <td>
-                    <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
-                      Delete
-                    </button>
+                    {!transaction.isDeletionLocked ? (
+                      <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
+                        Delete
+                      </button>
+                    ) : null}
                   </td>
                 </tr>
               ))}

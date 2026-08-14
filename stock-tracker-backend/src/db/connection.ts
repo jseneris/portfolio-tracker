@@ -57,7 +57,7 @@ async function createTablesIfNotExist() {
         id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
         userId NVARCHAR(255) NOT NULL,
         ticker NVARCHAR(10) NOT NULL,
-        type NVARCHAR(50) NOT NULL CHECK (type IN ('buy', 'sell', 'div')),
+        type NVARCHAR(50) NOT NULL CHECK (type IN ('buy', 'sell', 'div', 'exchange')),
         quantity DECIMAL(18, 8),
         price DECIMAL(18, 8),
         amount DECIMAL(18, 4),
@@ -69,8 +69,9 @@ async function createTablesIfNotExist() {
         CONSTRAINT CK_StockTransactions_PositiveValues CHECK (
           (type IN ('buy', 'sell') AND quantity IS NOT NULL AND quantity > 0 AND price IS NOT NULL AND price > 0 AND amount IS NOT NULL AND amount > 0)
           OR (type = 'div' AND amount IS NOT NULL AND amount > 0)
+          OR (type = 'exchange' AND quantity IS NULL AND price IS NULL AND amount IS NULL)
         ),
-        CONSTRAINT CK_StockTransactions_Type CHECK (type IN ('buy', 'sell', 'div'))
+        CONSTRAINT CK_StockTransactions_Type CHECK (type IN ('buy', 'sell', 'div', 'exchange'))
       );
 
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StockSplits')
@@ -207,6 +208,43 @@ async function createTablesIfNotExist() {
         updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
       );
 
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StockExchanges')
+      CREATE TABLE StockExchanges (
+        id UNIQUEIDENTIFIER PRIMARY KEY,
+        userId NVARCHAR(255) NOT NULL,
+        exchangeTransactionId UNIQUEIDENTIFIER NOT NULL,
+        sourceTicker NVARCHAR(10) NOT NULL,
+        targetTicker NVARCHAR(10) NOT NULL,
+        exchangeRate DECIMAL(18, 8) NOT NULL,
+        transactionDate DATETIME2 NOT NULL,
+        sourceDisplayLotsCsvBefore NVARCHAR(MAX) NULL,
+        targetDisplayLotsCsvBefore NVARCHAR(MAX) NULL,
+        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        CONSTRAINT FK_StockExchanges_ExchangeTransaction
+          FOREIGN KEY (exchangeTransactionId) REFERENCES StockTransactions(id) ON DELETE CASCADE
+      );
+
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StockExchangeLotMappings')
+      CREATE TABLE StockExchangeLotMappings (
+        id UNIQUEIDENTIFIER PRIMARY KEY,
+        exchangeId UNIQUEIDENTIFIER NOT NULL,
+        userId NVARCHAR(255) NOT NULL,
+        sourceLotId UNIQUEIDENTIFIER NOT NULL,
+        sourceTransactionId UNIQUEIDENTIFIER NOT NULL,
+        sourceRemainingBefore DECIMAL(18, 8) NOT NULL,
+        sourceUnitCost DECIMAL(18, 8) NOT NULL,
+        sourcePurchaseDate DATETIME2 NOT NULL,
+        targetTransactionId UNIQUEIDENTIFIER NOT NULL,
+        targetLotId UNIQUEIDENTIFIER NOT NULL,
+        targetQuantity DECIMAL(18, 8) NOT NULL,
+        targetUnitCost DECIMAL(18, 8) NOT NULL,
+        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        CONSTRAINT FK_StockExchangeLotMappings_Exchange
+          FOREIGN KEY (exchangeId) REFERENCES StockExchanges(id) ON DELETE CASCADE
+      );
+
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_UserId')
       CREATE INDEX IX_PurchaseLots_UserId ON PurchaseLots(userId);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_Ticker')
@@ -257,6 +295,58 @@ async function createTablesIfNotExist() {
 
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_UserSettings_UserId')
       CREATE UNIQUE INDEX UX_UserSettings_UserId ON UserSettings(userId);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_StockExchanges_ExchangeTransactionId')
+      CREATE UNIQUE INDEX UX_StockExchanges_ExchangeTransactionId ON StockExchanges(exchangeTransactionId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockExchanges_UserId')
+      CREATE INDEX IX_StockExchanges_UserId ON StockExchanges(userId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockExchanges_SourceTicker')
+      CREATE INDEX IX_StockExchanges_SourceTicker ON StockExchanges(sourceTicker);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockExchanges_TargetTicker')
+      CREATE INDEX IX_StockExchanges_TargetTicker ON StockExchanges(targetTicker);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockExchangeLotMappings_ExchangeId')
+      CREATE INDEX IX_StockExchangeLotMappings_ExchangeId ON StockExchangeLotMappings(exchangeId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockExchangeLotMappings_UserId_SourceTransactionId')
+      CREATE INDEX IX_StockExchangeLotMappings_UserId_SourceTransactionId ON StockExchangeLotMappings(userId, sourceTransactionId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_StockExchangeLotMappings_UserId_TargetTransactionId')
+      CREATE INDEX IX_StockExchangeLotMappings_UserId_TargetTransactionId ON StockExchangeLotMappings(userId, targetTransactionId);
+  `);
+
+  await request.batch(`
+    IF OBJECT_ID('StockTransactions', 'U') IS NOT NULL
+    BEGIN
+      DECLARE @constraintName SYSNAME;
+      DECLARE @dropConstraintSql NVARCHAR(MAX);
+
+      DECLARE constraint_cursor CURSOR FAST_FORWARD FOR
+      SELECT cc.name
+      FROM sys.check_constraints cc
+      WHERE cc.parent_object_id = OBJECT_ID('StockTransactions');
+
+      OPEN constraint_cursor;
+      FETCH NEXT FROM constraint_cursor INTO @constraintName;
+
+      WHILE @@FETCH_STATUS = 0
+      BEGIN
+        SET @dropConstraintSql = N'ALTER TABLE StockTransactions DROP CONSTRAINT ' + QUOTENAME(@constraintName) + N';';
+        EXEC sp_executesql @dropConstraintSql;
+        FETCH NEXT FROM constraint_cursor INTO @constraintName;
+      END
+
+      CLOSE constraint_cursor;
+      DEALLOCATE constraint_cursor;
+
+      ALTER TABLE StockTransactions
+      ADD CONSTRAINT CK_StockTransactions_PositiveValues CHECK (
+        (type IN ('buy', 'sell') AND quantity IS NOT NULL AND quantity > 0 AND price IS NOT NULL AND price > 0 AND amount IS NOT NULL AND amount > 0)
+        OR (type = 'div' AND amount IS NOT NULL AND amount > 0)
+        OR (type = 'exchange' AND quantity IS NULL AND price IS NULL AND amount IS NULL)
+      );
+
+      ALTER TABLE StockTransactions
+      ADD CONSTRAINT CK_StockTransactions_Type CHECK (type IN ('buy', 'sell', 'div', 'exchange'));
+    END
   `);
 
   console.log('✓ Database tables initialized');

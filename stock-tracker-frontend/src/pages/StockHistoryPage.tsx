@@ -38,6 +38,8 @@ type StockFormState = {
   quantity: string
   price: string
   totalAmount: string
+  newTicker: string
+  exchangeRate: string
   transactionDate: string
 }
 
@@ -46,6 +48,8 @@ const EMPTY_STOCK_FORM: StockFormState = {
   quantity: '',
   price: '',
   totalAmount: '',
+  newTicker: '',
+  exchangeRate: '',
   transactionDate: new Date().toISOString().slice(0, 10),
 }
 
@@ -221,6 +225,7 @@ export default function StockHistoryPage() {
 
   const isSell = form.type === 'sell'
   const isDividend = form.type === 'div'
+  const isExchange = form.type === 'exchange'
 
   const allocationTotal = useMemo(() => {
     return Object.values(allocations).reduce((sum, value) => {
@@ -239,15 +244,18 @@ export default function StockHistoryPage() {
 
   const hasRequiredValues =
     Boolean(form.transactionDate) &&
-    form.quantity.trim() !== '' &&
-    (isDividend ? form.totalAmount.trim() !== '' : form.price.trim() !== '')
+    (isExchange
+      ? form.newTicker.trim() !== '' && form.exchangeRate.trim() !== ''
+      : form.quantity.trim() !== '' && (isDividend ? form.totalAmount.trim() !== '' : form.price.trim() !== ''))
 
   const hasValidNumericValues =
-    Number.isFinite(quantityValue) &&
-    quantityValue > 0 &&
-    (isDividend
-      ? Number.isFinite(Number(form.totalAmount)) && Number(form.totalAmount) > 0
-      : Number.isFinite(Number(form.price)) && Number(form.price) > 0)
+    (isExchange
+      ? Number.isFinite(Number(form.exchangeRate)) && Number(form.exchangeRate) > 0
+      : Number.isFinite(quantityValue)
+        && quantityValue > 0
+        && (isDividend
+          ? Number.isFinite(Number(form.totalAmount)) && Number(form.totalAmount) > 0
+          : Number.isFinite(Number(form.price)) && Number(form.price) > 0))
 
   const hasSellAllocationInput = availableLots.some((lot) => {
     const value = Number(allocations[lot.id] || 0)
@@ -544,6 +552,23 @@ export default function StockHistoryPage() {
   }
 
   function validateStockForm(formState: StockFormState): string | null {
+    if (formState.type === 'exchange') {
+      const nextTicker = String(formState.newTicker || '').trim().toUpperCase()
+      if (!nextTicker) {
+        return 'New ticker is required for an exchange.'
+      }
+
+      if (nextTicker === ticker) {
+        return 'New ticker must be different from current ticker.'
+      }
+
+      const rate = Number(formState.exchangeRate)
+      if (!Number.isFinite(rate) || rate <= 0) {
+        return 'Exchange rate must be greater than 0.'
+      }
+    }
+
+    if (formState.type !== 'exchange') {
     const quantity = Number(formState.quantity)
     if (!Number.isFinite(quantity) || quantity <= 0) {
       return 'Shares must be greater than 0.'
@@ -559,6 +584,7 @@ export default function StockHistoryPage() {
       if (!Number.isFinite(price) || price <= 0) {
         return 'Price must be greater than 0.'
       }
+    }
     }
 
     if (!formState.transactionDate) {
@@ -832,15 +858,20 @@ export default function StockHistoryPage() {
       return
     }
 
-    const qty = Number(form.quantity)
-    const price = isDividend ? Number(form.totalAmount) / qty : Number(form.price)
-
     const payload: CreateStockInput = {
       ticker,
       type: form.type,
-      quantity: qty,
-      price,
       transactionDate: new Date(form.transactionDate).toISOString(),
+    }
+
+    if (!isExchange) {
+      const qty = Number(form.quantity)
+      const price = isDividend ? Number(form.totalAmount) / qty : Number(form.price)
+      payload.quantity = qty
+      payload.price = price
+    } else {
+      payload.newTicker = String(form.newTicker || '').trim().toUpperCase()
+      payload.exchangeRate = Number(form.exchangeRate)
     }
 
     if (form.type === 'buy') {
@@ -1215,9 +1246,15 @@ export default function StockHistoryPage() {
                               {expandedSaleId === transaction.id ? '▼' : '▶'} Lots
                             </button>
                           ) : null}
-                          <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
-                            Delete
-                          </button>
+                          {!transaction.isDeletionLocked ? (
+                            <button
+                              className="button button-danger"
+                              type="button"
+                              onClick={() => onDeleteTransaction(transaction.id)}
+                            >
+                              Delete
+                            </button>
+                          ) : null}
                         </td>
                       </tr>,
                       transaction.type === 'sell' && expandedSaleId === transaction.id ? (
@@ -1274,7 +1311,7 @@ export default function StockHistoryPage() {
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="add-stock-history-transaction-title">
           <div className="modal-card modal-card-wide modal-card-scrollable">
             <h3 id="add-stock-history-transaction-title">Add Transaction ({ticker})</h3>
-            <p>Enter date, transaction type, shares, and price.</p>
+            <p>Enter date and transaction details.</p>
 
             <form ref={addTransactionFormRef} className="form-grid" onSubmit={onSubmit}>
               <label>
@@ -1304,9 +1341,11 @@ export default function StockHistoryPage() {
                   <option value="buy">Buy</option>
                   <option value="div">Dividend</option>
                   <option value="sell">Sell</option>
+                  <option value="exchange">Exchange</option>
                 </select>
               </label>
 
+              {!isExchange ? (
               <label>
                 Shares
                 <input
@@ -1318,8 +1357,35 @@ export default function StockHistoryPage() {
                   disabled={saving}
                 />
               </label>
+              ) : null}
 
-              {isDividend ? (
+              {isExchange ? (
+                <label>
+                  New Ticker
+                  <input
+                    type="text"
+                    value={form.newTicker}
+                    onChange={(event) => setForm((prev) => ({ ...prev, newTicker: event.target.value.toUpperCase() }))}
+                    disabled={saving}
+                  />
+                </label>
+              ) : null}
+
+              {isExchange ? (
+                <label>
+                  Exchange Rate
+                  <input
+                    type="number"
+                    min="0.00000001"
+                    step="0.00000001"
+                    value={form.exchangeRate}
+                    onChange={(event) => setForm((prev) => ({ ...prev, exchangeRate: event.target.value }))}
+                    disabled={saving}
+                  />
+                </label>
+              ) : null}
+
+              {!isExchange && isDividend ? (
                 <label>
                   Total Amount
                   <input
@@ -1331,7 +1397,7 @@ export default function StockHistoryPage() {
                     disabled={saving}
                   />
                 </label>
-              ) : (
+              ) : !isExchange ? (
                 <label>
                   Price
                   <input
@@ -1343,7 +1409,7 @@ export default function StockHistoryPage() {
                     disabled={saving}
                   />
                 </label>
-              )}
+              ) : null}
 
               <div className="form-actions">
                 <button className="button button-primary" type="submit" disabled={saving || !canSubmit || hasInsufficientCashForBuy}>

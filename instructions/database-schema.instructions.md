@@ -30,7 +30,7 @@ Tracks schema hardening/migration steps applied by startup bootstrap logic.
 - **id**: Unique identifier
 - **userId**: User identifier
 - **ticker**: Stock ticker symbol (e.g., AAPL)
-- **type**: `buy`, `sell`, `div`
+- **type**: `buy`, `sell`, `div`, `exchange`
 - **quantity**: Number of shares
 - **price**: Price per share, `DECIMAL(18,8)`
 - **amount**: Total transaction amount
@@ -39,8 +39,10 @@ Tracks schema hardening/migration steps applied by startup bootstrap logic.
 - **splitAdjusted**: legacy flag retained in schema
 - **lastSplitId**: legacy foreign key retained in schema
 - **validation constraints**:
-	- `type` must be one of `buy`, `sell`, `div`
-	- `quantity > 0`, `price > 0`, and `amount > 0`
+	- `type` must be one of `buy`, `sell`, `div`, `exchange`
+	- `buy` and `sell` require positive `quantity`, `price`, and `amount`
+	- `div` requires a positive `amount`
+	- `exchange` requires `quantity`, `price`, and `amount` to be null
 - **indexes**:
 	- `IX_StockTransactions_UserId`
 	- `IX_StockTransactions_Ticker`
