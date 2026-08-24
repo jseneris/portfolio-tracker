@@ -339,7 +339,7 @@ router.get('/:ticker', async (req: Request, res: Response) => {
   }
 });
 
-// GET open (unconsumed) purchase lots for ticker — excludes dividend lots, only remainingQuantity > 0
+// GET open (unconsumed) source lots for ticker, only remainingQuantity > 0
 router.get('/:ticker/open', async (req: Request, res: Response) => {
   try {
     const { ticker } = req.params;
@@ -355,7 +355,6 @@ router.get('/:ticker/open', async (req: Request, res: Response) => {
       SELECT id, userId, ticker, transactionId, sourceType, remainingQuantity, unitCost, purchaseDate
       FROM PurchaseLots
       WHERE userId = @userId AND ticker = @ticker
-        AND sourceType = 'purchase'
         AND remainingQuantity > 0
     `;
 

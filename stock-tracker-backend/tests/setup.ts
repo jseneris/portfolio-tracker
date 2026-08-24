@@ -311,7 +311,7 @@ export async function getDisplayLots(ticker: string): Promise<any[]> {
       .map((part) => Number(part.trim()))
       .filter((value) => Number.isFinite(value) && value > 0)
       .sort((a, b) => a - b);
-console.log('lots',lots);
+
     lots.forEach((qty, index) => {
       expanded.push({
         id: `${String(row.id)}:${index}`,
