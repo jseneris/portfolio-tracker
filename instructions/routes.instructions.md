@@ -22,9 +22,9 @@ Canonical source of truth: see `endpoints-current.md` for full behavior and requ
 - `GET /api/stocks` - Get all stock transactions
 - `GET /api/stocks/portfolio/summary` - Get unified portfolio summary for one user (cash totals, available cash, cash basis, adjustments, total stock cost basis, stock count, and stock list with ticker/totalShares/costBasis/lotCount)
 - `POST /api/stocks/historical-prices/sync-year?year=2021|2022` - Backfill historical closes for supported comparison year.
-- `POST /api/stocks/historical-prices/sync-2021` - Legacy convenience backfill for 2021.
+- `POST /api/stocks/historical-prices/sync-all` - Legacy convenience backfill for 2021.
 - `GET /api/stocks/historical-prices` - Dual mode: date-range row retrieval or year-based comparison series.
-- `GET /api/stocks/portfolio/comparison-2021` - Portfolio vs benchmark series based on stored historical prices.
+- `GET /api/stocks/portfolio/comparison-all` - Portfolio vs benchmark series based on stored historical prices.
 - `GET /api/stocks/:ticker` - Get transactions for ticker
 - `GET /api/stocks/:ticker/summary` - Get ticker summary (total shares across all lots, lot count, cost basis)
 - `POST /api/stocks` - Create stock transaction (`buy`, `sell`, `div`)

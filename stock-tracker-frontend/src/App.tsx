@@ -5,7 +5,7 @@ import CashPage from './pages/CashPage'
 import StocksPage from './pages/StocksPage'
 import HoldingsPage from './pages/HoldingsPage'
 import StockHistoryPage from './pages/StockHistoryPage'
-import Comparison2021Page from './pages/Comparison2021Page'
+import ComparisonPage from './pages/ComparisonPage'
 import StockSplitsPage from './pages/StockSplitsPage'
 import UserSettingsPage from './pages/UserSettingsPage'
 
@@ -81,8 +81,8 @@ export default function App() {
           <Route path="/stocks/:ticker" element={<StockHistoryPage />} />
           <Route path="/holdings" element={<HoldingsPage />} />
           <Route path="/splits" element={<StockSplitsPage />} />
-          <Route path="/comparison" element={<Comparison2021Page />} />
-          <Route path="/comparison-2021" element={<Comparison2021Page />} />
+          <Route path="/comparison" element={<ComparisonPage />} />
+          <Route path="/comparison-all" element={<ComparisonPage />} />
           <Route path="/user-settings" element={<UserSettingsPage />} />
         </Routes>
       </main>

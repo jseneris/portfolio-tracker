@@ -229,7 +229,7 @@ export type HistoricalPrice = {
   updatedAt?: string
 }
 
-export type SyncHistoricalPrices2021Response = {
+export type SyncHistoricalPricesResponse = {
   source: string
   targetEndDate: string
   requestedDates: string[]
@@ -265,7 +265,7 @@ export type PortfolioComparisonResponse = {
   points: PortfolioComparisonPoint[]
 }
 
-export type PortfolioComparison2021Response = PortfolioComparisonResponse
+export type PortfolioComparisonAllResponse = PortfolioComparisonResponse
 
 export type UserTargetSettings = {
   saleTargetPercent: number
@@ -417,14 +417,8 @@ export async function activateStockSplit(splitId: string): Promise<ActivateStock
   })
 }
 
-export async function syncHistoricalPrices2021(): Promise<SyncHistoricalPrices2021Response> {
-  return requestApi<SyncHistoricalPrices2021Response>('/api/stocks/historical-prices/sync-2021', {
-    method: 'POST',
-  })
-}
-
-export async function syncHistoricalPricesByYear(year: number): Promise<SyncHistoricalPrices2021Response> {
-  return requestApi<SyncHistoricalPrices2021Response>(`/api/stocks/historical-prices/sync-year?year=${encodeURIComponent(String(year))}`, {
+export async function syncHistoricalPricesByYear(year: number): Promise<SyncHistoricalPricesResponse> {
+  return requestApi<SyncHistoricalPricesResponse>(`/api/stocks/historical-prices/sync-year?year=${encodeURIComponent(String(year))}`, {
     method: 'POST',
   })
 }
@@ -438,8 +432,8 @@ export async function getHistoricalPrices(
   )
 }
 
-export async function getPortfolioComparison2021(): Promise<PortfolioComparison2021Response> {
-  return requestApi<PortfolioComparison2021Response>('/api/stocks/portfolio/comparison-2021')
+export async function getPortfolioComparisonAll(): Promise<PortfolioComparisonAllResponse> {
+  return requestApi<PortfolioComparisonAllResponse>('/api/stocks/portfolio/comparison-all')
 }
 
 export async function getPortfolioComparisonByYear(year: number): Promise<PortfolioComparisonResponse> {

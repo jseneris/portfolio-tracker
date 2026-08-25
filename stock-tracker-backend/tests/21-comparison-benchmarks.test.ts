@@ -157,7 +157,7 @@ describe('21. Comparison Benchmarks', () => {
     await depositCash(500, new Date('2022-01-10T00:00:00Z'));
 
     const allResponse = await request(app)
-      .get('/api/stocks/portfolio/comparison-2021')
+      .get('/api/stocks/portfolio/comparison-all')
       .set('x-user-id', TEST_USER_ID)
       .expect(200);
 
@@ -196,7 +196,7 @@ describe('21. Comparison Benchmarks', () => {
     await buyStock('TEST', 1, 100, new Date('2022-12-30T00:00:00Z'));
 
     const response = await request(app)
-      .get('/api/stocks/portfolio/comparison-2021')
+      .get('/api/stocks/portfolio/comparison-all')
       .set('x-user-id', TEST_USER_ID)
       .expect(200);
 

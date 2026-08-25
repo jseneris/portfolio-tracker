@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   CashTransaction,
-  getPortfolioComparison2021,
+  getPortfolioComparisonAll,
   getPortfolioComparisonByYear,
   PortfolioComparisonPoint,
   StockTransaction,
@@ -71,7 +71,7 @@ function filterPointsByYear(points: PortfolioComparisonPoint[], year: number) {
   return points.filter((point) => point.date >= startDate && point.date <= endDate)
 }
 
-export default function Comparison2021Page() {
+export default function ComparisonPage() {
   const [selectedYear, setSelectedYear] = useState<YearSelection | null>(null)
   const [points, setPoints] = useState<PortfolioComparisonPoint[]>([])
   const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([])
@@ -452,7 +452,7 @@ export default function Comparison2021Page() {
     setError(null)
     setSuccess(null)
     try {
-      const allResponse = await getPortfolioComparison2021()
+      const allResponse = await getPortfolioComparisonAll()
       const allPoints = allResponse.points ?? []
 
       if (yearSelection === 'all') {

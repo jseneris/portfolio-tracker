@@ -10,9 +10,7 @@ const yahooFinance = new YahooFinance();
 const ALLOCATION_TOLERANCE = 1e-6;
 const SPLIT_TOLERANCE = 1e-6;
 const HISTORICAL_PRICE_SOURCE = 'yahoo-finance';
-const HISTORICAL_2021_START_DATE = '2021-01-01';
-const HISTORICAL_2021_END_DATE = '2021-12-31';
-const HISTORICAL_SYNC_2021_MAX_ROWS_PER_RUN = 10000;
+const HISTORICAL_SYNC_MAX_ROWS_PER_RUN = 10000;
 const DOW_BENCHMARK_TICKER = '^DJI';
 const NASDAQ_BENCHMARK_TICKER = '^IXIC';
 const SP500_BENCHMARK_TICKER = '^GSPC';
@@ -489,7 +487,7 @@ router.post('/historical-prices/sync-year', async (req: Request, res: Response) 
       return !coveredTickers || coveredTickers.size < tickers.length;
     });
 
-    const maxDatesPerRun = Math.max(1, Math.floor(HISTORICAL_SYNC_2021_MAX_ROWS_PER_RUN / tickers.length));
+    const maxDatesPerRun = Math.max(1, Math.floor(HISTORICAL_SYNC_MAX_ROWS_PER_RUN / tickers.length));
     const requestedDates = unsyncedDates.slice(0, maxDatesPerRun);
 
     if (requestedDates.length === 0) {
@@ -588,194 +586,6 @@ router.post('/historical-prices/sync-year', async (req: Request, res: Response) 
   }
 });
 
-router.post('/historical-prices/sync-2021', async (req: Request, res: Response) => {
-  try {
-    const userId = req.user?.id!;
-    const pool = getPool();
-    const targetEndDate = HISTORICAL_2021_END_DATE;
-
-    const priorityDates = await getYearPriorityDates(pool, userId, HISTORICAL_2021_START_DATE, targetEndDate);
-
-    const firstAnchorDate = HISTORICAL_2021_START_DATE;
-
-    const priorityDateSet = new Set<string>(priorityDates);
-    priorityDateSet.add(targetEndDate);
-
-    const remainingYearDates = buildDateRangeInclusive(firstAnchorDate, targetEndDate)
-      .filter((d) => !priorityDateSet.has(d));
-
-    const prioritizedDates: string[] = [];
-    const seenPriorityDates = new Set<string>();
-    const pushPriorityDate = (dateText: string) => {
-      if (!seenPriorityDates.has(dateText)) {
-        prioritizedDates.push(dateText);
-        seenPriorityDates.add(dateText);
-      }
-    };
-
-    for (const dateText of priorityDates) {
-      pushPriorityDate(dateText);
-    }
-    pushPriorityDate(targetEndDate);
-    for (const dateText of remainingYearDates) {
-      pushPriorityDate(dateText);
-    }
-
-    const tickerRows = await pool.request()
-      .input('userId', sql.NVarChar, userId)
-      .input('targetEndDate', sql.Date, parseDateOnly(targetEndDate))
-      .query(`
-        SELECT DISTINCT ticker
-        FROM StockTransactions
-        WHERE userId = @userId
-          AND transactionDate <= @targetEndDate
-        ORDER BY ticker ASC
-      `);
-
-    const userTickers = (tickerRows.recordset ?? [])
-      .map((row: any) => String(row.ticker || '').toUpperCase())
-      .filter((t) => !!t);
-
-    const tickers = Array.from(new Set([
-      ...userTickers,
-      DOW_BENCHMARK_TICKER,
-      NASDAQ_BENCHMARK_TICKER,
-      SP500_BENCHMARK_TICKER
-    ])).sort();
-
-    if (tickers.length === 0 || prioritizedDates.length === 0) {
-      return res.json({
-        source: HISTORICAL_PRICE_SOURCE,
-        targetEndDate,
-        requestedDates: [],
-        syncedDates: [],
-        remainingDates: 0,
-        tickers,
-        storedRows: 0,
-        missingPrices: []
-      });
-    }
-
-    const existingRows = await pool.request()
-      .input('startDate', sql.Date, parseDateOnly(firstAnchorDate))
-      .input('endDate', sql.Date, parseDateOnly(targetEndDate))
-      .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
-      .query(`
-        SELECT
-          CONVERT(VARCHAR(10), priceDate, 23) AS priceDate,
-          ticker
-        FROM HistoricalPrices
-        WHERE source = @source
-          AND priceDate >= @startDate
-          AND priceDate <= @endDate
-      `);
-
-    const tickerSet = new Set(tickers);
-    const coverageByDate = new Map<string, Set<string>>();
-    for (const row of existingRows.recordset ?? []) {
-      const priceDate = String((row as any).priceDate || '');
-      const ticker = String((row as any).ticker || '').toUpperCase();
-      if (!priceDate || !tickerSet.has(ticker)) {
-        continue;
-      }
-      const coveredTickers = coverageByDate.get(priceDate) ?? new Set<string>();
-      coveredTickers.add(ticker);
-      coverageByDate.set(priceDate, coveredTickers);
-    }
-
-    const unsyncedDates = prioritizedDates.filter((priceDate) => {
-      const coveredTickers = coverageByDate.get(priceDate);
-      return !coveredTickers || coveredTickers.size < tickers.length;
-    });
-
-    const maxDatesPerRun = Math.max(1, Math.floor(HISTORICAL_SYNC_2021_MAX_ROWS_PER_RUN / tickers.length));
-    const requestedDates = unsyncedDates.slice(0, maxDatesPerRun);
-
-    if (requestedDates.length === 0) {
-      return res.json({
-        source: HISTORICAL_PRICE_SOURCE,
-        targetEndDate,
-        requestedDates: [],
-        syncedDates: [],
-        remainingDates: 0,
-        tickers,
-        storedRows: 0,
-        missingPrices: []
-      });
-    }
-
-    const earliestRequestedDate = requestedDates[0];
-    const latestRequestedDate = requestedDates[requestedDates.length - 1];
-    const missingPrices: Array<{ ticker: string; priceDate: string }> = [];
-    const failedTickers: Array<{ ticker: string; error: string }> = [];
-    let storedRows = 0;
-
-    for (const ticker of tickers) {
-      const missingDatesForTicker = requestedDates.filter((priceDate) => {
-        const coveredTickers = coverageByDate.get(priceDate);
-        return !coveredTickers || !coveredTickers.has(ticker);
-      });
-
-      if (missingDatesForTicker.length === 0) {
-        continue;
-      }
-
-      const earliestMissingDate = missingDatesForTicker[0];
-      const latestMissingDate = missingDatesForTicker[missingDatesForTicker.length - 1];
-
-      try {
-        const quotes = await fetchYahooDailyCloses(ticker, earliestMissingDate, latestMissingDate);
-
-        for (const priceDate of missingDatesForTicker) {
-          const matched = resolveClosestPriceOnOrBefore(quotes, priceDate);
-          if (!matched) {
-            missingPrices.push({ ticker, priceDate });
-            continue;
-          }
-
-          const insertResult = await pool.request()
-            .input('ticker', sql.NVarChar, ticker)
-            .input('priceDate', sql.Date, parseDateOnly(priceDate))
-            .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
-            .input('closePrice', sql.Decimal(18, 8), matched.close)
-            .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
-            .query(`
-              INSERT INTO HistoricalPrices (id, ticker, priceDate, marketDate, closePrice, source)
-              SELECT NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source
-              WHERE NOT EXISTS (
-                SELECT 1
-                FROM HistoricalPrices
-                WHERE ticker = @ticker
-                  AND priceDate = @priceDate
-                  AND source = @source
-              );
-            `);
-
-          storedRows += insertResult.rowsAffected?.[0] ?? 0;
-        }
-      } catch (tickerError) {
-        failedTickers.push({
-          ticker,
-          error: tickerError instanceof Error ? tickerError.message : String(tickerError),
-        });
-      }
-    }
-
-    res.json({
-      source: HISTORICAL_PRICE_SOURCE,
-      targetEndDate,
-      requestedDates,
-      syncedDates: requestedDates,
-      remainingDates: Math.max(0, unsyncedDates.length - requestedDates.length),
-      tickers,
-      storedRows,
-      missingPrices,
-      failedTickers
-    });
-  } catch (error) {
-    res.status(500).json({ error: String(error) });
-  }
-});
 
 // Read stored historical closes for the requested date range.
 router.get('/historical-prices', async (req: Request, res: Response) => {
@@ -875,7 +685,7 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/portfolio/comparison-2021', async (req: Request, res: Response) => {
+router.get('/portfolio/comparison-all', async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id!;
     const pool = getPool();

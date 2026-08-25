@@ -66,7 +66,7 @@ Authentication and scoping notes:
 - Also attempts split discovery per owned ticker in range from first transaction date to today.
 - Writes price rows with idempotent `MERGE` behavior.
 
-### POST /api/stocks/historical-prices/sync-2021
+### POST /api/stocks/historical-prices/sync-all
 - Legacy convenience variant for 2021 backfill behavior.
 - Performs date-prioritized historical close sync for 2021.
 
@@ -82,7 +82,7 @@ Authentication and scoping notes:
   - values benchmark lines using closest-on-or-before closes,
   - values held stocks using closest-on-or-before closes so non-trading days inherit the prior market close.
 
-### GET /api/stocks/portfolio/comparison-2021
+### GET /api/stocks/portfolio/comparison-all
 - Legacy-named route that now returns the continuous portfolio-vs-benchmark series used by the Compare page.
 - Series starts at the earliest cash deposit date (or latest transaction date if no deposit exists).
 - Series ends at `min(today, last day of the year of the latest cash or stock transaction)`.
