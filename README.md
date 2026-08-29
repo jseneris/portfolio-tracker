@@ -16,6 +16,7 @@ Monorepo for a portfolio tracking MVP with a TypeScript backend and React fronte
 
 - Dashboard Add Stock modal added (ticker, shares, price, date).
 - Dashboard ticker links route to stock-specific page at /stocks/:ticker.
+- Holdings provides a date-based summary of portfolio value, available cash, stock value, and per-ticker market values, applying the selected date when its field loses focus.
 - Stock-specific page now includes summary cards (Total Shares, Open Lots, Cost Basis).
 - Stock transaction records now support edit/delete actions on both:
 	- Stocks page

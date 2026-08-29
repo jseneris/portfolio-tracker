@@ -27,12 +27,13 @@ Create `.env` or use Replit Secrets:
 - Dashboard summary
 - Cash CRUD
 - Stock buy/dividend/sell (with explicit lot allocation)
-- Holdings detail views
+- Historical holdings snapshot with date-based portfolio value, cash, stock value, and per-ticker market values
 
 ## Recent MVP Updates
 
 - Dashboard now includes an Add Stock modal (ticker, shares, price, date) for quick buy-entry workflow.
 - Dashboard holdings ticker values now link to a stock-specific route at /stocks/:ticker.
+- Holdings now provides a dashboard-style historical snapshot selected by date, applying the selected date when the date field loses focus, with summary cards and a Stock Ticker, Shares, Price, and Value table.
 - Stock-specific page now includes:
 	- per-ticker summary cards (Total Shares, Open Lots, Cost Basis)
 	- transaction history table
