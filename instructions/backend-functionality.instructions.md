@@ -17,49 +17,4 @@ Portfolio summary, available cash, list of stocks with details (ticker, shares, 
 Display lots are used to show the current the weight of each holding.  Display lots are only affected by purchases, sales, and stock splits.  Display lots should always reflect the number of puchased shares.
 
 
---
-sql queries for manual adjustment of historical prices stock split values.  This is only needed for historical data that was not adjusted for stock splits at the time of the split.  The system will automatically adjust all future prices for stock splits.
---
-SELECT [ticker]
-      ,[stocksplitId]
-  FROM [barneris_stock_tracker].[dbo].[HistoricalPrices]
-  group by ticker, stocksplitId
-  order by ticker, stocksplitId
-
-  update [barneris_stock_tracker].[dbo].[HistoricalPrices]
-set stockSplitId = 'e4ad32fb-a08e-4fc7-a483-9d1dd632522e',
-    closePrice = closePrice  * 1243/1000
-  where ticker = 'MIDD' and priceDate <= '2026-07-07'
-  and stocksplitId is null;
-
-  update [barneris_stock_tracker].[dbo].[HistoricalPrices]
-set stockSplitId = 'b94fdcf1-a7cd-4711-98b3-81a9848c9bca',
-    closePrice = closePrice  * 4
-  where ticker = 'CRWD' and priceDate <= '2026-07-02'
-  and stocksplitId is null;
-
-  
-  update [barneris_stock_tracker].[dbo].[HistoricalPrices]
-set stockSplitId = '5173660c-0d04-4cc3-9077-4093b88af19a',
-    closePrice = closePrice  * 10
-  where ticker = 'NVDA' and priceDate <= '2024-06-10'
-  and stocksplitId is null;
-
-  update [barneris_stock_tracker].[dbo].[HistoricalPrices]
-set stockSplitId = '5912b3f8-d826-4308-bb17-1af4680ee229',
-    closePrice = closePrice  * 2
-  where ticker = 'ODFL' and priceDate <= '2024-03-28'
-  and stocksplitId is null;
-
-
-
-  --
-  not needed
-  ==
-
-      update [barneris_stock_tracker].[dbo].[HistoricalPrices]
-set stockSplitId = 'a33972d3-c737-4066-98a4-21d479f02643',
-    closePrice = closePrice  * 1033/1000
-  where ticker = 'LEN' and priceDate <= '2025-01-21'
-  and stocksplitId is null;
 
