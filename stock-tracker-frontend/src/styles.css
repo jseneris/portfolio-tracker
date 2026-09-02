@@ -162,6 +162,16 @@ body {
   border-bottom: 1px solid #e2e8f0;
 }
 
+.sortable-header {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.sortable-header:hover {
+  color: #2563eb;
+}
+
 .table-skeleton {
   display: inline-block;
   height: 0.9rem;
@@ -206,6 +216,32 @@ body {
   align-items: flex-end;
   gap: 0.5rem;
   grid-column: 1 / -1;
+}
+
+.display-lot-editor {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.display-lot-editor-row {
+  display: grid;
+  grid-template-columns: minmax(4rem, 1fr) minmax(8rem, 2fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.display-lot-editor-row input {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.4rem;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+}
+
+.display-lot-editor-total {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 0.6rem;
+  font-weight: 600;
 }
 
 .target-settings-section {

@@ -229,6 +229,19 @@ export type HistoricalPrice = {
   updatedAt?: string
 }
 
+export type CurrentPrice = {
+  ticker: string
+  price: number
+  source: string
+  asOf: string
+}
+
+export type CurrentPricesResponse = {
+  source: string
+  prices: CurrentPrice[]
+  missingTickers: string[]
+}
+
 export type SyncHistoricalPricesResponse = {
   source: string
   targetEndDate: string
@@ -387,6 +400,17 @@ export async function getSaleAllocations(transactionId: string): Promise<SaleAll
   return requestApi<SaleAllocation[]>(`/api/stocks/${transactionId}/allocations`)
 }
 
+export async function getSaleAllocationsByTransactionIds(transactionIds: string[]): Promise<Record<string, SaleAllocation[]>> {
+  if (transactionIds.length === 0) {
+    return {}
+  }
+
+  return requestApi<Record<string, SaleAllocation[]>>('/api/stocks/allocations/batch', {
+    method: 'POST',
+    body: { transactionIds },
+  })
+}
+
 export async function recordStockSplit(
   ticker: string,
   numerator: number,
@@ -411,6 +435,13 @@ export async function getAllStockSplits(): Promise<StockSplitEvent[]> {
   return requestApi<StockSplitEvent[]>('/api/lots/splits')
 }
 
+export async function getCurrentPrices(tickers: string[]): Promise<CurrentPricesResponse> {
+  return requestApi<CurrentPricesResponse>('/api/stocks/current-prices', {
+    method: 'POST',
+    body: { tickers },
+  })
+}
+
 export async function activateStockSplit(splitId: string): Promise<ActivateStockSplitResponse> {
   return requestApi<ActivateStockSplitResponse>(`/api/lots/splits/${encodeURIComponent(splitId)}/activate`, {
     method: 'POST',
@@ -425,10 +456,15 @@ export async function syncHistoricalPricesByYear(year: number): Promise<SyncHist
 
 export async function getHistoricalPrices(
   startDate = '2021-01-01',
-  endDate = '2021-12-31'
+  endDate = '2021-12-31',
+  tickers: string[] = []
 ): Promise<HistoricalPrice[]> {
+  const tickerQuery = tickers.length > 0
+    ? `&tickers=${encodeURIComponent(tickers.join(','))}`
+    : ''
+
   return requestApi<HistoricalPrice[]>(
-    `/api/stocks/historical-prices?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`
+    `/api/stocks/historical-prices?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}${tickerQuery}`
   )
 }
 

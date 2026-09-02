@@ -6,11 +6,9 @@ import {
   PurchaseLot,
   SaleAllocation,
   StockSplitEvent,
-  SplitDisplayLotInput,
   StockTransaction,
   StockTransactionType,
   TickerSummary,
-  combineDisplayLots,
   createDisplayLot,
   createStockTransaction,
   deleteStockTransaction,
@@ -24,7 +22,6 @@ import {
   getStockSplitsByTicker,
   getStockSummaryByTicker,
   getStockTransactionsByTicker,
-  splitDisplayLot,
 } from '../api'
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
 
@@ -181,8 +178,7 @@ export default function StockHistoryPage() {
   const [positiveTransactionStates, setPositiveTransactionStates] = useState<Record<string, PositiveTransactionState>>({})
   const [remainingSharesByTransactionId, setRemainingSharesByTransactionId] = useState<Record<string, number>>({})
   const [allocations, setAllocations] = useState<Record<string, string>>({})
-  const [selectedDisplayLotIds, setSelectedDisplayLotIds] = useState<string[]>([])
-  const [splitInputs, setSplitInputs] = useState<Record<string, string>>({})
+  const [displayLotInputs, setDisplayLotInputs] = useState<string[]>([])
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null)
   const [saleAllocations, setSaleAllocations] = useState<Record<string, SaleAllocation[]>>({})
   const [splitEvents, setSplitEvents] = useState<StockSplitEvent[]>([])
@@ -286,6 +282,26 @@ export default function StockHistoryPage() {
       .map((q) => Number(q.toFixed(6)).toString())
       .join(', ')
   }, [displayLotEntries])
+
+  const savedDisplayLotTotal = useMemo(
+    () => displayLotEntries.reduce((sum, lot) => sum + lot.totalQuantity, 0),
+    [displayLotEntries]
+  )
+
+  const editedDisplayLotQuantities = useMemo(
+    () => displayLotInputs.map(Number),
+    [displayLotInputs]
+  )
+
+  const editedDisplayLotTotal = useMemo(
+    () => editedDisplayLotQuantities.reduce((sum, quantity) => sum + quantity, 0),
+    [editedDisplayLotQuantities]
+  )
+
+  const canSaveDisplayLots =
+    displayLotInputs.length > 0 &&
+    editedDisplayLotQuantities.every((quantity) => Number.isFinite(quantity) && quantity > 0) &&
+    Math.abs(editedDisplayLotTotal - savedDisplayLotTotal) <= ALLOCATION_TOLERANCE
 
   const totalDisplayLotShares = useMemo(() => {
     return displayLotEntries.reduce((sum, lot) => {
@@ -717,8 +733,7 @@ export default function StockHistoryPage() {
   async function reloadDisplayLots() {
     const data = await getDisplayLotsByTicker(ticker)
     setDisplayLots(data)
-    setSelectedDisplayLotIds([])
-    setSplitInputs({})
+    setDisplayLotInputs(data.flatMap((row) => row.lots.map(String)))
   }
 
   useEffect(() => {
@@ -980,64 +995,34 @@ export default function StockHistoryPage() {
     }
   }
 
-  async function onCombineDisplayLots() {
-    if (selectedDisplayLotIds.length < 2) {
-      setLotsError('Select at least two display lots to combine.')
-      return
-    }
+  function openDisplayLotsModal() {
     setLotsError(null)
-    setLotsBusy(true)
-    try {
-      const selectedEntries = displayLotEntries.filter((entry) => selectedDisplayLotIds.includes(entry.id))
-      const rowIds = new Set(selectedEntries.map((entry) => entry.rowId))
-      if (rowIds.size !== 1 || selectedEntries.length < 2) {
-        setLotsError('Selected display lots must come from the same ticker row.')
-        return
-      }
-
-      const rowId = selectedEntries[0].rowId
-      const indices = selectedEntries.map((entry) => entry.index).sort((a, b) => a - b)
-      await combineDisplayLots(rowId, indices)
-      await reloadDisplayLots()
-    } catch (err: unknown) {
-      setLotsError(err instanceof Error ? err.message : 'Unable to combine lots.')
-    } finally {
-      setLotsBusy(false)
-    }
+    setDisplayLotInputs(displayLotEntries.map((lot) => String(lot.totalQuantity)))
+    setShowLotsModal(true)
   }
 
-  async function onSplitDisplayLot(entryId: string) {
-    const input = splitInputs[entryId] ?? ''
-    const quantities = input
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .map(Number)
+  function updateDisplayLotInput(index: number, value: string) {
+    setDisplayLotInputs((previous) => previous.map((quantity, inputIndex) => inputIndex === index ? value : quantity))
+  }
 
-    if (quantities.length < 2 || quantities.some((q) => !Number.isFinite(q) || q <= 0)) {
-      setLotsError('Enter at least two comma-separated positive quantities.')
-      return
-    }
+  function removeDisplayLotInput(index: number) {
+    setDisplayLotInputs((previous) => previous.filter((_, inputIndex) => inputIndex !== index))
+  }
 
-    const lot = displayLotEntries.find((l) => l.id === entryId)
-    const total = quantities.reduce((s, q) => s + q, 0)
-    if (Math.abs(total - Number(lot?.totalQuantity ?? 0)) > ALLOCATION_TOLERANCE) {
-      setLotsError(`Quantities must sum to ${formatNumber(lot?.totalQuantity ?? 0, 6)} (got ${total.toFixed(6)}).`)
+  async function onSaveDisplayLots() {
+    if (!canSaveDisplayLots) {
+      setLotsError(`Display lots must be positive and sum to ${formatNumber(savedDisplayLotTotal, 6)} shares.`)
       return
     }
 
     setLotsError(null)
     setLotsBusy(true)
     try {
-      if (!lot) {
-        setLotsError('Selected display lot was not found.')
-        return
-      }
-      const payload: SplitDisplayLotInput = { index: lot.index, quantities }
-      await splitDisplayLot(lot.rowId, payload)
+      await createDisplayLot(ticker, { quantities: editedDisplayLotQuantities })
       await reloadDisplayLots()
+      setShowLotsModal(false)
     } catch (err: unknown) {
-      setLotsError(err instanceof Error ? err.message : 'Unable to split lot.')
+      setLotsError(err instanceof Error ? err.message : 'Unable to save display lots.')
     } finally {
       setLotsBusy(false)
     }
@@ -1083,7 +1068,7 @@ export default function StockHistoryPage() {
             <button
               className="stat stat-clickable"
               type="button"
-              onClick={() => { setLotsError(null); setShowLotsModal(true) }}
+              onClick={openDisplayLotsModal}
             >
               <div className="label">Display Lots ({displayLotEntries.length})</div>
               <div className="value">{displayLotSummary}</div>
@@ -1521,7 +1506,7 @@ export default function StockHistoryPage() {
                 Close
               </button>
             </div>
-            <p>Check lots to combine them, or enter comma-separated quantities to split a lot.</p>
+            <p>Edit the quantity of each display lot. The total must remain {formatNumber(savedDisplayLotTotal, 6)} shares.</p>
 
             {displayLotsOutOfSync ? (
               <div className="status status-warning">
@@ -1554,66 +1539,46 @@ export default function StockHistoryPage() {
                 </div>
               </>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Select to Combine</th>
-                    <th>Quantity</th>
-                    <th>Split Into (comma-separated)</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {displayLotEntries.map((lot) => (
-                    <tr key={lot.id}>
-                      <td>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
-                          <input
-                            type="checkbox"
-                            checked={selectedDisplayLotIds.includes(lot.id)}
-                            onChange={() => setSelectedDisplayLotIds((prev) =>
-                              prev.includes(lot.id) ? prev.filter((id) => id !== lot.id) : [...prev, lot.id]
-                            )}
-                            disabled={lotsBusy}
-                          />
-                          {selectedDisplayLotIds.includes(lot.id) ? '✓' : ''}
-                        </label>
-                      </td>
-                      <td>{formatNumber(lot.totalQuantity, 6)}</td>
-                      <td>
-                        <input
-                          type="text"
-                          placeholder={`e.g. ${(Number(lot.totalQuantity) / 2).toFixed(2)},${(Number(lot.totalQuantity) / 2).toFixed(2)}`}
-                          value={splitInputs[lot.id] ?? ''}
-                          onChange={(e) => setSplitInputs((prev) => ({ ...prev, [lot.id]: e.target.value }))}
-                          disabled={lotsBusy}
-                        />
-                      </td>
-                      <td>
-                        <button
-                          className="button"
-                          type="button"
-                          onClick={() => onSplitDisplayLot(lot.id)}
-                          disabled={lotsBusy || !splitInputs[lot.id]?.trim()}
-                        >
-                          Split
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="display-lot-editor">
+                {displayLotInputs.map((quantity, index) => (
+                  <div className="display-lot-editor-row" key={`display-lot-input-${index}`}>
+                    <label htmlFor={`display-lot-${index}`}>Lot {index + 1}</label>
+                    <input
+                      id={`display-lot-${index}`}
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={quantity}
+                      onChange={(event) => updateDisplayLotInput(index, event.target.value)}
+                      disabled={lotsBusy}
+                    />
+                    <button className="button" type="button" onClick={() => removeDisplayLotInput(index)} disabled={lotsBusy}>
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                <div className="display-lot-editor-total">
+                  Total: {formatNumber(editedDisplayLotTotal, 6)} / {formatNumber(savedDisplayLotTotal, 6)} shares
+                </div>
+              </div>
             )}
 
             <div className="form-actions">
-              <button
-                className="button button-primary"
-                type="button"
-                onClick={onCombineDisplayLots}
-                disabled={lotsBusy || selectedDisplayLotIds.length < 2}
-              >
-                {lotsBusy ? 'Working...' : `Combine Selected (${selectedDisplayLotIds.length})`}
-              </button>
+              {displayLotEntries.length > 0 ? (
+                <>
+                  <button
+                    className="button"
+                    type="button"
+                    onClick={() => setDisplayLotInputs((previous) => [...previous, ''])}
+                    disabled={lotsBusy}
+                  >
+                    Add Lot
+                  </button>
+                  <button className="button button-primary" type="button" onClick={onSaveDisplayLots} disabled={lotsBusy || !canSaveDisplayLots}>
+                    {lotsBusy ? 'Saving...' : 'Save Display Lots'}
+                  </button>
+                </>
+              ) : null}
             </div>
           </div>
         </div>

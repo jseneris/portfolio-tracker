@@ -12,6 +12,7 @@ import {
   StockTransaction,
 } from '../api'
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
+import { calculatePortfolioSnapshot } from '../portfolioSnapshot'
 
 type HoldingRow = {
   ticker: string
@@ -105,103 +106,24 @@ export default function HoldingsPage() {
   }, [])
 
   const snapshot = useMemo(() => {
-    const holdingsByTicker = new Map<string, number>()
-    const activeSplits = splitEvents
-      .filter((split) => split.isActive !== false)
-      .map((split) => ({
-        ticker: String(split.ticker || '').toUpperCase(),
-        date: toDateOnly(split.splitDate),
-        multiplier: Number(split.multiplier),
-      }))
-      .filter((split) => split.ticker && split.date && split.date <= snapshotDate && split.multiplier > 0)
-
-    function splitMultiplierFor(ticker: string, transactionDate: string): number {
-      return activeSplits.reduce((multiplier, split) => (
-        split.ticker === ticker && transactionDate <= split.date
-          ? multiplier * split.multiplier
-          : multiplier
-      ), 1)
-    }
-
-    for (const transaction of stockTransactions) {
-      const transactionDate = toDateOnly(transaction.transactionDate)
-      const ticker = String(transaction.ticker || '').toUpperCase()
-      const quantity = Number(transaction.quantity)
-      if (!transactionDate || transactionDate > snapshotDate || !ticker || !Number.isFinite(quantity) || quantity <= 0) {
-        continue
-      }
-
-      const adjustedQuantity = quantity * splitMultiplierFor(ticker, transactionDate)
-      const currentShares = holdingsByTicker.get(ticker) ?? 0
-      if (transaction.type === 'buy' || transaction.type === 'div') {
-        holdingsByTicker.set(ticker, currentShares + adjustedQuantity)
-      } else if (transaction.type === 'sell') {
-        holdingsByTicker.set(ticker, currentShares - adjustedQuantity)
-      }
-    }
-
-    const priceByTicker = new Map<string, { date: string; price: number }>()
-    for (const historicalPrice of historicalPrices) {
-      const ticker = String(historicalPrice.ticker || '').toUpperCase()
-      const priceDate = toDateOnly(historicalPrice.priceDate)
-      const closePrice = Number(historicalPrice.closePrice)
-      if (!ticker || !priceDate || priceDate > snapshotDate || !Number.isFinite(closePrice)) {
-        continue
-      }
-
-      const existingPrice = priceByTicker.get(ticker)
-      if (!existingPrice || priceDate > existingPrice.date) {
-        priceByTicker.set(ticker, { date: priceDate, price: closePrice })
-      }
-    }
-
-    const holdings: HoldingRow[] = Array.from(holdingsByTicker.entries())
-      .filter(([, shares]) => shares > 1e-6)
-      .map(([ticker, shares]) => {
-        const price = priceByTicker.get(ticker)?.price ?? null
-        return {
-          ticker,
-          shares,
-          price,
-          value: price == null ? null : shares * price,
-        }
-      })
-      .sort((first, second) => first.ticker.localeCompare(second.ticker))
-
-    const cashFromCashTransactions = cashTransactions.reduce((total, transaction) => {
-      const transactionDate = toDateOnly(transaction.transactionDate)
-      const amount = Number(transaction.amount)
-      if (!transactionDate || transactionDate > snapshotDate || !Number.isFinite(amount)) {
-        return total
-      }
-      if (transaction.type === 'deposit' || transaction.type === 'interest') {
-        return total + amount
-      }
-      return transaction.type === 'withdrawal' || transaction.type === 'fee' ? total - amount : total
-    }, 0)
-
-    const cashFromStockTransactions = stockTransactions.reduce((total, transaction) => {
-      const transactionDate = toDateOnly(transaction.transactionDate)
-      const amount = Number(transaction.amount)
-      if (!transactionDate || transactionDate > snapshotDate || !Number.isFinite(amount)) {
-        return total
-      }
-      if (transaction.type === 'buy') {
-        return total - amount
-      }
-      return transaction.type === 'sell' ? total + amount : total
-    }, 0)
-
-    const stockValue = holdings.some((holding) => holding.value == null)
-      ? null
-      : holdings.reduce((total, holding) => total + (holding.value ?? 0), 0)
-    const availableCash = cashFromCashTransactions + cashFromStockTransactions
+    const coreSnapshot = calculatePortfolioSnapshot({
+      stockTransactions,
+      cashTransactions,
+      historicalPrices,
+      splitEvents,
+      snapshotDate,
+    })
 
     return {
-      holdings,
-      availableCash,
-      stockValue,
-      portfolioValue: stockValue == null ? null : availableCash + stockValue,
+      holdings: coreSnapshot.holdings.map((holding): HoldingRow => ({
+        ticker: holding.ticker,
+        shares: holding.totalShares,
+        price: holding.latestPrice,
+        value: holding.marketValue,
+      })),
+      availableCash: coreSnapshot.availableCash,
+      stockValue: coreSnapshot.stockValue,
+      portfolioValue: coreSnapshot.portfolioValue,
     }
   }, [cashTransactions, historicalPrices, snapshotDate, splitEvents, stockTransactions])
 

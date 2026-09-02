@@ -159,11 +159,20 @@ router.post('/:ticker', async (req: Request, res: Response) => {
       .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, normalizedTicker)
       .query(`
-        SELECT id FROM DisplayLots WHERE userId = @userId AND ticker = @ticker
+        SELECT id, lotsCsv FROM DisplayLots WHERE userId = @userId AND ticker = @ticker
       `);
 
     let id: string;
     if (existing.recordset.length > 0) {
+      const existingLots = parseLotsCsv(String(existing.recordset[0].lotsCsv || ''));
+      const existingTotal = existingLots.reduce((sum, value) => sum + value, 0);
+      const replacementTotal = parsedQuantities.reduce((sum, value) => sum + value, 0);
+      if (Math.abs(replacementTotal - existingTotal) > QUANTITY_TOLERANCE) {
+        return res.status(400).json({
+          error: `Display lot total (${replacementTotal}) must equal existing total (${existingTotal})`,
+        });
+      }
+
       id = String(existing.recordset[0].id);
       await getPool().request()
         .input('id', sql.UniqueIdentifier, id)

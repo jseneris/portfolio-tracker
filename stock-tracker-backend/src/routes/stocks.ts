@@ -14,6 +14,7 @@ const HISTORICAL_SYNC_MAX_ROWS_PER_RUN = 10000;
 const DOW_BENCHMARK_TICKER = '^DJI';
 const NASDAQ_BENCHMARK_TICKER = '^IXIC';
 const SP500_BENCHMARK_TICKER = '^GSPC';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface IAllocation {
   lotId: string;
@@ -51,6 +52,13 @@ interface IPricePoint {
   close: number;
 }
 
+interface ICurrentPricePoint {
+  ticker: string;
+  price: number;
+  source: string;
+  asOf: string;
+}
+
 interface IHistoricalClosePoint {
   priceDate: string;
   close: number;
@@ -60,6 +68,12 @@ interface ISplitPoint {
   splitDate: string;
   ratioNumerator: number;
   ratioDenominator: number;
+  multiplier: number;
+}
+
+interface IActiveSplitPoint {
+  ticker: string;
+  splitDate: string;
   multiplier: number;
 }
 
@@ -586,12 +600,66 @@ router.post('/historical-prices/sync-year', async (req: Request, res: Response) 
   }
 });
 
+router.post('/current-prices', async (req: Request, res: Response) => {
+  try {
+    const rawTickers: unknown[] = Array.isArray(req.body?.tickers) ? req.body.tickers : [];
+    const tickers = Array.from(new Set(
+      rawTickers
+        .map((ticker) => String(ticker || '').trim().toUpperCase())
+        .filter((ticker) => ticker.length > 0)
+    ));
+
+    if (tickers.length === 0) {
+      return res.json({ source: 'yahoo-finance', prices: [], missingTickers: [] });
+    }
+
+    const prices: ICurrentPricePoint[] = [];
+    const missingTickers: string[] = [];
+
+    for (const ticker of tickers) {
+      try {
+        const quote = await yahooFinance.quote(ticker) as any;
+        const price = Number(
+          quote?.regularMarketPrice
+          ?? quote?.postMarketPrice
+          ?? quote?.preMarketPrice
+          ?? quote?.bid
+          ?? quote?.ask
+        );
+
+        if (!Number.isFinite(price) || price <= 0) {
+          missingTickers.push(ticker);
+          continue;
+        }
+
+        prices.push({
+          ticker,
+          price,
+          source: 'yahoo-finance',
+          asOf: new Date().toISOString(),
+        });
+      } catch {
+        missingTickers.push(ticker);
+      }
+    }
+
+    res.json({
+      source: 'yahoo-finance',
+      prices,
+      missingTickers,
+    });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 
 // Read stored historical closes for the requested date range.
 router.get('/historical-prices', async (req: Request, res: Response) => {
   try {
     const startDateQuery = typeof req.query.startDate === 'string' ? req.query.startDate.trim() : '';
     const endDateQuery = typeof req.query.endDate === 'string' ? req.query.endDate.trim() : '';
+    const tickerQuery = typeof req.query.tickers === 'string' ? req.query.tickers.trim() : '';
     const hasRangeQuery = startDateQuery.length > 0 || endDateQuery.length > 0;
 
     // Backward-compatible mode for dashboard/stock-history consumers.
@@ -609,10 +677,18 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
         return res.status(400).json({ error: 'Query parameter startDate must be on or before endDate.' });
       }
 
+      const tickers = Array.from(new Set(
+        tickerQuery
+          .split(',')
+          .map((ticker) => ticker.trim().toUpperCase())
+          .filter((ticker) => ticker.length > 0)
+      ));
+
       const pool = getPool();
       const rows = await pool.request()
         .input('startDate', sql.Date, parseDateOnly(startDateQuery))
         .input('endDate', sql.Date, parseDateOnly(endDateQuery))
+        .input('tickersJson', sql.NVarChar(sql.MAX), tickers.length > 0 ? JSON.stringify(tickers) : null)
         .query(`
           SELECT
             ticker,
@@ -623,6 +699,13 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
           FROM HistoricalPrices
           WHERE priceDate >= @startDate
             AND priceDate <= @endDate
+            AND (
+              @tickersJson IS NULL
+              OR ticker IN (
+                SELECT ticker
+                FROM OPENJSON(@tickersJson) WITH (ticker NVARCHAR(32) '$')
+              )
+            )
           ORDER BY priceDate ASC, ticker ASC
         `);
 
@@ -706,6 +789,126 @@ router.get('/portfolio/comparison-all', async (req: Request, res: Response) => {
       source: HISTORICAL_PRICE_SOURCE,
       points
     });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// GET allocations for multiple sale transactions in one request.
+router.get('/allocations', async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id!;
+    const transactionIdsQuery = typeof req.query.transactionIds === 'string' ? req.query.transactionIds.trim() : '';
+    const transactionIds = Array.from(new Set(
+      transactionIdsQuery
+        .split(',')
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0)
+    ));
+
+    if (transactionIds.length === 0) {
+      return res.json({});
+    }
+
+    const invalidId = transactionIds.find((id) => !UUID_PATTERN.test(id));
+    if (invalidId) {
+      return res.status(400).json({ error: 'Query parameter transactionIds must contain valid transaction ids.' });
+    }
+
+    const result = await getPool().request()
+      .input('transactionIdsJson', sql.NVarChar(sql.MAX), JSON.stringify(transactionIds))
+      .input('userId', sql.NVarChar, userId)
+      .query(`
+        SELECT
+          pla.saleTransactionId,
+          pla.purchaseLotId as lotId,
+          pla.quantityConsumed as quantity,
+          pl.ticker,
+          pl.sourceType,
+          pl.purchaseDate,
+          pl.unitCost
+        FROM PurchaseLotAllocations pla
+        JOIN OPENJSON(@transactionIdsJson) WITH (id UNIQUEIDENTIFIER '$') requested
+          ON requested.id = pla.saleTransactionId
+        JOIN PurchaseLots pl ON pla.purchaseLotId = pl.id
+        WHERE pla.userId = @userId
+        ORDER BY pla.saleTransactionId ASC, pl.purchaseDate ASC
+      `);
+
+    const allocationsBySaleId: Record<string, any[]> = {};
+    for (const row of result.recordset ?? []) {
+      const saleTransactionId = String(row.saleTransactionId || '');
+      allocationsBySaleId[saleTransactionId] = allocationsBySaleId[saleTransactionId] ?? [];
+      allocationsBySaleId[saleTransactionId].push({
+        lotId: row.lotId,
+        quantity: Number(row.quantity || 0),
+        ticker: row.ticker,
+        sourceType: row.sourceType,
+        purchaseDate: row.purchaseDate,
+        unitCost: Number(row.unitCost || 0)
+      });
+    }
+
+    res.json(allocationsBySaleId);
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.post('/allocations/batch', async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id!;
+    const rawTransactionIds: unknown[] = Array.isArray(req.body?.transactionIds) ? req.body.transactionIds : [];
+    const transactionIds = Array.from(new Set(
+      rawTransactionIds
+        .map((id) => String(id || '').trim())
+        .filter((id) => id.length > 0)
+    ));
+
+    if (transactionIds.length === 0) {
+      return res.json({});
+    }
+
+    const invalidId = transactionIds.find((id) => !UUID_PATTERN.test(id));
+    if (invalidId) {
+      return res.status(400).json({ error: 'Request body transactionIds must contain valid transaction ids.' });
+    }
+
+    const result = await getPool().request()
+      .input('transactionIdsJson', sql.NVarChar(sql.MAX), JSON.stringify(transactionIds))
+      .input('userId', sql.NVarChar, userId)
+      .query(`
+        SELECT
+          pla.saleTransactionId,
+          pla.purchaseLotId as lotId,
+          pla.quantityConsumed as quantity,
+          pl.ticker,
+          pl.sourceType,
+          pl.purchaseDate,
+          pl.unitCost
+        FROM PurchaseLotAllocations pla
+        JOIN OPENJSON(@transactionIdsJson) WITH (id UNIQUEIDENTIFIER '$') requested
+          ON requested.id = pla.saleTransactionId
+        JOIN PurchaseLots pl ON pla.purchaseLotId = pl.id
+        WHERE pla.userId = @userId
+        ORDER BY pla.saleTransactionId ASC, pl.purchaseDate ASC
+      `);
+
+    const allocationsBySaleId: Record<string, any[]> = {};
+    for (const row of result.recordset ?? []) {
+      const saleTransactionId = String(row.saleTransactionId || '');
+      allocationsBySaleId[saleTransactionId] = allocationsBySaleId[saleTransactionId] ?? [];
+      allocationsBySaleId[saleTransactionId].push({
+        lotId: row.lotId,
+        quantity: Number(row.quantity || 0),
+        ticker: row.ticker,
+        sourceType: row.sourceType,
+        purchaseDate: row.purchaseDate,
+        unitCost: Number(row.unitCost || 0)
+      });
+    }
+
+    res.json(allocationsBySaleId);
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
@@ -1759,6 +1962,27 @@ function calculateBenchmarkValueAtPoint(
   return units * pointClose;
 }
 
+function calculateSplitAdjustedQuantity(
+  quantity: number,
+  ticker: string,
+  transactionDate: string,
+  pointDate: string,
+  activeSplits: IActiveSplitPoint[]
+): number {
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    return quantity;
+  }
+
+  let multiplier = 1;
+  for (const split of activeSplits) {
+    if (split.ticker === ticker && transactionDate <= split.splitDate && split.splitDate <= pointDate) {
+      multiplier *= split.multiplier;
+    }
+  }
+
+  return quantity * multiplier;
+}
+
 function resolveClosestPriceOnOrBefore(quotes: IPricePoint[], requestedDate: string): IPricePoint | null {
   const requested = parseDateOnly(requestedDate).getTime();
   let best: IPricePoint | null = null;
@@ -1926,6 +2150,22 @@ async function buildPortfolioComparisonPoints(
         AND priceDate <= @endDate
     `);
 
+  const splitRows = await pool.request()
+    .input('userId', sql.NVarChar, userId)
+    .input('endDate', sql.Date, parseDateOnly(range.endDate))
+    .query(`
+      SELECT
+        ss.ticker,
+        CONVERT(VARCHAR(10), ss.splitDate, 23) AS splitDate,
+        ss.multiplier
+      FROM StockSplits ss
+      INNER JOIN UserSplitActivations usa
+        ON usa.splitId = ss.id
+       AND usa.userId = @userId
+      WHERE ss.splitDate <= @endDate
+      ORDER BY ss.splitDate ASC
+    `);
+
   const cashEvents = (cashRows.recordset ?? []).map((row: any) => ({
     date: toIsoDate(new Date(row.transactionDate)),
     type: String(row.type || '').toLowerCase(),
@@ -1939,6 +2179,14 @@ async function buildPortfolioComparisonPoints(
     quantity: Number(row.quantity || 0),
     amount: Number(row.amount || 0)
   }));
+
+  const activeSplits: IActiveSplitPoint[] = (splitRows.recordset ?? [])
+    .map((row: any) => ({
+      ticker: String(row.ticker || '').toUpperCase(),
+      splitDate: String(row.splitDate || ''),
+      multiplier: Number(row.multiplier || 0),
+    }))
+    .filter((split) => split.ticker && split.splitDate && Number.isFinite(split.multiplier) && split.multiplier > 0);
 
   const pricesByDate = new Map<string, Map<string, number>>();
   const benchmarkQuotesByTicker = new Map<string, Map<string, number>>();
@@ -1976,6 +2224,7 @@ async function buildPortfolioComparisonPoints(
   const markCashFlowsFromDate = options?.markCashFlowsFromDate ?? range.startDate;
   let cashIndex = 0;
   let stockIndex = 0;
+  let splitIndex = 0;
 
   let deposits = 0;
   let withdrawals = 0;
@@ -2031,14 +2280,31 @@ async function buildPortfolioComparisonPoints(
       cashIndex += 1;
     }
 
+    while (splitIndex < activeSplits.length && activeSplits[splitIndex].splitDate <= pointDate) {
+      const split = activeSplits[splitIndex];
+      for (const [ticker, shares] of holdings.entries()) {
+        if (ticker === split.ticker) {
+          holdings.set(ticker, Number(shares || 0) * split.multiplier);
+        }
+      }
+      splitIndex += 1;
+    }
+
     while (stockIndex < stockEvents.length && stockEvents[stockIndex].date <= pointDate) {
       const event = stockEvents[stockIndex];
       const currentShares = Number(holdings.get(event.ticker) ?? 0);
+      const adjustedQuantity = calculateSplitAdjustedQuantity(
+        Number(event.quantity || 0),
+        event.ticker,
+        event.date,
+        pointDate,
+        activeSplits
+      );
       if (event.type === 'buy' || event.type === 'div') {
-        holdings.set(event.ticker, currentShares + Number(event.quantity || 0));
+        holdings.set(event.ticker, currentShares + adjustedQuantity);
         if (event.type === 'buy') buys += Number(event.amount || 0);
       } else if (event.type === 'sell') {
-        holdings.set(event.ticker, currentShares - Number(event.quantity || 0));
+        holdings.set(event.ticker, currentShares - adjustedQuantity);
         sells += Number(event.amount || 0);
       }
       stockIndex += 1;

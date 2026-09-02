@@ -5,7 +5,7 @@ excludeAgent: "code-review"
 
 # API Endpoints (Current Implementation)
 
-Last updated: 2026-08-08
+Last updated: 2026-08-31
 
 Authentication and scoping notes:
 - `authenticateRequest` middleware is applied globally before route handlers.
@@ -60,11 +60,25 @@ Authentication and scoping notes:
 - Returns sale allocations (`PurchaseLotAllocations`) joined with lot metadata.
 - Useful for rendering sell lot attribution history.
 
+### GET /api/stocks/allocations?transactionIds=id1,id2
+- Returns sale allocations for multiple sale transactions in one response, keyed by sale transaction id.
+- Kept for smaller ad hoc queries.
+
+### POST /api/stocks/allocations/batch
+- Request body: `{ "transactionIds": ["id1", "id2"] }`.
+- Returns sale allocations for multiple sale transactions in one response, keyed by sale transaction id.
+- Used by the dashboard to avoid one request per sell transaction without creating oversized URLs.
+
 ### POST /api/stocks/historical-prices/sync-year?year=YYYY
 - Incrementally backfills yearly historical closes for any valid 4-digit year (including benchmark tickers `^DJI`, `^IXIC`, `^GSPC`).
 - Prioritizes cash-flow dates and year-end date, then fills remaining dates.
 - Also attempts split discovery per owned ticker in range from first transaction date to today.
 - Writes price rows with idempotent `MERGE` behavior.
+
+### POST /api/stocks/current-prices
+- Request body: `{ "tickers": ["AAPL", "MSFT"] }`.
+- Fetches current quote prices from Yahoo Finance and returns them without writing to the database.
+- Used by the dashboard Update button for local in-memory price refreshes.
 
 ### POST /api/stocks/historical-prices/sync-all
 - Legacy convenience variant for 2021 backfill behavior.
@@ -72,12 +86,13 @@ Authentication and scoping notes:
 
 ### GET /api/stocks/historical-prices
 - Dual-mode endpoint:
-  - Date range mode (`startDate` + `endDate`): returns raw historical rows for that range.
+  - Date range mode (`startDate` + `endDate`, optional `tickers=AAPL,MSFT`): returns raw historical rows for that range, optionally filtered by ticker.
   - Comparison mode (`year=YYYY`): returns computed portfolio-vs-benchmark time series points for the requested year.
 - Date-range mode validates `YYYY-MM-DD` format and start/end ordering.
 - Comparison mode behavior:
   - builds one continuous reference series from the earliest cash deposit through `min(today, end of latest transaction year)`,
   - applies all prior cash and stock history needed to value the requested year correctly,
+  - values portfolio holdings with the same active split-adjusted share calculation used by Holdings and Dashboard,
   - returns only the requested year's subsection of that continuous series,
   - values benchmark lines using closest-on-or-before closes,
   - values held stocks using closest-on-or-before closes so non-trading days inherit the prior market close.
@@ -86,6 +101,7 @@ Authentication and scoping notes:
 - Legacy-named route that now returns the continuous portfolio-vs-benchmark series used by the Compare page.
 - Series starts at the earliest cash deposit date (or latest transaction date if no deposit exists).
 - Series ends at `min(today, last day of the year of the latest cash or stock transaction)`.
+- Portfolio value is available cash plus active split-adjusted stock holdings value.
 - Includes benchmark values for DOW/NASDAQ/S&P500 and missing-ticker diagnostics.
 
 ### POST /api/stocks
@@ -172,6 +188,7 @@ Request body:
 ```
 - Creates or replaces the ticker row for the user.
 - Stores values in `DisplayLots.lotsCsv`.
+- When replacing an existing ticker row, the sum of `quantities` must equal its current display-lot total (within tolerance).
 
 ### POST /api/display-lots/:id/combine
 Request body:

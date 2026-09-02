@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   CashTransaction,
@@ -6,7 +6,7 @@ import {
   HistoricalPrice,
   SaleAllocation,
   getCashTransactions,
-  getSaleAllocations,
+  getSaleAllocationsByTransactionIds,
   getHistoricalPrices,
   PORTFOLIO_UPDATED_EVENT,
   PortfolioSummary,
@@ -14,9 +14,9 @@ import {
   StockTransaction,
   createStockTransaction,
   emitPortfolioUpdated,
+  getCurrentPrices,
   getDisplayLots,
   getPortfolioSummary,
-  getPurchaseLots,
   getStockTransactions,
   UserTargetSettings,
   getUserTargetSettings,
@@ -24,6 +24,7 @@ import {
   StockSplitEvent,
 } from '../api'
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
+import { calculatePortfolioSnapshot, createSplitMultiplierResolver } from '../portfolioSnapshot'
 
 const DEFAULT_SALE_TARGET_PERCENT = 10
 const DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS = 5
@@ -31,6 +32,23 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10
 const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25
+
+export function getSplitAdjustedTargetBasePrice(
+  transaction: StockTransaction | undefined,
+  splitEvents: StockSplitEvent[],
+  snapshotDate: string
+): number | null {
+  const originalPrice = Number(transaction?.price)
+  const transactionDate = toDateOnly(String(transaction?.transactionDate || ''))
+  const ticker = String(transaction?.ticker || '').toUpperCase()
+  if (!Number.isFinite(originalPrice) || originalPrice <= 0 || !transactionDate || !ticker) {
+    return null
+  }
+
+  const splitMultiplier = createSplitMultiplierResolver(splitEvents, snapshotDate)(ticker, transactionDate)
+  const adjustedPrice = originalPrice / splitMultiplier
+  return Number.isFinite(adjustedPrice) && adjustedPrice > 0 ? adjustedPrice : null
+}
 
 type AddStockFormState = {
   ticker: string
@@ -59,6 +77,38 @@ function formatDateTime(value: Date | null) {
     return 'Never'
   }
   return value.toLocaleString()
+}
+
+function formatPercent2(value: number | null | undefined, fallback = '--') {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback
+  }
+  return `${value.toFixed(2)}%`
+}
+
+function calculateTargetProximityPercent(
+  currentPrice: number | null | undefined,
+  sellTarget: number | null | undefined,
+  buyTarget: number | null | undefined
+): number | null {
+  const current = Number(currentPrice)
+  const sell = Number(sellTarget)
+  const buy = Number(buyTarget)
+  const ratios: number[] = []
+
+  if (Number.isFinite(current) && current > 0 && Number.isFinite(sell) && sell > 0) {
+    ratios.push(current / sell)
+  }
+
+  if (Number.isFinite(current) && current > 0 && Number.isFinite(buy) && buy > 0) {
+    ratios.push(buy / current)
+  }
+
+  if (ratios.length === 0) {
+    return null
+  }
+
+  return Math.max(...ratios) * 100
 }
 
 function toDateOnly(value: string): string {
@@ -157,6 +207,8 @@ function getPerformanceClassName(value: number | null) {
   return ''
 }
 
+type HoldingsSortColumn = 'ticker' | 'marketValue' | 'targetProximityPercent' | 'lotCount'
+
 export default function DashboardPage() {
   const [data, setData] = useState<PortfolioSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -170,13 +222,19 @@ export default function DashboardPage() {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
   const [saleTargetsByTicker, setSaleTargetsByTicker] = useState<Record<string, number | null>>({})
   const [buyTargetsByTicker, setBuyTargetsByTicker] = useState<Record<string, number | null>>({})
-  const [snapshotDate, setSnapshotDate] = useState<string>(new Date().toISOString().slice(0, 10))
+  const [displayLotCountsByTicker, setDisplayLotCountsByTicker] = useState<Record<string, number>>({})
+  const snapshotDate = new Date().toISOString().slice(0, 10)
   const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([])
   const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([])
   const [historicalPrices, setHistoricalPrices] = useState<HistoricalPrice[]>([])
   const [saleAllocationsBySaleId, setSaleAllocationsBySaleId] = useState<Record<string, SaleAllocation[]>>({})
   const [historicalLoadedEndDate, setHistoricalLoadedEndDate] = useState<string | null>(null)
   const [splitEvents, setSplitEvents] = useState<StockSplitEvent[]>([])
+  const initialLoadStartedRef = useRef(false)
+  const [updatingPrices, setUpdatingPrices] = useState(false)
+  const [currentPricesByTicker, setCurrentPricesByTicker] = useState<Record<string, number>>({})
+  const [holdingsSortColumn, setHoldingsSortColumn] = useState<HoldingsSortColumn>('ticker')
+  const [holdingsSortDirection, setHoldingsSortDirection] = useState<'asc' | 'desc'>('asc')
 
   function normalizePositivePercent(value: unknown, fallback: number): number {
     const parsed = Number(value)
@@ -229,6 +287,14 @@ export default function DashboardPage() {
     return latestByTicker
   }
 
+  function getTickersFromTransactions(transactions: StockTransaction[]): string[] {
+    return Array.from(new Set(
+      transactions
+        .map((tx) => String(tx.ticker || '').toUpperCase())
+        .filter((ticker) => ticker.length > 0)
+    ))
+  }
+
   function getBuyTargetPercentForDisplayLotCount(settings: UserTargetSettings, displayLotCount: number): number {
     if (displayLotCount < 3) {
       return settings.buyTargetPercentUnder3DisplayLots
@@ -248,15 +314,17 @@ export default function DashboardPage() {
   function calculateSaleTargetsByTicker(
     summary: PortfolioSummary,
     latestByTicker: Map<string, StockTransaction>,
-    saleTargetPercent: number
+    saleTargetPercent: number,
+    splitEvents: StockSplitEvent[],
+    snapshotDate: string
   ): Record<string, number | null> {
     const targets: Record<string, number | null> = {}
     const multiplier = 1 + saleTargetPercent / 100
     for (const stock of summary.stocks) {
       const ticker = String(stock.ticker || '').toUpperCase()
       const baseTx = latestByTicker.get(ticker)
-      const basePrice = Number(baseTx?.price)
-      targets[ticker] = Number.isFinite(basePrice) && basePrice > 0
+      const basePrice = getSplitAdjustedTargetBasePrice(baseTx, splitEvents, snapshotDate)
+      targets[ticker] = basePrice != null
         ? basePrice * multiplier
         : null
     }
@@ -268,7 +336,9 @@ export default function DashboardPage() {
     summary: PortfolioSummary,
     latestByTicker: Map<string, StockTransaction>,
     displayLotCountsByTicker: Record<string, number>,
-    settings: UserTargetSettings
+    settings: UserTargetSettings,
+    splitEvents: StockSplitEvent[],
+    snapshotDate: string
   ): Record<string, number | null> {
     const targets: Record<string, number | null> = {}
 
@@ -278,8 +348,8 @@ export default function DashboardPage() {
       const buyTargetPercent = getBuyTargetPercentForDisplayLotCount(settings, displayLotCount)
 
       const baseTx = latestByTicker.get(ticker)
-      const basePrice = Number(baseTx?.price)
-      if (!Number.isFinite(basePrice) || basePrice <= 0) {
+      const basePrice = getSplitAdjustedTargetBasePrice(baseTx, splitEvents, snapshotDate)
+      if (basePrice == null) {
         targets[ticker] = null
         continue
       }
@@ -298,94 +368,15 @@ export default function DashboardPage() {
 
   const snapshot = useMemo(() => {
     const LOT_TOLERANCE = 1e-6
-    const holdingsByTicker = new Map<string, number>()
-
-    const activeSplits = splitEvents
-      .filter((split) => split.isActive !== false)
-      .map((split) => ({
-        ticker: String(split.ticker || '').toUpperCase(),
-        splitDate: toDateOnly(split.splitDate),
-        multiplier: Number(split.multiplier),
-      }))
-      .filter((split) => split.ticker && split.splitDate && Number.isFinite(split.multiplier) && split.multiplier > 0 && split.splitDate <= snapshotDate)
-
-    function getCumulativeSplitMultiplierForDate(ticker: string, transactionDate: string): number {
-      let cumulativeMultiplier = 1
-
-      for (const split of activeSplits) {
-        if (split.ticker !== ticker) {
-          continue
-        }
-
-        if (transactionDate <= split.splitDate) {
-          cumulativeMultiplier *= split.multiplier
-        }
-      }
-
-      return cumulativeMultiplier
-    }
-
-    for (const tx of stockTransactions) {
-      const txDate = toDateOnly(tx.transactionDate)
-      if (!txDate || txDate > snapshotDate) {
-        continue
-      }
-
-      const ticker = String(tx.ticker || '').toUpperCase()
-      if (!ticker) {
-        continue
-      }
-
-      const quantity = Number(tx.quantity || 0)
-      if (!Number.isFinite(quantity) || quantity <= 0) {
-        continue
-      }
-
-      const splitMultiplier = getCumulativeSplitMultiplierForDate(ticker, txDate)
-      const adjustedQuantity = quantity * splitMultiplier
-      if (!Number.isFinite(adjustedQuantity) || adjustedQuantity <= 0) {
-        continue
-      }
-
-      const previous = Number(holdingsByTicker.get(ticker) ?? 0)
-      if (tx.type === 'buy' || tx.type === 'div') {
-        holdingsByTicker.set(ticker, previous + adjustedQuantity)
-      } else if (tx.type === 'sell') {
-        holdingsByTicker.set(ticker, previous - adjustedQuantity)
-      }
-    }
-
-    const priceByTicker: Record<string, { date: string; price: number }> = {}
-    for (const row of historicalPrices) {
-      const ticker = String(row.ticker || '').toUpperCase()
-      const priceDate = String(row.priceDate || '')
-      const closePrice = Number(row.closePrice)
-      if (!ticker || !priceDate || priceDate > snapshotDate || !Number.isFinite(closePrice)) {
-        continue
-      }
-
-      const existing = priceByTicker[ticker]
-      if (!existing || priceDate > existing.date) {
-        priceByTicker[ticker] = { date: priceDate, price: closePrice }
-      }
-    }
-
-    const holdings = Array.from(holdingsByTicker.entries())
-      .map(([ticker, shares]) => ({
-        ticker,
-        totalShares: Number(shares),
-      }))
-      .filter((row) => Number.isFinite(row.totalShares) && row.totalShares > 1e-6)
-      .sort((a, b) => a.ticker.localeCompare(b.ticker))
-      .map((row) => {
-        const latestPrice = Number(priceByTicker[row.ticker]?.price)
-        const hasPrice = Number.isFinite(latestPrice)
-        return {
-          ...row,
-          latestPrice: hasPrice ? latestPrice : null,
-          marketValue: hasPrice ? row.totalShares * latestPrice : null,
-        }
-      })
+    const coreSnapshot = calculatePortfolioSnapshot({
+      stockTransactions,
+      cashTransactions,
+      historicalPrices,
+      splitEvents,
+      snapshotDate,
+      currentPricesByTicker,
+    })
+    const getCumulativeSplitMultiplierForDate = createSplitMultiplierResolver(splitEvents, snapshotDate)
 
     type SnapshotPurchaseLot = {
       ticker: string
@@ -507,53 +498,23 @@ export default function DashboardPage() {
 
     const stockCostBasisExcludingDividends = Object.values(snapshotCostBasisByTicker).reduce((sum, value) => sum + Number(value || 0), 0)
 
-    const deposits = cashTransactions
-      .filter((tx) => tx.type === 'deposit' && toDateOnly(tx.transactionDate) <= snapshotDate)
-      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
-    const withdrawals = cashTransactions
-      .filter((tx) => tx.type === 'withdrawal' && toDateOnly(tx.transactionDate) <= snapshotDate)
-      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
-    const interest = cashTransactions
-      .filter((tx) => tx.type === 'interest' && toDateOnly(tx.transactionDate) <= snapshotDate)
-      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
-    const fees = cashTransactions
-      .filter((tx) => tx.type === 'fee' && toDateOnly(tx.transactionDate) <= snapshotDate)
-      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
-
-    const buys = stockTransactions
-      .filter((tx) => tx.type === 'buy' && toDateOnly(tx.transactionDate) <= snapshotDate)
-      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
-    const sells = stockTransactions
-      .filter((tx) => tx.type === 'sell' && toDateOnly(tx.transactionDate) <= snapshotDate)
-      .reduce((sum, tx) => sum + Number(tx.amount || 0), 0)
-
-    const availableCash = deposits - withdrawals + interest - fees - buys + sells
-    const cashBasis = deposits - withdrawals
-    const adjustments = interest - fees
-
-    const missingPrices = holdings.some((row) => row.latestPrice == null)
-    const holdingsMarketValue = missingPrices
-      ? null
-      : holdings.reduce((sum, row) => sum + Number(row.marketValue || 0), 0)
-
-    const portfolioValue = holdingsMarketValue == null ? null : availableCash + holdingsMarketValue
-    const performance = portfolioValue == null ? null : portfolioValue - cashBasis
+    const performance = coreSnapshot.portfolioValue == null ? null : coreSnapshot.portfolioValue - coreSnapshot.cashBasis
 
     return {
-      holdings,
-      availableCash,
-      cashBasis,
-      adjustments,
-      holdingsMarketValue,
-      portfolioValue,
+      holdings: coreSnapshot.holdings,
+      availableCash: coreSnapshot.availableCash,
+      cashBasis: coreSnapshot.cashBasis,
+      adjustments: coreSnapshot.adjustments,
+      holdingsMarketValue: coreSnapshot.holdingsMarketValue,
+      portfolioValue: coreSnapshot.portfolioValue,
       performance,
-      stockCount: holdings.length,
+      stockCount: coreSnapshot.stockCount,
       stockCostBasisExcludingDividends,
       stockCostBasisExcludingDividendsByTicker: snapshotCostBasisByTicker,
       realizedSalesPerformanceByTicker,
       lotCountByTicker: snapshotLotCountByTicker,
     }
-  }, [stockTransactions, cashTransactions, historicalPrices, saleAllocationsBySaleId, snapshotDate, splitEvents])
+  }, [stockTransactions, cashTransactions, historicalPrices, currentPricesByTicker, saleAllocationsBySaleId, snapshotDate, splitEvents])
 
   const hasInsufficientCashForBuy = Boolean(
     data && Number.isFinite(buyTotalCost) && buyTotalCost > Number(data.availableCash)
@@ -600,10 +561,58 @@ export default function DashboardPage() {
         marketValue: hydrated?.marketValue ?? null,
         costBasis,
         gainLoss,
-        lotCount: Number(snapshot.lotCountByTicker[row.ticker] ?? row.lotCount),
+        targetProximityPercent: calculateTargetProximityPercent(
+          hydrated?.latestPrice ?? null,
+          saleTargetsByTicker[row.ticker] ?? null,
+          buyTargetsByTicker[row.ticker] ?? null
+        ),
+        lotCount: Number(displayLotCountsByTicker[row.ticker] ?? snapshot.lotCountByTicker[row.ticker] ?? row.lotCount),
       }
     })
-  }, [summaryHoldings, snapshot.holdings, snapshot.stockCostBasisExcludingDividendsByTicker, snapshot.realizedSalesPerformanceByTicker, snapshot.lotCountByTicker])
+  }, [summaryHoldings, snapshot.holdings, snapshot.stockCostBasisExcludingDividendsByTicker, snapshot.realizedSalesPerformanceByTicker, snapshot.lotCountByTicker, displayLotCountsByTicker, saleTargetsByTicker, buyTargetsByTicker])
+
+  const sortedHoldingsRows = useMemo(() => {
+    const directionMultiplier = holdingsSortDirection === 'asc' ? 1 : -1
+
+    return [...holdingsRows].sort((a, b) => {
+      if (holdingsSortColumn === 'ticker') {
+        return a.ticker.localeCompare(b.ticker) * directionMultiplier
+      }
+
+      const aValue = a[holdingsSortColumn]
+      const bValue = b[holdingsSortColumn]
+      const aIsNil = aValue == null || !Number.isFinite(aValue)
+      const bIsNil = bValue == null || !Number.isFinite(bValue)
+
+      if (aIsNil && bIsNil) {
+        return 0
+      }
+      if (aIsNil) {
+        return 1
+      }
+      if (bIsNil) {
+        return -1
+      }
+
+      return (Number(aValue) - Number(bValue)) * directionMultiplier
+    })
+  }, [holdingsRows, holdingsSortColumn, holdingsSortDirection])
+
+  function handleHoldingsSort(column: HoldingsSortColumn) {
+    if (column === holdingsSortColumn) {
+      setHoldingsSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setHoldingsSortColumn(column)
+    setHoldingsSortDirection('asc')
+  }
+
+  function getHoldingsSortIndicator(column: HoldingsSortColumn) {
+    if (column !== holdingsSortColumn) {
+      return ''
+    }
+    return holdingsSortDirection === 'asc' ? ' ▲' : ' ▼'
+  }
 
   const performanceClassName =
     snapshot.performance == null || !Number.isFinite(snapshot.performance)
@@ -629,14 +638,14 @@ export default function DashboardPage() {
 
       const today = new Date().toISOString().slice(0, 10)
       const historicalEndDate = snapshotDate < today ? snapshotDate : today
-      const [transactionsResult, cashTransactionsResult, settingsResult, displayLotsResult, purchaseLotsResult, splitEventsResult] = await Promise.all([
+      const [transactionsResult, cashTransactionsResult, settingsResult, displayLotsResult, splitEventsResult] = await Promise.all([
         getStockTransactions(),
         getCashTransactions(),
         getUserTargetSettings(),
         getDisplayLots(),
-        getPurchaseLots(),
         getAllStockSplits(),
       ])
+      const tickers = getTickersFromTransactions(transactionsResult)
 
       const earliestTransactionDate = transactionsResult.reduce((earliest, tx) => {
         const txDate = toDateOnly(tx.transactionDate)
@@ -655,18 +664,12 @@ export default function DashboardPage() {
         ? subtractDaysFromDateOnly(earliestTransactionDate, 14)
         : historicalEndDate
 
-      const historicalPricesResult = transactionsResult.length > 0
-        ? await getHistoricalPrices(historicalStartDate, historicalEndDate)
+      const historicalPricesResult = tickers.length > 0
+        ? await getHistoricalPrices(historicalStartDate, historicalEndDate, tickers)
         : []
 
       const sellTransactions = transactionsResult.filter((tx) => tx.type === 'sell')
-      const allocationEntries = await Promise.all(
-        sellTransactions.map(async (tx) => {
-          const rows = await getSaleAllocations(tx.id)
-          return [tx.id, rows] as const
-        })
-      )
-      setSaleAllocationsBySaleId(Object.fromEntries(allocationEntries))
+      setSaleAllocationsBySaleId(await getSaleAllocationsByTransactionIds(sellTransactions.map((tx) => tx.id)))
 
       const normalizedSettings = normalizeSettings(settingsResult)
       const latestByTicker = buildLatestBuyOrSellByTicker(transactionsResult)
@@ -688,8 +691,22 @@ export default function DashboardPage() {
       setHistoricalPrices(historicalPricesResult)
       setSplitEvents(splitEventsResult)
       setHistoricalLoadedEndDate(historicalEndDate)
-      setSaleTargetsByTicker(calculateSaleTargetsByTicker(summary, latestByTicker, normalizedSettings.saleTargetPercent))
-      setBuyTargetsByTicker(calculateBuyTargetsByTicker(summary, latestByTicker, displayLotCountsByTicker, normalizedSettings))
+      setDisplayLotCountsByTicker(displayLotCountsByTicker)
+      setSaleTargetsByTicker(calculateSaleTargetsByTicker(
+        summary,
+        latestByTicker,
+        normalizedSettings.saleTargetPercent,
+        splitEventsResult,
+        snapshotDate
+      ))
+      setBuyTargetsByTicker(calculateBuyTargetsByTicker(
+        summary,
+        latestByTicker,
+        displayLotCountsByTicker,
+        normalizedSettings,
+        splitEventsResult,
+        snapshotDate
+      ))
 
       setLastUpdatedAt(new Date())
     } catch (err: unknown) {
@@ -701,8 +718,47 @@ export default function DashboardPage() {
     }
   }
 
+  async function updateCurrentPrices() {
+    const tickers = summaryHoldings.map((row) => row.ticker)
+    if (tickers.length === 0) {
+      return
+    }
+
+    setUpdatingPrices(true)
+    setError(null)
+
+    try {
+      const result = await getCurrentPrices(tickers)
+      const nextPrices: Record<string, number> = {}
+      for (const row of result.prices) {
+        const ticker = String(row.ticker || '').toUpperCase()
+        const price = Number(row.price)
+        if (ticker && Number.isFinite(price) && price > 0) {
+          nextPrices[ticker] = price
+        }
+      }
+
+      setCurrentPricesByTicker((previous) => ({
+        ...previous,
+        ...nextPrices,
+      }))
+      setLastUpdatedAt(new Date())
+
+      if (Object.keys(nextPrices).length === 0) {
+        setError('Unable to load current prices for the dashboard tickers.')
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to update current prices')
+    } finally {
+      setUpdatingPrices(false)
+    }
+  }
+
   useEffect(() => {
-    loadSummary()
+    if (!initialLoadStartedRef.current) {
+      initialLoadStartedRef.current = true
+      loadSummary()
+    }
 
     const handlePortfolioUpdated = () => {
       loadSummary(true)
@@ -736,7 +792,8 @@ export default function DashboardPage() {
     async function loadForwardHistoricalRange() {
       setHoldingsLoading(true)
       try {
-        const nextRows = await getHistoricalPrices(incrementalStartDate, targetEndDate)
+        const tickers = getTickersFromTransactions(stockTransactions)
+        const nextRows = await getHistoricalPrices(incrementalStartDate, targetEndDate, tickers)
         if (cancelled) {
           return
         }
@@ -851,7 +908,6 @@ export default function DashboardPage() {
     try {
       await createStockTransaction(payload)
       emitPortfolioUpdated()
-      await loadSummary(true)
       closeAddStockModal()
     } catch (err: unknown) {
       setAddStockError(err instanceof Error ? err.message : 'Unable to add stock.')
@@ -868,22 +924,14 @@ export default function DashboardPage() {
         </div>
         <div className="stack-right">
           <div className="inline-actions">
-            <label>
-              Snapshot Date
-              <input
-                type="date"
-                min="1980-01-01"
-                max={new Date().toISOString().slice(0, 10)}
-                value={snapshotDate}
-                onChange={(event) => setSnapshotDate(event.target.value)}
-                style={{ marginLeft: '0.5rem', marginRight: '0.5rem' }}
-              />
-            </label>
             <button className="button button-primary" type="button" onClick={openAddStockModal}>
               Add Stock
             </button>
             <button className="button" type="button" onClick={() => loadSummary(true)} disabled={refreshing}>
               {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+            <button className="button" type="button" onClick={updateCurrentPrices} disabled={updatingPrices || summaryHoldings.length === 0}>
+              {updatingPrices ? 'Updating...' : 'Update'}
             </button>
           </div>
           <small>Last updated: {formatDateTime(lastUpdatedAt)}</small>
@@ -923,19 +971,19 @@ export default function DashboardPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Ticker</th>
+                  <th className="sortable-header" onClick={() => handleHoldingsSort('ticker')}>Ticker{getHoldingsSortIndicator('ticker')}</th>
                   <th>Total Shares</th>
                   <th>Price</th>
-                  <th>Market Value</th>
-                  <th>Cost Basis</th>
+                  <th className="sortable-header" onClick={() => handleHoldingsSort('marketValue')}>Market Value{getHoldingsSortIndicator('marketValue')}</th>
+                  <th className="sortable-header" onClick={() => handleHoldingsSort('targetProximityPercent')}>Target %{getHoldingsSortIndicator('targetProximityPercent')}</th>
                   <th>Gain/Loss</th>
                   <th>Buy Target</th>
                   <th>Sale Target</th>
-                  <th>Lots</th>
+                  <th className="sortable-header" onClick={() => handleHoldingsSort('lotCount')}>Lots{getHoldingsSortIndicator('lotCount')}</th>
                 </tr>
               </thead>
               <tbody>
-                {holdingsRows.map((row) => (
+                {sortedHoldingsRows.map((row) => (
                   <tr key={row.ticker}>
                     <td>
                       <Link className="link-button" to={`/stocks/${encodeURIComponent(row.ticker)}`}>
@@ -957,7 +1005,13 @@ export default function DashboardPage() {
                         formatCurrency2(row.marketValue)
                       )}
                     </td>
-                    <td>{formatCurrency2(row.costBasis)}</td>
+                    <td>
+                      {holdingsLoading && row.targetProximityPercent == null ? (
+                        <span className="table-skeleton table-skeleton-sm" aria-label="Loading target percent" />
+                      ) : (
+                        formatPercent2(row.targetProximityPercent)
+                      )}
+                    </td>
                     <td className={getPerformanceClassName(row.gainLoss)}>{formatCurrency2(row.gainLoss)}</td>
                     <td>
                       {holdingsLoading && buyTargetsByTicker[row.ticker] == null ? (

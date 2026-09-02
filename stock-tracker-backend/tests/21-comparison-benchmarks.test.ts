@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import sql from 'mssql';
 import request from 'supertest';
+import { v4 as uuidv4 } from 'uuid';
 import app from '../src/index.js';
 import { initializeDatabase, getPool } from '../src/db/connection.js';
 import { getYearPriorityDates } from '../src/routes/stocks.js';
@@ -32,6 +33,34 @@ async function seedHistoricalPrice(ticker: string, priceDate: string, closePrice
       WHEN NOT MATCHED THEN
         INSERT (id, ticker, priceDate, marketDate, closePrice, source)
         VALUES (NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source);
+    `);
+}
+
+async function seedActiveSplit(ticker: string, splitDate: string, ratioNumerator: number, ratioDenominator: number) {
+  const pool = getPool();
+  const splitId = uuidv4();
+  const multiplier = ratioNumerator / ratioDenominator;
+
+  await pool.request()
+    .input('id', sql.UniqueIdentifier, splitId)
+    .input('ticker', sql.NVarChar, ticker.toUpperCase())
+    .input('ratioNumerator', sql.Decimal(18, 8), ratioNumerator)
+    .input('ratioDenominator', sql.Decimal(18, 8), ratioDenominator)
+    .input('multiplier', sql.Decimal(18, 8), multiplier)
+    .input('splitDate', sql.DateTime2, new Date(`${splitDate}T00:00:00Z`))
+    .query(`
+      INSERT INTO StockSplits (id, ticker, ratioNumerator, ratioDenominator, multiplier, splitDate)
+      VALUES (@id, @ticker, @ratioNumerator, @ratioDenominator, @multiplier, @splitDate)
+    `);
+
+  await pool.request()
+    .input('id', sql.UniqueIdentifier, uuidv4())
+    .input('userId', sql.NVarChar, TEST_USER_ID)
+    .input('splitId', sql.UniqueIdentifier, splitId)
+    .input('activatedBy', sql.NVarChar, 'manual')
+    .query(`
+      INSERT INTO UserSplitActivations (id, userId, splitId, activatedBy)
+      VALUES (@id, @userId, @splitId, @activatedBy)
     `);
 }
 
@@ -211,5 +240,35 @@ describe('21. Comparison Benchmarks', () => {
     expect(Number(jan1.stockValue)).toBeCloseTo(100, 6);
     expect(Number(dec31.portfolioValue)).toBeCloseTo(1000, 6);
     expect(Number(jan1.portfolioValue)).toBeCloseTo(1000, 6);
+  });
+
+  it('uses active split-adjusted shares when calculating compare portfolio value', async () => {
+    await seedHistoricalPrice('TEST', '2022-01-03', 10);
+    await seedHistoricalPrice('TEST', '2022-01-10', 5);
+    await seedHistoricalPrice('^DJI', '2022-01-03', 100);
+    await seedHistoricalPrice('^IXIC', '2022-01-03', 200);
+    await seedHistoricalPrice('^GSPC', '2022-01-03', 400);
+    await seedHistoricalPrice('^DJI', '2022-01-10', 100);
+    await seedHistoricalPrice('^IXIC', '2022-01-10', 200);
+    await seedHistoricalPrice('^GSPC', '2022-01-10', 400);
+
+    await depositCash(1000, new Date('2022-01-03T00:00:00Z'));
+    await buyStock('TEST', 10, 10, new Date('2022-01-03T00:00:00Z'));
+    await seedActiveSplit('TEST', '2022-01-05', 2, 1);
+
+    const response = await request(app)
+      .get('/api/stocks/portfolio/comparison-all')
+      .set('x-user-id', TEST_USER_ID)
+      .expect(200);
+
+    const points = Array.isArray(response.body?.points) ? response.body.points : [];
+    const beforeSplit = points.find((point: any) => point.date === '2022-01-03');
+    const afterSplit = points.find((point: any) => point.date === '2022-01-10');
+
+    expect(beforeSplit).toBeDefined();
+    expect(afterSplit).toBeDefined();
+    expect(Number(beforeSplit.stockValue)).toBeCloseTo(100, 6);
+    expect(Number(afterSplit.stockValue)).toBeCloseTo(100, 6);
+    expect(Number(afterSplit.portfolioValue)).toBeCloseTo(1000, 6);
   });
 });

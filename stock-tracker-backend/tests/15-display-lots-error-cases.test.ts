@@ -61,6 +61,22 @@ describe('15. Display Lots - Additional Error Cases', () => {
     expect(Number(displayLots[0].totalQuantity)).toBeCloseTo(20, 3);
   });
 
+  it('replacement rejects quantities that change the display-lot total', async () => {
+    await createDisplayLot('AAPL', [
+      { purchaseLotId: 'seed', quantityAllocated: 10 },
+      { purchaseLotId: 'seed', quantityAllocated: 15 }
+    ]);
+
+    await request(app)
+      .post('/api/display-lots/AAPL')
+      .set('x-user-id', TEST_USER_ID)
+      .send({ quantities: [20] })
+      .expect(400);
+
+    const displayLots = await getDisplayLots('AAPL');
+    expect(displayLots.map((lot) => Number(lot.totalQuantity))).toEqual([10, 15]);
+  });
+
   it('combine with too few indices fails', async () => {
     await depositCash(10000);
     await buyStock('AAPL', 10, 100);

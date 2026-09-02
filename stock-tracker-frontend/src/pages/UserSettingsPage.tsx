@@ -141,7 +141,7 @@ export default function UserSettingsPage() {
                 <input
                   type="number"
                   min="0.0001"
-                  step="0.01"
+                  step="0.0001"
                   value={saleTargetPercent}
                   onChange={(event) => setSaleTargetPercent(event.target.value)}
                   disabled={saving}
@@ -156,7 +156,7 @@ export default function UserSettingsPage() {
                 <input
                   type="number"
                   min="0.0001"
-                  step="0.01"
+                  step="0.0001"
                   value={buyTargetPercentUnder3DisplayLots}
                   onChange={(event) => setBuyTargetPercentUnder3DisplayLots(event.target.value)}
                   disabled={saving}
@@ -168,7 +168,7 @@ export default function UserSettingsPage() {
                 <input
                   type="number"
                   min="0.0001"
-                  step="0.01"
+                  step="0.0001"
                   value={buyTargetPercentFor3DisplayLots}
                   onChange={(event) => setBuyTargetPercentFor3DisplayLots(event.target.value)}
                   disabled={saving}
@@ -180,7 +180,7 @@ export default function UserSettingsPage() {
                 <input
                   type="number"
                   min="0.0001"
-                  step="0.01"
+                  step="0.0001"
                   value={buyTargetPercentFor4DisplayLots}
                   onChange={(event) => setBuyTargetPercentFor4DisplayLots(event.target.value)}
                   disabled={saving}
@@ -192,7 +192,7 @@ export default function UserSettingsPage() {
                 <input
                   type="number"
                   min="0.0001"
-                  step="0.01"
+                  step="0.0001"
                   value={buyTargetPercentFor5DisplayLots}
                   onChange={(event) => setBuyTargetPercentFor5DisplayLots(event.target.value)}
                   disabled={saving}
@@ -204,7 +204,7 @@ export default function UserSettingsPage() {
                 <input
                   type="number"
                   min="0.0001"
-                  step="0.01"
+                  step="0.0001"
                   value={buyTargetPercentFor6OrMoreDisplayLots}
                   onChange={(event) => setBuyTargetPercentFor6OrMoreDisplayLots(event.target.value)}
                   disabled={saving}
