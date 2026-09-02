@@ -61,6 +61,7 @@ export type StockTransaction = {
   transactionDate: string
   isDeletionLocked?: boolean
   exchangeSourceQuantity?: number
+  isExchangeGenerated?: boolean
   createdAt?: string
   updatedAt?: string
 }

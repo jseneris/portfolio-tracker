@@ -10,6 +10,7 @@ import {
   syncHistoricalPricesByYear,
 } from '../api'
 import { formatCurrency2 } from '../formatters'
+import { calculatePortfolioValue } from '../portfolioSnapshot'
 
 type YearSelection = number | 'all'
 
@@ -69,6 +70,13 @@ function filterPointsByYear(points: PortfolioComparisonPoint[], year: number) {
   const startDate = `${year}-01-01`
   const endDate = `${year}-12-31`
   return points.filter((point) => point.date >= startDate && point.date <= endDate)
+}
+
+function alignPortfolioValues(points: PortfolioComparisonPoint[]): PortfolioComparisonPoint[] {
+  return points.map((point) => ({
+    ...point,
+    portfolioValue: calculatePortfolioValue(point.availableCash, point.stockValue) ?? 0,
+  }))
 }
 
 export default function ComparisonPage() {
@@ -453,7 +461,7 @@ export default function ComparisonPage() {
     setSuccess(null)
     try {
       const allResponse = await getPortfolioComparisonAll()
-      const allPoints = allResponse.points ?? []
+      const allPoints = alignPortfolioValues(allResponse.points ?? [])
 
       if (yearSelection === 'all') {
         if (allComparisonSyncYears.length === 0) {
@@ -494,7 +502,7 @@ export default function ComparisonPage() {
       updateMissingPriceWarning(yearSelection, yearPoints)
       if (yearPoints.length === 0) {
         const fallbackResponse = await getPortfolioComparisonByYear(yearSelection)
-        const fallbackPoints = fallbackResponse.points ?? []
+        const fallbackPoints = alignPortfolioValues(fallbackResponse.points ?? [])
         if (fallbackPoints.length > 0) {
           setPoints(fallbackPoints)
           updateMissingPriceWarning(yearSelection, fallbackPoints)

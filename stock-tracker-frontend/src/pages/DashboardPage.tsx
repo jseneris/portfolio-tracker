@@ -190,27 +190,6 @@ function calculateStockCostBasisExcludingDividendsByTicker(lots: PurchaseLot[]):
   return byTicker
 }
 
-function calculateHoldingsMarketValue(
-  summary: PortfolioSummary,
-  latestPriceByTicker: Record<string, number>
-): number | null {
-  let total = 0
-
-  for (const stock of summary.stocks) {
-    const ticker = String(stock.ticker || '').toUpperCase()
-    const shares = Number(stock.totalShares)
-    const latestPrice = Number(latestPriceByTicker[ticker])
-
-    if (!ticker || !Number.isFinite(shares) || !Number.isFinite(latestPrice)) {
-      return null
-    }
-
-    total += shares * latestPrice
-  }
-
-  return total
-}
-
 function getPerformanceClassName(value: number | null) {
   if (value == null || !Number.isFinite(value)) {
     return ''
@@ -589,6 +568,18 @@ export default function DashboardPage() {
       }
     })
   }, [summaryHoldings, snapshot.holdings, snapshot.stockCostBasisExcludingDividendsByTicker, snapshot.realizedSalesPerformanceByTicker, snapshot.lotCountByTicker, displayLotCountsByTicker, saleTargetsByTicker, buyTargetsByTicker])
+
+  const displayedHoldingsMarketValue = useMemo(() => {
+    if (holdingsRows.some((row) => row.marketValue == null || !Number.isFinite(row.marketValue))) {
+      return null
+    }
+
+    return holdingsRows.reduce((total, row) => total + Number(row.marketValue), 0)
+  }, [holdingsRows])
+
+  const displayedPortfolioValue = displayedHoldingsMarketValue == null
+    ? null
+    : snapshot.availableCash + displayedHoldingsMarketValue
 
   const sortedHoldingsRows = useMemo(() => {
     const directionMultiplier = holdingsSortDirection === 'asc' ? 1 : -1
@@ -1007,8 +998,6 @@ export default function DashboardPage() {
             <div className="skeleton-card" />
             <div className="skeleton-card" />
             <div className="skeleton-card" />
-            <div className="skeleton-card" />
-            <div className="skeleton-card" />
           </div>
           <div className="panel">Loading summary...</div>
         </>
@@ -1017,13 +1006,9 @@ export default function DashboardPage() {
       {data ? (
         <>
           <div className="panel stat-grid">
-            <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(data.availableCash)}</div></div>
-            <div className="stat"><div className="label">Cash Basis</div><div className="value">{formatCurrency2(data.cashBasis)}</div></div>
-            <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(snapshot.holdingsMarketValue)}</div></div>
-            <div className="stat"><div className="label">Performance</div><div className={performanceClassName}>{holdingsLoading ? 'Loading...' : formatCurrency2(snapshot.performance)}</div></div>
-            <div className="stat"><div className="label">Adjustments</div><div className="value">{formatCurrency2(data.adjustments)}</div></div>
-            <div className="stat"><div className="label">Stock Cost Basis (No Div)</div><div className="value">{formatCurrency2(data.totalStockCostBasis)}</div></div>
-            <div className="stat"><div className="label">Stock Count</div><div className="value">{data.stockCount}</div></div>
+            <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(snapshot.availableCash)}</div></div>
+            <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedHoldingsMarketValue)}</div></div>
+            <div className="stat"><div className="label">Portfolio Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedPortfolioValue)}</div></div>
           </div>
 
           <div className="panel">

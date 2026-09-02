@@ -258,12 +258,18 @@ router.get('/portfolio/summary', async (req: Request, res: Response) => {
           FROM CashTransactions
           WHERE userId = @userId
         ),
+        ExchangeGeneratedBuys AS (
+          SELECT DISTINCT targetTransactionId
+          FROM StockExchangeLotMappings
+          WHERE userId = @userId
+        ),
         StockCashAgg AS (
           SELECT
-            SUM(CASE WHEN type = 'buy' THEN amount ELSE 0 END) AS buys,
-            SUM(CASE WHEN type = 'sell' THEN amount ELSE 0 END) AS sells
-          FROM StockTransactions
-          WHERE userId = @userId
+            SUM(CASE WHEN st.type = 'buy' AND e.targetTransactionId IS NULL THEN st.amount ELSE 0 END) AS buys,
+            SUM(CASE WHEN st.type = 'sell' THEN st.amount ELSE 0 END) AS sells
+          FROM StockTransactions st
+          LEFT JOIN ExchangeGeneratedBuys e ON e.targetTransactionId = st.id
+          WHERE st.userId = @userId
         ),
         StockTotals AS (
           SELECT
@@ -363,6 +369,7 @@ router.get('/', async (req: Request, res: Response) => {
             )
             THEN 1 ELSE 0 END AS isDeletionLocked,
           COALESCE(exchangeSource.exchangeSourceQuantity, 0) AS exchangeSourceQuantity
+          , CASE WHEN targetMapping.targetTransactionId IS NOT NULL THEN 1 ELSE 0 END AS isExchangeGenerated
         FROM StockTransactions st
         LEFT JOIN LockedTransactions lt ON lt.transactionId = st.id
         LEFT JOIN StockExchanges exchangeEvent
@@ -374,6 +381,12 @@ router.get('/', async (req: Request, res: Response) => {
           WHERE mapping.exchangeId = exchangeEvent.id
             AND mapping.userId = @userId
         ) exchangeSource
+        OUTER APPLY (
+          SELECT TOP 1 mapping.targetTransactionId
+          FROM StockExchangeLotMappings mapping
+          WHERE mapping.targetTransactionId = st.id
+            AND mapping.userId = @userId
+        ) targetMapping
         WHERE st.userId = @userId
         ORDER BY st.transactionDate DESC, st.ticker ASC
       `);
@@ -381,6 +394,7 @@ router.get('/', async (req: Request, res: Response) => {
     res.json((result.recordset ?? []).map((row: any) => ({
       ...row,
       isDeletionLocked: Number(row.isDeletionLocked || 0) === 1,
+      isExchangeGenerated: Number(row.isExchangeGenerated || 0) === 1,
     })));
   } catch (error) {
     res.status(500).json({ error: String(error) });
@@ -2036,11 +2050,9 @@ function getEndOfYearDate(year: number): string {
   return `${year}-12-31`;
 }
 
-function clampComparisonEndDate(latestTransactionDate: string): string {
-  const latestTransactionYear = parseDateOnly(latestTransactionDate).getUTCFullYear();
+function clampComparisonEndDate(): string {
   const today = toIsoDate(getUtcTodayDateOnly());
-  const latestTransactionYearEnd = getEndOfYearDate(latestTransactionYear);
-  return today < latestTransactionYearEnd ? today : latestTransactionYearEnd;
+  return today;
 }
 
 async function getComparisonTimelineBounds(
@@ -2086,7 +2098,7 @@ async function getComparisonTimelineBounds(
 
   return {
     referenceStartDate: firstDepositDate || latestTransactionDate,
-    effectiveEndDate: clampComparisonEndDate(latestTransactionDate),
+    effectiveEndDate: clampComparisonEndDate(),
   };
 }
 
@@ -2115,6 +2127,10 @@ async function buildPortfolioComparisonPoints(
     return [];
   }
 
+  if (dates[dates.length - 1] !== range.endDate) {
+    dates.push(range.endDate);
+  }
+
   const cashRows = await pool.request()
     .input('userId', sql.NVarChar, userId)
     .input('endDate', sql.Date, parseDateOnly(range.endDate))
@@ -2130,11 +2146,26 @@ async function buildPortfolioComparisonPoints(
     .input('userId', sql.NVarChar, userId)
     .input('endDate', sql.Date, parseDateOnly(range.endDate))
     .query(`
-      SELECT ticker, type, quantity, amount, transactionDate
-      FROM StockTransactions
-      WHERE userId = @userId
-        AND transactionDate <= DATEADD(day, 1, @endDate)
-      ORDER BY transactionDate ASC
+      SELECT st.ticker, st.type, st.quantity, st.amount, st.transactionDate
+        , COALESCE(exchangeSource.exchangeSourceQuantity, 0) AS exchangeSourceQuantity
+        , CASE WHEN targetMapping.targetTransactionId IS NOT NULL THEN 1 ELSE 0 END AS isExchangeGenerated
+      FROM StockTransactions st
+      OUTER APPLY (
+        SELECT SUM(mapping.sourceRemainingBefore) AS exchangeSourceQuantity
+        FROM StockExchangeLotMappings mapping
+        INNER JOIN StockExchanges exchangeEvent ON exchangeEvent.id = mapping.exchangeId
+        WHERE exchangeEvent.exchangeTransactionId = st.id
+          AND mapping.userId = @userId
+      ) exchangeSource
+      OUTER APPLY (
+        SELECT TOP 1 mapping.targetTransactionId
+        FROM StockExchangeLotMappings mapping
+        WHERE mapping.targetTransactionId = st.id
+          AND mapping.userId = @userId
+      ) targetMapping
+      WHERE st.userId = @userId
+        AND st.transactionDate <= DATEADD(day, 1, @endDate)
+      ORDER BY st.transactionDate ASC
     `);
 
   const priceRows = await pool.request()
@@ -2177,6 +2208,8 @@ async function buildPortfolioComparisonPoints(
     ticker: String(row.ticker || '').toUpperCase(),
     type: String(row.type || '').toLowerCase(),
     quantity: Number(row.quantity || 0),
+    exchangeSourceQuantity: Number(row.exchangeSourceQuantity || 0),
+    isExchangeGenerated: Number(row.isExchangeGenerated || 0) === 1,
     amount: Number(row.amount || 0)
   }));
 
@@ -2293,8 +2326,11 @@ async function buildPortfolioComparisonPoints(
     while (stockIndex < stockEvents.length && stockEvents[stockIndex].date <= pointDate) {
       const event = stockEvents[stockIndex];
       const currentShares = Number(holdings.get(event.ticker) ?? 0);
+      const quantityToApply = event.type === 'exchange'
+        ? Number(event.exchangeSourceQuantity || 0)
+        : Number(event.quantity || 0);
       const adjustedQuantity = calculateSplitAdjustedQuantity(
-        Number(event.quantity || 0),
+        quantityToApply,
         event.ticker,
         event.date,
         pointDate,
@@ -2302,8 +2338,8 @@ async function buildPortfolioComparisonPoints(
       );
       if (event.type === 'buy' || event.type === 'div') {
         holdings.set(event.ticker, currentShares + adjustedQuantity);
-        if (event.type === 'buy') buys += Number(event.amount || 0);
-      } else if (event.type === 'sell') {
+        if (event.type === 'buy' && !event.isExchangeGenerated) buys += Number(event.amount || 0);
+      } else if (event.type === 'sell' || event.type === 'exchange') {
         holdings.set(event.ticker, currentShares - adjustedQuantity);
         sells += Number(event.amount || 0);
       }

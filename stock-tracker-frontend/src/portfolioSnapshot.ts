@@ -24,6 +24,10 @@ export type PortfolioSnapshot = {
   stockCount: number
 }
 
+export function calculatePortfolioValue(availableCash: number, holdingsMarketValue: number | null): number | null {
+  return holdingsMarketValue == null ? null : availableCash + holdingsMarketValue
+}
+
 export function createSplitMultiplierResolver(splitEvents: StockSplitEvent[], snapshotDate: string) {
   const activeSplits = splitEvents
     .filter((split) => split.isActive !== false)
@@ -72,11 +76,15 @@ export function calculatePortfolioSnapshot(args: {
     const transactionDate = toDateOnly(transaction.transactionDate)
     const ticker = String(transaction.ticker || '').toUpperCase()
     const quantity = Number(transaction.quantity)
-    if (!transactionDate || transactionDate > snapshotDate || !ticker || !Number.isFinite(quantity) || quantity <= 0) {
+    const exchangeSourceQuantity = Number(transaction.exchangeSourceQuantity)
+    const quantityToApply = transaction.type === 'exchange'
+      ? exchangeSourceQuantity
+      : quantity
+    if (!transactionDate || transactionDate > snapshotDate || !ticker || !Number.isFinite(quantityToApply) || quantityToApply <= 0) {
       continue
     }
 
-    const adjustedQuantity = quantity * getCumulativeSplitMultiplierForDate(ticker, transactionDate)
+    const adjustedQuantity = quantityToApply * getCumulativeSplitMultiplierForDate(ticker, transactionDate)
     if (!Number.isFinite(adjustedQuantity) || adjustedQuantity <= 0) {
       continue
     }
@@ -84,7 +92,7 @@ export function calculatePortfolioSnapshot(args: {
     const currentShares = holdingsByTicker.get(ticker) ?? 0
     if (transaction.type === 'buy' || transaction.type === 'div') {
       holdingsByTicker.set(ticker, currentShares + adjustedQuantity)
-    } else if (transaction.type === 'sell') {
+    } else if (transaction.type === 'sell' || transaction.type === 'exchange') {
       holdingsByTicker.set(ticker, currentShares - adjustedQuantity)
     }
   }
@@ -139,7 +147,9 @@ export function calculatePortfolioSnapshot(args: {
     .filter((transaction) => transaction.type === 'fee' && toDateOnly(transaction.transactionDate) <= snapshotDate)
     .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0)
   const buys = stockTransactions
-    .filter((transaction) => transaction.type === 'buy' && toDateOnly(transaction.transactionDate) <= snapshotDate)
+    .filter((transaction) => transaction.type === 'buy'
+      && transaction.isExchangeGenerated !== true
+      && toDateOnly(transaction.transactionDate) <= snapshotDate)
     .reduce((sum, transaction) => sum + Number(transaction.amount || 0), 0)
   const sells = stockTransactions
     .filter((transaction) => transaction.type === 'sell' && toDateOnly(transaction.transactionDate) <= snapshotDate)
@@ -160,7 +170,7 @@ export function calculatePortfolioSnapshot(args: {
     adjustments,
     holdingsMarketValue,
     stockValue: holdingsMarketValue,
-    portfolioValue: holdingsMarketValue == null ? null : availableCash + holdingsMarketValue,
+    portfolioValue: calculatePortfolioValue(availableCash, holdingsMarketValue),
     stockCount: holdings.length,
   }
 }

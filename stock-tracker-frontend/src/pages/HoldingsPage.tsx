@@ -12,7 +12,7 @@ import {
   StockTransaction,
 } from '../api'
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
-import { calculatePortfolioSnapshot } from '../portfolioSnapshot'
+import { calculatePortfolioSnapshot, calculatePortfolioValue } from '../portfolioSnapshot'
 
 type HoldingRow = {
   ticker: string
@@ -122,8 +122,8 @@ export default function HoldingsPage() {
         value: holding.marketValue,
       })),
       availableCash: coreSnapshot.availableCash,
-      stockValue: coreSnapshot.stockValue,
-      portfolioValue: coreSnapshot.portfolioValue,
+      holdingsMarketValue: coreSnapshot.holdingsMarketValue,
+      portfolioValue: calculatePortfolioValue(coreSnapshot.availableCash, coreSnapshot.holdingsMarketValue),
     }
   }, [cashTransactions, historicalPrices, snapshotDate, splitEvents, stockTransactions])
 
@@ -175,7 +175,7 @@ export default function HoldingsPage() {
             <div className="stat-grid">
               <div className="stat"><div className="label">Portfolio Value</div><div className="value">{formatCurrency2(snapshot.portfolioValue)}</div></div>
               <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(snapshot.availableCash)}</div></div>
-              <div className="stat"><div className="label">Stock Value</div><div className="value">{formatCurrency2(snapshot.stockValue)}</div></div>
+              <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{formatCurrency2(snapshot.holdingsMarketValue)}</div></div>
             </div>
           </div>
 

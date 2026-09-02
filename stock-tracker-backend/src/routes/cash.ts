@@ -43,11 +43,17 @@ router.get('/summary', async (req: Request, res: Response) => {
     const stockResult = await stockRequest
       .input('userId', sql.NVarChar, userId)
       .query(`
+        WITH ExchangeGeneratedBuys AS (
+          SELECT DISTINCT targetTransactionId
+          FROM StockExchangeLotMappings
+          WHERE userId = @userId
+        )
         SELECT
-          SUM(CASE WHEN type = 'buy' THEN amount ELSE 0 END) as buys,
-          SUM(CASE WHEN type = 'sell' THEN amount ELSE 0 END) as sells
-        FROM StockTransactions
-        WHERE userId = @userId
+          SUM(CASE WHEN st.type = 'buy' AND e.targetTransactionId IS NULL THEN st.amount ELSE 0 END) as buys,
+          SUM(CASE WHEN st.type = 'sell' THEN st.amount ELSE 0 END) as sells
+        FROM StockTransactions st
+        LEFT JOIN ExchangeGeneratedBuys e ON e.targetTransactionId = st.id
+        WHERE st.userId = @userId
       `);
     
     const cashRow = cashResult.recordset[0] || {};
