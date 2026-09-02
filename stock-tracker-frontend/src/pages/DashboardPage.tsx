@@ -136,6 +136,23 @@ function addDaysToDateOnly(value: string, days: number): string {
   return date.toISOString().slice(0, 10)
 }
 
+// Approximate regular-hours check (9:30am-4:00pm America/New_York, weekdays); does not account for market holidays.
+function isUsMarketOpenNow(): boolean {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour12: false,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(new Date())
+
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  const isWeekday = lookup.weekday !== 'Sat' && lookup.weekday !== 'Sun'
+  const minutesSinceMidnight = Number(lookup.hour) * 60 + Number(lookup.minute)
+
+  return isWeekday && minutesSinceMidnight >= 9 * 60 + 30 && minutesSinceMidnight < 16 * 60
+}
+
 function calculateStockCostBasisExcludingDividends(lots: PurchaseLot[]): number {
   return lots.reduce((sum, lot) => {
     if (lot.sourceType !== 'purchase') {
@@ -231,7 +248,9 @@ export default function DashboardPage() {
   const [historicalLoadedEndDate, setHistoricalLoadedEndDate] = useState<string | null>(null)
   const [splitEvents, setSplitEvents] = useState<StockSplitEvent[]>([])
   const initialLoadStartedRef = useRef(false)
+  const updateCurrentPricesRef = useRef<() => Promise<void>>(async () => {})
   const [updatingPrices, setUpdatingPrices] = useState(false)
+  const [isLivePollingActive, setIsLivePollingActive] = useState(false)
   const [currentPricesByTicker, setCurrentPricesByTicker] = useState<Record<string, number>>({})
   const [holdingsSortColumn, setHoldingsSortColumn] = useState<HoldingsSortColumn>('ticker')
   const [holdingsSortDirection, setHoldingsSortDirection] = useState<'asc' | 'desc'>('asc')
@@ -754,6 +773,8 @@ export default function DashboardPage() {
     }
   }
 
+  updateCurrentPricesRef.current = updateCurrentPrices
+
   useEffect(() => {
     if (!initialLoadStartedRef.current) {
       initialLoadStartedRef.current = true
@@ -768,6 +789,42 @@ export default function DashboardPage() {
 
     return () => {
       window.removeEventListener(PORTFOLIO_UPDATED_EVENT, handlePortfolioUpdated)
+    }
+  }, [])
+
+  // Live-price polling: only while this tab is visible and the US market is open.
+  useEffect(() => {
+    const POLL_INTERVAL_MS = 10 * 60 * 1000
+    const POLLING_STATUS_CHECK_MS = 30 * 1000
+    const wasMarketOpenRef = { current: isUsMarketOpenNow() }
+
+    function refreshPollingActiveStatus() {
+      setIsLivePollingActive(document.visibilityState === 'visible' && isUsMarketOpenNow())
+    }
+
+    function maybeRefreshCurrentPrices() {
+      refreshPollingActiveStatus()
+      const marketOpenNow = isUsMarketOpenNow()
+
+      if (document.visibilityState === 'visible' && marketOpenNow) {
+        void updateCurrentPricesRef.current()
+      } else if (wasMarketOpenRef.current && !marketOpenNow) {
+        // Market just closed: drop live overrides so the snapshot falls back to the latest stored close.
+        setCurrentPricesByTicker({})
+      }
+
+      wasMarketOpenRef.current = marketOpenNow
+    }
+
+    refreshPollingActiveStatus()
+    const priceIntervalId = window.setInterval(maybeRefreshCurrentPrices, POLL_INTERVAL_MS)
+    const statusIntervalId = window.setInterval(refreshPollingActiveStatus, POLLING_STATUS_CHECK_MS)
+    document.addEventListener('visibilitychange', maybeRefreshCurrentPrices)
+
+    return () => {
+      window.clearInterval(priceIntervalId)
+      window.clearInterval(statusIntervalId)
+      document.removeEventListener('visibilitychange', maybeRefreshCurrentPrices)
     }
   }, [])
 
@@ -935,6 +992,10 @@ export default function DashboardPage() {
             </button>
           </div>
           <small>Last updated: {formatDateTime(lastUpdatedAt)}</small>
+          <small className={isLivePollingActive ? 'live-polling-badge live-polling-badge-active' : 'live-polling-badge'}>
+            <span className={isLivePollingActive ? 'live-polling-dot live-polling-dot-active' : 'live-polling-dot'} />
+            {isLivePollingActive ? 'Live price polling active' : 'Live price polling paused (market closed or tab hidden)'}
+          </small>
         </div>
       </div>
 

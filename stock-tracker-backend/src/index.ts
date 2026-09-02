@@ -5,6 +5,7 @@ import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { initializeDatabase, closeDatabase } from './db/connection.js';
 import { authenticateRequest } from './auth.js';
+import { startScheduledJobs } from './jobs/scheduler.js';
 import cashRoutes from './routes/cash.js';
 import stockRoutes from './routes/stocks.js';
 import lotsRoutes from './routes/lots.js';
@@ -47,7 +48,8 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 export async function startServer() {
   try {
     await initializeDatabase();
-    
+    startScheduledJobs();
+
     return app.listen(PORT, () => {
       console.log(`\n🚀 Stock Tracker API running on http://localhost:${PORT}`);
       console.log(`📊 Database: ${process.env.DB_NAME || 'StockTracker'}`);

@@ -2705,4 +2705,75 @@ async function applyAutomaticSplitCatchUpForInsertedTransaction(
   void stockTransactionId;
 }
 
+export interface IDailyEodSyncSummary {
+  runDate: string;
+  tickersProcessed: number;
+  pricesInserted: number;
+  splitsDiscovered: number;
+  splitsInserted: number;
+  failedTickers: Array<{ ticker: string; error: string }>;
+}
+
+// Global end-of-day job: stores today's close for every ticker any user holds (plus benchmarks)
+// and checks each ticker for newly announced splits. Safe to re-run; all writes are dedupe-guarded.
+export async function runDailyEodSync(): Promise<IDailyEodSyncSummary> {
+  const pool = getPool();
+  const todayIso = toIsoDate(getUtcTodayDateOnly());
+
+  const tickerRows = await pool.request().query(`SELECT DISTINCT ticker FROM StockTransactions`);
+  const tickers = Array.from(new Set([
+    ...(tickerRows.recordset ?? []).map((row: any) => String(row.ticker || '').toUpperCase()).filter(Boolean),
+    DOW_BENCHMARK_TICKER,
+    NASDAQ_BENCHMARK_TICKER,
+    SP500_BENCHMARK_TICKER,
+  ])).sort();
+
+  const summary: IDailyEodSyncSummary = {
+    runDate: todayIso,
+    tickersProcessed: tickers.length,
+    pricesInserted: 0,
+    splitsDiscovered: 0,
+    splitsInserted: 0,
+    failedTickers: [],
+  };
+
+  const splitLookbackStartIso = toIsoDate(addUtcDays(parseDateOnly(todayIso), -7));
+
+  for (const ticker of tickers) {
+    try {
+      const quotes = await fetchYahooDailyCloses(ticker, todayIso, todayIso);
+      const matched = resolveClosestPriceOnOrBefore(quotes, todayIso);
+
+      if (matched) {
+        const insertResult = await pool.request()
+          .input('ticker', sql.NVarChar, ticker)
+          .input('priceDate', sql.Date, parseDateOnly(todayIso))
+          .input('marketDate', sql.Date, parseDateOnly(matched.marketDate))
+          .input('closePrice', sql.Decimal(18, 8), matched.close)
+          .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
+          .query(`
+            INSERT INTO HistoricalPrices (id, ticker, priceDate, marketDate, closePrice, source)
+            SELECT NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source
+            WHERE NOT EXISTS (
+              SELECT 1 FROM HistoricalPrices
+              WHERE ticker = @ticker AND priceDate = @priceDate AND source = @source
+            );
+          `);
+        summary.pricesInserted += insertResult.rowsAffected?.[0] ?? 0;
+      }
+
+      const splitSummary = await fetchAndPersistMissingSplitsForTicker(pool, '', ticker, splitLookbackStartIso, todayIso);
+      summary.splitsDiscovered += splitSummary.splitsDiscovered;
+      summary.splitsInserted += splitSummary.splitsInserted;
+    } catch (error) {
+      summary.failedTickers.push({
+        ticker,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return summary;
+}
+
 export default router;

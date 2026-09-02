@@ -349,6 +349,29 @@ body {
   gap: 0.35rem;
 }
 
+.live-polling-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--muted-text, #6b7280);
+}
+
+.live-polling-badge-active {
+  color: var(--success-text, #15803d);
+}
+
+.live-polling-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.4;
+}
+
+.live-polling-dot-active {
+  opacity: 1;
+}
+
 .stacked-label {
   display: flex;
   flex-direction: column;
