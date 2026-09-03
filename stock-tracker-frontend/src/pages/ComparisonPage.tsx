@@ -645,8 +645,17 @@ export default function ComparisonPage() {
       {missingPriceWarning ? <div className="panel status status-warning">{missingPriceWarning}</div> : null}
       {success ? <div className="panel status status-success">{success}</div> : null}
 
-      <div className="panel">
-        {chart == null ? (
+      <div className="panel comparison-chart-panel">
+        {loading ? (
+          <div className="comparison-chart-loading">
+            <div className="comparison-spinner" aria-hidden="true">
+              <div className="comparison-spinner-ring" />
+              <div className="comparison-spinner-ring" />
+              <div className="comparison-spinner-ring" />
+            </div>
+            <p>Loading comparison data...</p>
+          </div>
+        ) : chart == null ? (
           <p>No chart data loaded yet.</p>
         ) : (
           <div className="comparison-chart-wrap">

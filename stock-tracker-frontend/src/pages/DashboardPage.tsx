@@ -86,29 +86,39 @@ function formatPercent2(value: number | null | undefined, fallback = '--') {
   return `${value.toFixed(2)}%`
 }
 
-function calculateTargetProximityPercent(
+type TargetDirection = 'buy' | 'sell' | null
+
+function calculateTargetProximity(
   currentPrice: number | null | undefined,
   sellTarget: number | null | undefined,
   buyTarget: number | null | undefined
-): number | null {
+): { percent: number | null; direction: TargetDirection } {
   const current = Number(currentPrice)
   const sell = Number(sellTarget)
   const buy = Number(buyTarget)
-  const ratios: number[] = []
 
-  if (Number.isFinite(current) && current > 0 && Number.isFinite(sell) && sell > 0) {
-    ratios.push(current / sell)
+  const sellRatio = Number.isFinite(current) && current > 0 && Number.isFinite(sell) && sell > 0
+    ? (current / sell) * 100
+    : null
+  const buyRatio = Number.isFinite(current) && current > 0 && Number.isFinite(buy) && buy > 0
+    ? (buy / current) * 100
+    : null
+
+  if (sellRatio == null && buyRatio == null) {
+    return { percent: null, direction: null }
   }
 
-  if (Number.isFinite(current) && current > 0 && Number.isFinite(buy) && buy > 0) {
-    ratios.push(buy / current)
+  if (sellRatio == null) {
+    return { percent: buyRatio, direction: 'buy' }
   }
 
-  if (ratios.length === 0) {
-    return null
+  if (buyRatio == null) {
+    return { percent: sellRatio, direction: 'sell' }
   }
 
-  return Math.max(...ratios) * 100
+  return sellRatio >= buyRatio
+    ? { percent: sellRatio, direction: 'sell' }
+    : { percent: buyRatio, direction: 'buy' }
 }
 
 function toDateOnly(value: string): string {
@@ -231,8 +241,8 @@ export default function DashboardPage() {
   const [updatingPrices, setUpdatingPrices] = useState(false)
   const [isLivePollingActive, setIsLivePollingActive] = useState(false)
   const [currentPricesByTicker, setCurrentPricesByTicker] = useState<Record<string, number>>({})
-  const [holdingsSortColumn, setHoldingsSortColumn] = useState<HoldingsSortColumn>('ticker')
-  const [holdingsSortDirection, setHoldingsSortDirection] = useState<'asc' | 'desc'>('asc')
+  const [holdingsSortColumn, setHoldingsSortColumn] = useState<HoldingsSortColumn>('targetProximityPercent')
+  const [holdingsSortDirection, setHoldingsSortDirection] = useState<'asc' | 'desc'>('desc')
 
   function normalizePositivePercent(value: unknown, fallback: number): number {
     const parsed = Number(value)
@@ -552,6 +562,12 @@ export default function DashboardPage() {
         ? null
         : performance + Number(snapshot.realizedSalesPerformanceByTicker[row.ticker] ?? 0)
 
+      const targetProximity = calculateTargetProximity(
+        hydrated?.latestPrice ?? null,
+        saleTargetsByTicker[row.ticker] ?? null,
+        buyTargetsByTicker[row.ticker] ?? null
+      )
+
       return {
         ticker: row.ticker,
         totalShares: hydrated?.totalShares ?? row.totalShares,
@@ -559,11 +575,8 @@ export default function DashboardPage() {
         marketValue: hydrated?.marketValue ?? null,
         costBasis,
         gainLoss,
-        targetProximityPercent: calculateTargetProximityPercent(
-          hydrated?.latestPrice ?? null,
-          saleTargetsByTicker[row.ticker] ?? null,
-          buyTargetsByTicker[row.ticker] ?? null
-        ),
+        targetProximityPercent: targetProximity.percent,
+        targetDirection: targetProximity.direction,
         lotCount: Number(displayLotCountsByTicker[row.ticker] ?? snapshot.lotCountByTicker[row.ticker] ?? row.lotCount),
       }
     })
@@ -1006,9 +1019,9 @@ export default function DashboardPage() {
       {data ? (
         <>
           <div className="panel stat-grid">
-            <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(snapshot.availableCash)}</div></div>
-            <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedHoldingsMarketValue)}</div></div>
             <div className="stat"><div className="label">Portfolio Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedPortfolioValue)}</div></div>
+            <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedHoldingsMarketValue)}</div></div>
+            <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(snapshot.availableCash)}</div></div>
           </div>
 
           <div className="panel">
@@ -1018,12 +1031,12 @@ export default function DashboardPage() {
               <thead>
                 <tr>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('ticker')}>Ticker{getHoldingsSortIndicator('ticker')}</th>
-                  <th>Total Shares</th>
                   <th>Price</th>
+                  <th>Total Shares</th>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('marketValue')}>Market Value{getHoldingsSortIndicator('marketValue')}</th>
-                  <th className="sortable-header" onClick={() => handleHoldingsSort('targetProximityPercent')}>Target %{getHoldingsSortIndicator('targetProximityPercent')}</th>
                   <th>Gain/Loss</th>
                   <th>Buy Target</th>
+                  <th className="sortable-header" onClick={() => handleHoldingsSort('targetProximityPercent')}>Target %{getHoldingsSortIndicator('targetProximityPercent')}</th>
                   <th>Sale Target</th>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('lotCount')}>Lots{getHoldingsSortIndicator('lotCount')}</th>
                 </tr>
@@ -1036,7 +1049,6 @@ export default function DashboardPage() {
                         {row.ticker}
                       </Link>
                     </td>
-                    <td>{formatShares(row.totalShares)}</td>
                     <td>
                       {holdingsLoading && row.latestPrice == null ? (
                         <span className="table-skeleton table-skeleton-sm" aria-label="Loading price" />
@@ -1044,18 +1056,12 @@ export default function DashboardPage() {
                         formatStockPrice4(row.latestPrice)
                       )}
                     </td>
+                    <td>{formatShares(row.totalShares)}</td>
                     <td>
                       {holdingsLoading && row.marketValue == null ? (
                         <span className="table-skeleton table-skeleton-md" aria-label="Loading market value" />
                       ) : (
                         formatCurrency2(row.marketValue)
-                      )}
-                    </td>
-                    <td>
-                      {holdingsLoading && row.targetProximityPercent == null ? (
-                        <span className="table-skeleton table-skeleton-sm" aria-label="Loading target percent" />
-                      ) : (
-                        formatPercent2(row.targetProximityPercent)
                       )}
                     </td>
                     <td className={getPerformanceClassName(row.gainLoss)}>{formatCurrency2(row.gainLoss)}</td>
@@ -1064,6 +1070,35 @@ export default function DashboardPage() {
                         <span className="table-skeleton table-skeleton-sm" aria-label="Loading buy target" />
                       ) : (
                         formatStockPrice4(buyTargetsByTicker[row.ticker] ?? null)
+                      )}
+                    </td>
+                    <td>
+                      {holdingsLoading && row.targetProximityPercent == null ? (
+                        <span className="table-skeleton table-skeleton-sm" aria-label="Loading target percent" />
+                      ) : row.targetProximityPercent == null ? (
+                        formatPercent2(null)
+                      ) : (
+                        <div
+                          className={`target-proximity target-proximity-${row.targetDirection ?? 'neutral'}${row.targetProximityPercent >= 100 ? ' target-proximity-hit' : ''}`}
+                          title={row.targetDirection === 'sell' ? 'Approaching sale target' : row.targetDirection === 'buy' ? 'Approaching buy target' : undefined}
+                        >
+                          <span className="target-proximity-arrow" aria-hidden="true">
+                            {row.targetDirection === 'sell' ? '\u25B2' : row.targetDirection === 'buy' ? '\u25BC' : ''}
+                          </span>
+                          <span className="target-proximity-track">
+                            <span
+                              className="target-proximity-fill"
+                              style={{
+                                width: `${
+                                  row.targetDirection === 'buy'
+                                    ? Math.min(100, Math.max(0, 100 - row.targetProximityPercent))
+                                    : Math.min(100, Math.max(0, row.targetProximityPercent))
+                                }%`,
+                              }}
+                            />
+                          </span>
+                          <span className="target-proximity-value">{formatPercent2(row.targetProximityPercent)}</span>
+                        </div>
                       )}
                     </td>
                     <td>

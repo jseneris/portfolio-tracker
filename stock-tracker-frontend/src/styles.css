@@ -647,6 +647,141 @@ body {
   }
 }
 
+.target-proximity {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 120px;
+}
+
+.target-proximity-arrow {
+  font-size: 0.7rem;
+  line-height: 1;
+  width: 0.8rem;
+  text-align: center;
+}
+
+.target-proximity-track {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  min-width: 56px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.target-proximity-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #94a3b8;
+  transition: width 0.2s ease;
+}
+
+.target-proximity-value {
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  color: #334155;
+  min-width: 3.2rem;
+}
+
+.target-proximity-buy .target-proximity-arrow {
+  color: #dc2626;
+}
+
+.target-proximity-buy .target-proximity-fill {
+  background: #ef4444;
+}
+
+.target-proximity-sell .target-proximity-arrow {
+  color: #16a34a;
+}
+
+.target-proximity-sell .target-proximity-fill {
+  background: #22c55e;
+}
+
+.target-proximity-hit .target-proximity-value {
+  font-weight: 700;
+}
+
+.target-proximity-hit.target-proximity-buy .target-proximity-fill {
+  background: #dc2626;
+  box-shadow: 0 0 0 1px #dc2626 inset;
+}
+
+.target-proximity-hit.target-proximity-sell .target-proximity-fill {
+  background: #16a34a;
+  box-shadow: 0 0 0 1px #16a34a inset;
+}
+
+.target-proximity-hit .target-proximity-value {
+  color: inherit;
+}
+
+.target-proximity-hit.target-proximity-buy .target-proximity-value {
+  color: #dc2626;
+}
+
+.target-proximity-hit.target-proximity-sell .target-proximity-value {
+  color: #16a34a;
+}
+
+.comparison-chart-panel {
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+}
+
+.comparison-chart-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 3rem 0;
+  color: #475569;
+}
+
+.comparison-spinner {
+  position: relative;
+  width: 64px;
+  height: 64px;
+}
+
+.comparison-spinner-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  border: 4px solid transparent;
+  border-top-color: #16a34a;
+  animation: comparison-spinner-spin 1.1s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+.comparison-spinner-ring:nth-child(2) {
+  inset: 8px;
+  border-top-color: #0ea5e9;
+  animation-duration: 1.4s;
+  animation-direction: reverse;
+}
+
+.comparison-spinner-ring:nth-child(3) {
+  inset: 16px;
+  border-top-color: #f59e0b;
+  animation-duration: 0.9s;
+}
+
+@keyframes comparison-spinner-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
 @media (max-width: 640px) {
   .app-header {
     flex-direction: column;
