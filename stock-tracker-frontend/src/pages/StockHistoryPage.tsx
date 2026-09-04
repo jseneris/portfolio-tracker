@@ -1,6 +1,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import {
+  CompanyProfile,
   CreateStockInput,
   DisplayLot,
   PurchaseLot,
@@ -14,14 +15,18 @@ import {
   deleteStockTransaction,
   emitPortfolioUpdated,
   getCashSummary,
+  getCurrentPrices,
   getDisplayLotsByTicker,
   getHistoricalPrices,
   getOpenPurchaseLots,
   getPurchaseLotsByTicker,
   getSaleAllocations,
+  getSaleAllocationsByTransactionIds,
+  getStockProfileByTicker,
   getStockSplitsByTicker,
   getStockSummaryByTicker,
   getStockTransactionsByTicker,
+  setInitialPurchaseFlag,
 } from '../api'
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
 
@@ -55,6 +60,13 @@ function formatNumber(value: number | null, digits = 6) {
     return '--'
   }
   return Number(value).toFixed(digits)
+}
+
+function formatPercent2(value: number | null) {
+  if (value == null || Number.isNaN(Number(value))) {
+    return '--'
+  }
+  return `${Number(value).toFixed(2)}%`
 }
 
 function formatDate(value: string) {
@@ -164,14 +176,50 @@ type DisplayLotEntry = {
   createdAt: string
 }
 
+type TransactionBreakdown = {
+  buyCount: number
+  buyAmount: number
+  sellCount: number
+  sellAmount: number
+  divCount: number
+  divAmount: number
+}
+
+function buildEmptyBreakdown(): TransactionBreakdown {
+  return { buyCount: 0, buyAmount: 0, sellCount: 0, sellAmount: 0, divCount: 0, divAmount: 0 }
+}
+
+function accumulateBreakdown(breakdown: TransactionBreakdown, transaction: StockTransaction) {
+  const type = String(transaction.type || '').toLowerCase()
+  const amount = Number(transaction.amount)
+  const safeAmount = Number.isFinite(amount) ? amount : 0
+
+  if (type === 'buy') {
+    breakdown.buyCount += 1
+    breakdown.buyAmount += safeAmount
+  } else if (type === 'sell') {
+    breakdown.sellCount += 1
+    breakdown.sellAmount += safeAmount
+  } else if (type === 'div') {
+    breakdown.divCount += 1
+    breakdown.divAmount += safeAmount
+  }
+}
+
 export default function StockHistoryPage() {
   const { ticker: tickerParam } = useParams<{ ticker: string }>()
   const ticker = useMemo(() => decodeURIComponent(tickerParam ?? '').trim().toUpperCase(), [tickerParam])
   const [summary, setSummary] = useState<TickerSummary | null>(null)
   const [transactions, setTransactions] = useState<StockTransaction[]>([])
+  const [allTickerTransactions, setAllTickerTransactions] = useState<StockTransaction[]>([])
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null)
   const [form, setForm] = useState<StockFormState>(EMPTY_STOCK_FORM)
   const [showAddTransactionModal, setShowAddTransactionModal] = useState(false)
   const [showLotsModal, setShowLotsModal] = useState(false)
+  const [showInitialPurchaseModal, setShowInitialPurchaseModal] = useState(false)
+  const [initialPurchaseSelections, setInitialPurchaseSelections] = useState<Record<string, boolean>>({})
+  const [savingInitialPurchases, setSavingInitialPurchases] = useState(false)
+  const [initialPurchaseError, setInitialPurchaseError] = useState<string | null>(null)
   const [availableLots, setAvailableLots] = useState<PurchaseLot[]>([])
   const [openLots, setOpenLots] = useState<PurchaseLot[]>([])
   const [displayLots, setDisplayLots] = useState<DisplayLot[]>([])
@@ -185,6 +233,7 @@ export default function StockHistoryPage() {
   const [showOriginalPreSplit, setShowOriginalPreSplit] = useState(false)
   const [availableCash, setAvailableCash] = useState<number | null>(null)
   const [latestHistoricalPrice, setLatestHistoricalPrice] = useState<number | null>(null)
+  const [livePrice, setLivePrice] = useState<number | null>(null)
   const [sellLotsSource, setSellLotsSource] = useState<PurchaseLot[]>([])
   const [loadingAllocations, setLoadingAllocations] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -320,43 +369,53 @@ export default function StockHistoryPage() {
   const displayLotShareDelta = totalDisplayLotShares - totalOpenPurchaseShares
   const displayLotsOutOfSync = Math.abs(displayLotShareDelta) > ALLOCATION_TOLERANCE
 
+  const effectivePrice = livePrice ?? latestHistoricalPrice
+
   const currentValue = useMemo(() => {
-    if (!summary || latestHistoricalPrice == null) {
+    if (!summary || effectivePrice == null) {
       return null
     }
 
     const totalShares = Number(summary.totalShares)
-    const latestPrice = Number(latestHistoricalPrice)
+    const latestPrice = Number(effectivePrice)
 
     if (!Number.isFinite(totalShares) || !Number.isFinite(latestPrice)) {
       return null
     }
 
     return totalShares * latestPrice
-  }, [summary, latestHistoricalPrice])
+  }, [summary, effectivePrice])
 
-  const costBasisExcludingDividends = useMemo(() => {
-    return openLots.reduce((sum, lot) => {
-      const remaining = Number(lot.remainingQuantity)
-      const unitCost = Number(lot.unitCost)
-      if (!Number.isFinite(remaining) || !Number.isFinite(unitCost)) {
+  const costBasis = useMemo(() => {
+    return allTickerTransactions.reduce((sum, transaction) => {
+      const amount = Number(transaction.amount)
+      if (!Number.isFinite(amount)) {
         return sum
       }
-      return sum + (remaining * unitCost)
+
+      if (transaction.type === 'buy' || transaction.type === 'div') {
+        return sum + amount
+      }
+
+      if (transaction.type === 'sell') {
+        return sum - amount
+      }
+
+      return sum
     }, 0)
-  }, [openLots])
+  }, [allTickerTransactions])
 
   const summaryPerformance = useMemo(() => {
     if (currentValue == null) {
       return null
     }
 
-    return currentValue - costBasisExcludingDividends
-  }, [currentValue, costBasisExcludingDividends])
+    return currentValue - costBasis
+  }, [currentValue, costBasis])
 
   const salesSummary = useMemo(() => {
     const activeShares = Number(summary?.totalShares)
-    const latestPrice = Number(latestHistoricalPrice)
+    const latestPrice = Number(effectivePrice)
 
     const salesCostBasis = transactions
       .filter((transaction) => transaction.type === 'sell')
@@ -405,7 +464,99 @@ export default function StockHistoryPage() {
       exhaustedPurchaseLotsCostBasis,
       performance,
     }
-  }, [summary, latestHistoricalPrice, transactions, saleAllocations, openLots])
+  }, [summary, effectivePrice, transactions, saleAllocations, openLots])
+
+  const performanceBreakdown = useMemo(() => {
+    const overall = buildEmptyBreakdown()
+    const byYear = new Map<number, TransactionBreakdown>()
+
+    for (const transaction of allTickerTransactions) {
+      const date = new Date(transaction.transactionDate)
+      if (Number.isNaN(date.getTime())) {
+        continue
+      }
+
+      accumulateBreakdown(overall, transaction)
+
+      const year = date.getUTCFullYear()
+      const yearBreakdown = byYear.get(year) ?? buildEmptyBreakdown()
+      accumulateBreakdown(yearBreakdown, transaction)
+      byYear.set(year, yearBreakdown)
+    }
+
+    const years = Array.from(byYear.keys())
+      .sort((a, b) => b - a)
+      .map((year) => ({ year, ...byYear.get(year)! }))
+
+    return { overall, years }
+  }, [allTickerTransactions])
+
+  const initialPurchasePerformance = useMemo(() => {
+    const initialPurchaseTransactions = allTickerTransactions.filter(
+      (transaction) => transaction.type === 'buy' && transaction.isInitialPurchase
+    )
+
+    if (initialPurchaseTransactions.length === 0) {
+      return null
+    }
+
+    const splitTimeline = splitEvents
+      .filter((split) => split.isActive !== false)
+      .map((split) => ({
+        day: toUtcDayTimestamp(split.splitDate),
+        multiplier: Number(split.multiplier),
+      }))
+      .filter((entry) => Number.isFinite(entry.day) && Number.isFinite(entry.multiplier) && entry.multiplier > 0)
+
+    let totalShares = 0
+    let totalCost = 0
+
+    for (const transaction of initialPurchaseTransactions) {
+      const transactionDay = toUtcDayTimestamp(transaction.transactionDate)
+      let cumulativeMultiplier = 1
+
+      if (Number.isFinite(transactionDay)) {
+        for (const split of splitTimeline) {
+          if (transactionDay <= split.day) {
+            cumulativeMultiplier *= split.multiplier
+          }
+        }
+      }
+
+      const quantity = Number(transaction.quantity)
+      const price = Number(transaction.price)
+      if (!Number.isFinite(quantity) || !Number.isFinite(price)) {
+        continue
+      }
+
+      totalShares += quantity * cumulativeMultiplier
+      totalCost += quantity * price
+    }
+
+    const latestPrice = Number(effectivePrice)
+    const currentValue = Number.isFinite(latestPrice) ? totalShares * latestPrice : null
+    const performance = currentValue == null ? null : currentValue - totalCost
+    const returnPercent = performance == null || totalCost <= ALLOCATION_TOLERANCE
+      ? null
+      : (performance / totalCost) * 100
+
+    return {
+      count: initialPurchaseTransactions.length,
+      totalShares,
+      totalCost,
+      currentValue,
+      performance,
+      returnPercent,
+    }
+  }, [allTickerTransactions, splitEvents, effectivePrice])
+
+  const summaryReturnPercent = useMemo(() => {
+    if (!initialPurchasePerformance || initialPurchasePerformance.totalCost <= ALLOCATION_TOLERANCE || summaryPerformance == null) {
+      return null
+    }
+
+    return (summaryPerformance / initialPurchasePerformance.totalCost) * 100
+  }, [summaryPerformance, initialPurchasePerformance])
 
   const transactionTimeline = useMemo(() => {
     type TimelineEntry =
@@ -682,6 +833,18 @@ export default function StockHistoryPage() {
       setSummary(tickerSummaryData)
       setSaleAllocations({})
 
+      const sellTransactionIds = txData
+        .filter((transaction) => transaction.type === 'sell')
+        .map((transaction) => transaction.id)
+
+      if (sellTransactionIds.length > 0) {
+        getSaleAllocationsByTransactionIds(sellTransactionIds)
+          .then((allocationsByTransactionId) => setSaleAllocations(allocationsByTransactionId))
+          .catch(() => {
+            // Cost basis falls back to per-lot totals if allocation history fails to preload.
+          })
+      }
+
       const openBuyTransactionIds = new Set(
         tickerLots
           .filter((lot) => lot.sourceType === 'purchase')
@@ -705,6 +868,7 @@ export default function StockHistoryPage() {
       })
 
       setTransactions(visibleTransactions)
+      setAllTickerTransactions(txData)
       setDisplayLots(displayLotsData)
       setAvailableCash(Number(cashSummaryData.availableCash))
       setSellLotsSource(tickerLots)
@@ -744,6 +908,31 @@ export default function StockHistoryPage() {
     }
 
     loadTransactions()
+  }, [ticker])
+
+  useEffect(() => {
+    if (!ticker) {
+      setCompanyProfile(null)
+      return
+    }
+
+    let cancelled = false
+
+    getStockProfileByTicker(ticker)
+      .then((profile) => {
+        if (!cancelled) {
+          setCompanyProfile(profile)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setCompanyProfile(null)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [ticker])
 
   useEffect(() => {
@@ -794,6 +983,35 @@ export default function StockHistoryPage() {
       cancelled = true
     }
   }, [ticker])
+
+  useEffect(() => {
+    if (!ticker) {
+      setLivePrice(null)
+      return
+    }
+
+    let cancelled = false
+
+    getCurrentPrices([ticker])
+      .then((result) => {
+        if (cancelled) {
+          return
+        }
+        const match = result.prices.find((row) => String(row.ticker || '').toUpperCase() === ticker)
+        const price = Number(match?.price)
+        setLivePrice(Number.isFinite(price) && price > 0 ? price : null)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setLivePrice(null)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [ticker])
+
 
   useEffect(() => {
     if (!isSell || !showAddTransactionModal || !ticker) {
@@ -1001,6 +1219,50 @@ export default function StockHistoryPage() {
     setShowLotsModal(true)
   }
 
+  const buyTransactionsAscending = useMemo(() => {
+    return allTickerTransactions
+      .filter((transaction) => transaction.type === 'buy')
+      .sort((a, b) => new Date(a.transactionDate).getTime() - new Date(b.transactionDate).getTime())
+  }, [allTickerTransactions])
+
+  function openInitialPurchaseModal() {
+    setInitialPurchaseError(null)
+    setInitialPurchaseSelections(
+      Object.fromEntries(buyTransactionsAscending.map((transaction) => [transaction.id, Boolean(transaction.isInitialPurchase)]))
+    )
+    setShowInitialPurchaseModal(true)
+  }
+
+  function toggleInitialPurchaseSelection(transactionId: string) {
+    setInitialPurchaseSelections((previous) => ({
+      ...previous,
+      [transactionId]: !previous[transactionId],
+    }))
+  }
+
+  async function onSaveInitialPurchases() {
+    setSavingInitialPurchases(true)
+    setInitialPurchaseError(null)
+    try {
+      const changedTransactions = buyTransactionsAscending.filter(
+        (transaction) => Boolean(transaction.isInitialPurchase) !== Boolean(initialPurchaseSelections[transaction.id])
+      )
+
+      await Promise.all(
+        changedTransactions.map((transaction) =>
+          setInitialPurchaseFlag(transaction.id, Boolean(initialPurchaseSelections[transaction.id]))
+        )
+      )
+
+      await loadTransactions()
+      setShowInitialPurchaseModal(false)
+    } catch (err: unknown) {
+      setInitialPurchaseError(err instanceof Error ? err.message : 'Unable to update initial purchases.')
+    } finally {
+      setSavingInitialPurchases(false)
+    }
+  }
+
   function updateDisplayLotInput(index: number, value: string) {
     setDisplayLotInputs((previous) => previous.map((quantity, inputIndex) => inputIndex === index ? value : quantity))
   }
@@ -1034,10 +1296,21 @@ export default function StockHistoryPage() {
         <div>
           <h2>{ticker || 'Ticker'} Transaction History</h2>
           <p>All stock transactions recorded for this ticker.</p>
+          {companyProfile ? (
+            <p className="hint">
+              {companyProfile.companyName ?? ticker}
+              {companyProfile.sector ? ` \u00b7 ${companyProfile.sector}` : ''}
+              {companyProfile.industry ? ` \u00b7 ${companyProfile.industry}` : ''}
+              {companyProfile.sizeClassification ? ` \u00b7 ${companyProfile.sizeClassification}` : ''}
+            </p>
+          ) : null}
         </div>
         <div className="inline-actions">
           <button className="button button-primary" type="button" onClick={openAddTransactionModal} disabled={!ticker}>
             Add Transaction
+          </button>
+          <button className="button" type="button" onClick={openInitialPurchaseModal} disabled={!ticker || buyTransactionsAscending.length === 0}>
+            Mark Initial Purchases
           </button>
           <Link className="button" to="/">
             Back to Dashboard
@@ -1074,9 +1347,12 @@ export default function StockHistoryPage() {
               <div className="value">{displayLotSummary}</div>
               <div className="hint">click to manage</div>
             </button>
-            <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatCurrency2(costBasisExcludingDividends)}</div></div>
+            <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatCurrency2(costBasis)}</div></div>
             <div className="stat"><div className="label">Current Value</div><div className="value">{formatCurrency2(currentValue)}</div></div>
             <div className="stat"><div className="label">Performance</div><div className={getPerformanceClassName(summaryPerformance)}>{formatCurrency2(summaryPerformance)}</div></div>
+            {summaryReturnPercent != null ? (
+              <div className="stat"><div className="label">Return %</div><div className={getPerformanceClassName(summaryPerformance)}>{formatPercent2(summaryReturnPercent)}</div></div>
+            ) : null}
           </div>
 
           {salesSummary.saleCount > 0 ? (
@@ -1086,6 +1362,55 @@ export default function StockHistoryPage() {
               <div className="stat"><div className="label">Sales Performance</div><div className={getPerformanceClassName(salesSummary.performance)}>{formatCurrency2(salesSummary.performance)}</div></div>
             </div>
           ) : null}
+
+          {initialPurchasePerformance ? (
+            <div className="panel stat-grid" style={{ marginTop: '0.75rem' }}>
+              <div className="stat"><div className="label">Initial Buy Shares ({initialPurchasePerformance.count})</div><div className="value">{formatNumber(initialPurchasePerformance.totalShares, 6)}</div></div>
+              <div className="stat"><div className="label">Initial Buy Cost Basis</div><div className="value">{formatCurrency2(initialPurchasePerformance.totalCost)}</div></div>
+              <div className="stat"><div className="label">Initial Buy Current Value</div><div className="value">{formatCurrency2(initialPurchasePerformance.currentValue)}</div></div>
+              <div className="stat"><div className="label">Initial Buy Performance</div><div className={getPerformanceClassName(initialPurchasePerformance.performance)}>{formatCurrency2(initialPurchasePerformance.performance)}</div></div>
+              <div className="stat"><div className="label">Initial Buy Return %</div><div className={getPerformanceClassName(initialPurchasePerformance.performance)}>{formatPercent2(initialPurchasePerformance.returnPercent)}</div></div>
+            </div>
+          ) : null}
+
+          <div className="panel" style={{ marginTop: '0.75rem' }}>
+            <h3 style={{ marginTop: 0 }}>Performance Breakdown</h3>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Period</th>
+                  <th>Buys</th>
+                  <th>Buy Amount</th>
+                  <th>Sales</th>
+                  <th>Sale Amount</th>
+                  <th>Dividends</th>
+                  <th>Dividend Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>All Time</td>
+                  <td>{performanceBreakdown.overall.buyCount}</td>
+                  <td>{formatCurrency2(performanceBreakdown.overall.buyAmount)}</td>
+                  <td>{performanceBreakdown.overall.sellCount}</td>
+                  <td>{formatCurrency2(performanceBreakdown.overall.sellAmount)}</td>
+                  <td>{performanceBreakdown.overall.divCount}</td>
+                  <td>{formatCurrency2(performanceBreakdown.overall.divAmount)}</td>
+                </tr>
+                {performanceBreakdown.years.map((row) => (
+                  <tr key={row.year}>
+                    <td>{row.year}</td>
+                    <td>{row.buyCount}</td>
+                    <td>{formatCurrency2(row.buyAmount)}</td>
+                    <td>{row.sellCount}</td>
+                    <td>{formatCurrency2(row.sellAmount)}</td>
+                    <td>{row.divCount}</td>
+                    <td>{formatCurrency2(row.divAmount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           {splitEvents.length > 0 ? (
             <div className="panel" style={{ marginTop: '0.75rem' }}>
@@ -1579,6 +1904,67 @@ export default function StockHistoryPage() {
                   </button>
                 </>
               ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showInitialPurchaseModal ? (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="initial-purchase-modal-title">
+          <div className="modal-card">
+            <div className="row-between">
+              <h3 id="initial-purchase-modal-title">Initial Purchases — {ticker}</h3>
+              <button className="button" type="button" onClick={() => setShowInitialPurchaseModal(false)} disabled={savingInitialPurchases}>
+                Close
+              </button>
+            </div>
+            <p>Select the buy transactions that should count as initial purchases, ordered oldest to newest.</p>
+
+            {initialPurchaseError ? <div className="status status-error">{initialPurchaseError}</div> : null}
+
+            {buyTransactionsAscending.length === 0 ? (
+              <p>No buy transactions exist yet for {ticker}.</p>
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Quantity</th>
+                    <th>Price</th>
+                    <th>Amount</th>
+                    <th>Initial Purchase</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {buyTransactionsAscending.map((transaction) => (
+                    <tr key={transaction.id}>
+                      <td>{formatDate(transaction.transactionDate)}</td>
+                      <td>{formatNumber(transaction.quantity, 6)}</td>
+                      <td>{formatStockPrice4(transaction.price)}</td>
+                      <td>{formatCurrency2(transaction.amount)}</td>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(initialPurchaseSelections[transaction.id])}
+                          onChange={() => toggleInitialPurchaseSelection(transaction.id)}
+                          disabled={savingInitialPurchases}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            <div className="form-actions">
+              <button
+                className="button button-primary"
+                type="button"
+                onClick={onSaveInitialPurchases}
+                disabled={savingInitialPurchases || buyTransactionsAscending.length === 0}
+              >
+                {savingInitialPurchases ? 'Saving...' : 'Save'}
+              </button>
             </div>
           </div>
         </div>

@@ -62,6 +62,7 @@ export type StockTransaction = {
   isDeletionLocked?: boolean
   exchangeSourceQuantity?: number
   isExchangeGenerated?: boolean
+  isInitialPurchase?: boolean
   createdAt?: string
   updatedAt?: string
 }
@@ -233,8 +234,19 @@ export type HistoricalPrice = {
 export type CurrentPrice = {
   ticker: string
   price: number
+  changePercent: number | null
   source: string
   asOf: string
+}
+
+export type CompanyProfile = {
+  ticker: string
+  companyName: string | null
+  sector: string | null
+  industry: string | null
+  marketCap: number | null
+  sizeClassification: string | null
+  source: string
 }
 
 export type CurrentPricesResponse = {
@@ -386,6 +398,10 @@ export async function getStockSummaryByTicker(ticker: string): Promise<TickerSum
   return requestApi<TickerSummary>(`/api/stocks/${encodeURIComponent(ticker)}/summary`)
 }
 
+export async function getStockProfileByTicker(ticker: string): Promise<CompanyProfile> {
+  return requestApi<CompanyProfile>(`/api/stocks/${encodeURIComponent(ticker)}/profile`)
+}
+
 export async function createStockTransaction(payload: CreateStockInput): Promise<StockTransaction> {
   return requestApi<StockTransaction>('/api/stocks', {
     method: 'POST',
@@ -395,6 +411,13 @@ export async function createStockTransaction(payload: CreateStockInput): Promise
 
 export async function deleteStockTransaction(id: string): Promise<void> {
   return requestApi<void>(`/api/stocks/${id}`, { method: 'DELETE' })
+}
+
+export async function setInitialPurchaseFlag(id: string, isInitialPurchase: boolean): Promise<{ id: string; isInitialPurchase: boolean }> {
+  return requestApi<{ id: string; isInitialPurchase: boolean }>(`/api/stocks/${id}/initial-purchase`, {
+    method: 'PUT',
+    body: { isInitialPurchase },
+  })
 }
 
 export async function getSaleAllocations(transactionId: string): Promise<SaleAllocation[]> {

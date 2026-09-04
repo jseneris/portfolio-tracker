@@ -15,6 +15,7 @@ const DOW_BENCHMARK_TICKER = '^DJI';
 const NASDAQ_BENCHMARK_TICKER = '^IXIC';
 const SP500_BENCHMARK_TICKER = '^GSPC';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const COMPANY_PROFILE_CACHE_MS = 30 * 24 * 60 * 60 * 1000; // refresh cached company profiles after 30 days
 
 interface IAllocation {
   lotId: string;
@@ -55,6 +56,7 @@ interface IPricePoint {
 interface ICurrentPricePoint {
   ticker: string;
   price: number;
+  changePercent: number | null;
   source: string;
   asOf: string;
 }
@@ -105,6 +107,41 @@ interface IComparisonPoint {
   sp500BenchmarkValue: number;
   sp500BenchmarkShares: number;
   missingTickers: string[];
+}
+
+interface ICompanyProfile {
+  ticker: string;
+  companyName: string | null;
+  sector: string | null;
+  industry: string | null;
+  marketCap: number | null;
+  sizeClassification: string | null;
+  source: string;
+}
+
+function classifyCompanySize(marketCap: number | null): string | null {
+  if (marketCap == null || !Number.isFinite(marketCap) || marketCap <= 0) {
+    return null;
+  }
+
+  if (marketCap >= 200_000_000_000) return 'Mega Cap';
+  if (marketCap >= 10_000_000_000) return 'Large Cap';
+  if (marketCap >= 2_000_000_000) return 'Mid Cap';
+  if (marketCap >= 300_000_000) return 'Small Cap';
+  if (marketCap >= 50_000_000) return 'Micro Cap';
+  return 'Nano Cap';
+}
+
+function mapCompanyProfileRow(row: any): ICompanyProfile {
+  return {
+    ticker: String(row.ticker || '').toUpperCase(),
+    companyName: row.companyName ?? null,
+    sector: row.sector ?? null,
+    industry: row.industry ?? null,
+    marketCap: row.marketCap != null ? Number(row.marketCap) : null,
+    sizeClassification: row.sizeClassification ?? null,
+    source: String(row.source || HISTORICAL_PRICE_SOURCE),
+  };
 }
 
 function parseDisplayLotsCsv(lotsCsv: string): number[] {
@@ -646,9 +683,12 @@ router.post('/current-prices', async (req: Request, res: Response) => {
           continue;
         }
 
+        const changePercent = Number(quote?.regularMarketChangePercent);
+
         prices.push({
           ticker,
           price,
+          changePercent: Number.isFinite(changePercent) ? changePercent : null,
           source: 'yahoo-finance',
           asOf: new Date().toISOString(),
         });
@@ -1004,6 +1044,86 @@ router.get('/:ticker/summary', async (req: Request, res: Response) => {
       numberOfLots: lot.numberOfLots || 0,
       costBasis: lot.costBasis || 0
     });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// GET cached company profile (name/sector/industry/size), refreshed from Yahoo when stale.
+router.get('/:ticker/profile', async (req: Request, res: Response) => {
+  try {
+    const normalizedTicker = String(req.params.ticker || '').trim().toUpperCase();
+    if (!normalizedTicker) {
+      return res.status(400).json({ error: 'Ticker is required.' });
+    }
+
+    const pool = getPool();
+    const cached = await pool.request()
+      .input('ticker', sql.NVarChar, normalizedTicker)
+      .query(`
+        SELECT ticker, companyName, sector, industry, marketCap, sizeClassification, source, updatedAt
+        FROM CompanyProfiles
+        WHERE ticker = @ticker
+      `);
+
+    const cachedRow = cached.recordset[0];
+    const isStale = !cachedRow || (Date.now() - new Date(cachedRow.updatedAt).getTime()) > COMPANY_PROFILE_CACHE_MS;
+
+    if (!isStale) {
+      return res.json(mapCompanyProfileRow(cachedRow));
+    }
+
+    try {
+      const quoteSummary = await yahooFinance.quoteSummary(normalizedTicker, {
+        modules: ['price', 'summaryProfile'],
+      }) as any;
+
+      const companyName = String(quoteSummary?.price?.longName || quoteSummary?.price?.shortName || normalizedTicker);
+      const sector = quoteSummary?.summaryProfile?.sector ? String(quoteSummary.summaryProfile.sector) : null;
+      const industry = quoteSummary?.summaryProfile?.industry ? String(quoteSummary.summaryProfile.industry) : null;
+      const marketCapValue = Number(quoteSummary?.price?.marketCap);
+      const marketCap = Number.isFinite(marketCapValue) && marketCapValue > 0 ? marketCapValue : null;
+      const sizeClassification = classifyCompanySize(marketCap);
+
+      await pool.request()
+        .input('ticker', sql.NVarChar, normalizedTicker)
+        .input('companyName', sql.NVarChar, companyName)
+        .input('sector', sql.NVarChar, sector)
+        .input('industry', sql.NVarChar, industry)
+        .input('marketCap', sql.Decimal(20, 2), marketCap)
+        .input('sizeClassification', sql.NVarChar, sizeClassification)
+        .query(`
+          MERGE CompanyProfiles AS target
+          USING (SELECT @ticker AS ticker) AS source
+          ON target.ticker = source.ticker
+          WHEN MATCHED THEN UPDATE SET
+            companyName = @companyName,
+            sector = @sector,
+            industry = @industry,
+            marketCap = @marketCap,
+            sizeClassification = @sizeClassification,
+            source = 'yahoo-finance',
+            updatedAt = GETUTCDATE()
+          WHEN NOT MATCHED THEN INSERT (ticker, companyName, sector, industry, marketCap, sizeClassification, source)
+            VALUES (@ticker, @companyName, @sector, @industry, @marketCap, @sizeClassification, 'yahoo-finance');
+        `);
+
+      return res.json({
+        ticker: normalizedTicker,
+        companyName,
+        sector,
+        industry,
+        marketCap,
+        sizeClassification,
+        source: 'yahoo-finance',
+      });
+    } catch (fetchError) {
+      if (cachedRow) {
+        // Serve stale cache rather than failing when Yahoo is unavailable.
+        return res.json(mapCompanyProfileRow(cachedRow));
+      }
+      throw fetchError;
+    }
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
@@ -1623,6 +1743,43 @@ router.put('/:id', async (req: Request, res: Response) => {
       `);
     
     res.json({ id, ticker, type, quantity, price, transactionDate });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// PUT toggle the initial-purchase flag on a buy transaction
+router.put('/:id/initial-purchase', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user?.id!;
+    const isInitialPurchase = Boolean(req.body?.isInitialPurchase);
+
+    const pool = getPool();
+    const lookup = await pool.request()
+      .input('id', sql.UniqueIdentifier, id)
+      .input('userId', sql.NVarChar, userId)
+      .query('SELECT TOP 1 id, type FROM StockTransactions WHERE id = @id AND userId = @userId');
+
+    if (lookup.recordset.length === 0) {
+      return res.status(404).json({ error: 'Stock transaction not found' });
+    }
+
+    if (String(lookup.recordset[0].type || '').toLowerCase() !== 'buy') {
+      return res.status(400).json({ error: 'Only buy transactions can be marked as initial purchases.' });
+    }
+
+    await pool.request()
+      .input('id', sql.UniqueIdentifier, id)
+      .input('userId', sql.NVarChar, userId)
+      .input('isInitialPurchase', sql.Bit, isInitialPurchase)
+      .query(`
+        UPDATE StockTransactions
+        SET isInitialPurchase = @isInitialPurchase, updatedAt = GETUTCDATE()
+        WHERE id = @id AND userId = @userId
+      `);
+
+    res.json({ id, isInitialPurchase });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }

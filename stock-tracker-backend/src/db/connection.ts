@@ -117,6 +117,13 @@ async function createTablesIfNotExist() {
   `);
 
   await request.batch(`
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('StockTransactions') AND name = 'isInitialPurchase'
+    )
+      ALTER TABLE StockTransactions ADD isInitialPurchase BIT NOT NULL DEFAULT 0;
+  `);
+
+  await request.batch(`
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PurchaseLots')
       CREATE TABLE PurchaseLots (
         id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
@@ -178,6 +185,19 @@ async function createTablesIfNotExist() {
         priceDate DATE NOT NULL,
         marketDate DATE NOT NULL,
         closePrice DECIMAL(18, 8) NOT NULL,
+        source NVARCHAR(50) NOT NULL DEFAULT 'yahoo-finance',
+        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+      );
+
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'CompanyProfiles')
+      CREATE TABLE CompanyProfiles (
+        ticker NVARCHAR(10) PRIMARY KEY,
+        companyName NVARCHAR(255) NULL,
+        sector NVARCHAR(100) NULL,
+        industry NVARCHAR(150) NULL,
+        marketCap DECIMAL(20, 2) NULL,
+        sizeClassification NVARCHAR(20) NULL,
         source NVARCHAR(50) NOT NULL DEFAULT 'yahoo-finance',
         createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
         updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
@@ -288,6 +308,9 @@ async function createTablesIfNotExist() {
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_HistoricalPrices_Ticker_Date_Source')
       CREATE UNIQUE INDEX UX_HistoricalPrices_Ticker_Date_Source
       ON HistoricalPrices(ticker, priceDate, source);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_CompanyProfiles_Ticker')
+      CREATE INDEX IX_CompanyProfiles_Ticker ON CompanyProfiles(ticker);
 
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_Users_Id')
       CREATE UNIQUE INDEX UX_Users_Id ON Users(id);

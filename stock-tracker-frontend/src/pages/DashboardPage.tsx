@@ -241,6 +241,7 @@ export default function DashboardPage() {
   const [updatingPrices, setUpdatingPrices] = useState(false)
   const [isLivePollingActive, setIsLivePollingActive] = useState(false)
   const [currentPricesByTicker, setCurrentPricesByTicker] = useState<Record<string, number>>({})
+  const [changePercentByTicker, setChangePercentByTicker] = useState<Record<string, number | null>>({})
   const [holdingsSortColumn, setHoldingsSortColumn] = useState<HoldingsSortColumn>('targetProximityPercent')
   const [holdingsSortDirection, setHoldingsSortDirection] = useState<'asc' | 'desc'>('desc')
 
@@ -594,6 +595,22 @@ export default function DashboardPage() {
     ? null
     : snapshot.availableCash + displayedHoldingsMarketValue
 
+  const previousDayPortfolioValue = useMemo(() => {
+    const previousDaySnapshot = calculatePortfolioSnapshot({
+      stockTransactions,
+      cashTransactions,
+      historicalPrices,
+      splitEvents,
+      snapshotDate: subtractDaysFromDateOnly(snapshotDate, 1),
+    })
+
+    return previousDaySnapshot.portfolioValue
+  }, [stockTransactions, cashTransactions, historicalPrices, splitEvents, snapshotDate])
+
+  const portfolioValueChangeSinceYesterday = displayedPortfolioValue == null || previousDayPortfolioValue == null
+    ? null
+    : displayedPortfolioValue - previousDayPortfolioValue
+
   const sortedHoldingsRows = useMemo(() => {
     const directionMultiplier = holdingsSortDirection === 'asc' ? 1 : -1
 
@@ -753,17 +770,24 @@ export default function DashboardPage() {
     try {
       const result = await getCurrentPrices(tickers)
       const nextPrices: Record<string, number> = {}
+      const nextChangePercents: Record<string, number | null> = {}
       for (const row of result.prices) {
         const ticker = String(row.ticker || '').toUpperCase()
         const price = Number(row.price)
         if (ticker && Number.isFinite(price) && price > 0) {
           nextPrices[ticker] = price
+          const changePercent = Number(row.changePercent)
+          nextChangePercents[ticker] = Number.isFinite(changePercent) ? changePercent : null
         }
       }
 
       setCurrentPricesByTicker((previous) => ({
         ...previous,
         ...nextPrices,
+      }))
+      setChangePercentByTicker((previous) => ({
+        ...previous,
+        ...nextChangePercents,
       }))
       setLastUpdatedAt(new Date())
 
@@ -798,7 +822,7 @@ export default function DashboardPage() {
 
   // Live-price polling: only while this tab is visible and the US market is open.
   useEffect(() => {
-    const POLL_INTERVAL_MS = 10 * 60 * 1000
+    const POLL_INTERVAL_MS = 5 * 60 * 1000
     const POLLING_STATUS_CHECK_MS = 30 * 1000
     const wasMarketOpenRef = { current: isUsMarketOpenNow() }
 
@@ -815,6 +839,7 @@ export default function DashboardPage() {
       } else if (wasMarketOpenRef.current && !marketOpenNow) {
         // Market just closed: drop live overrides so the snapshot falls back to the latest stored close.
         setCurrentPricesByTicker({})
+        setChangePercentByTicker({})
       }
 
       wasMarketOpenRef.current = marketOpenNow
@@ -1020,6 +1045,16 @@ export default function DashboardPage() {
         <>
           <div className="panel stat-grid">
             <div className="stat"><div className="label">Portfolio Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedPortfolioValue)}</div></div>
+            <div className="stat">
+              <div className="label">Change vs Prev. Day</div>
+              <div className={`value ${getPerformanceClassName(portfolioValueChangeSinceYesterday)}`}>
+                {holdingsLoading
+                  ? 'Loading...'
+                  : portfolioValueChangeSinceYesterday == null
+                    ? '--'
+                    : `${portfolioValueChangeSinceYesterday >= 0 ? '+' : ''}${formatCurrency2(portfolioValueChangeSinceYesterday)}`}
+              </div>
+            </div>
             <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedHoldingsMarketValue)}</div></div>
             <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(snapshot.availableCash)}</div></div>
           </div>
@@ -1032,6 +1067,7 @@ export default function DashboardPage() {
                 <tr>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('ticker')}>Ticker{getHoldingsSortIndicator('ticker')}</th>
                   <th>Price</th>
+                  <th>Change %</th>
                   <th>Total Shares</th>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('marketValue')}>Market Value{getHoldingsSortIndicator('marketValue')}</th>
                   <th>Gain/Loss</th>
@@ -1054,6 +1090,18 @@ export default function DashboardPage() {
                         <span className="table-skeleton table-skeleton-sm" aria-label="Loading price" />
                       ) : (
                         formatStockPrice4(row.latestPrice)
+                      )}
+                    </td>
+                    <td>
+                      {changePercentByTicker[row.ticker] == null ? (
+                        '--'
+                      ) : (
+                        <span className={`change-percent change-percent-${changePercentByTicker[row.ticker]! > 0 ? 'up' : changePercentByTicker[row.ticker]! < 0 ? 'down' : 'flat'}`}>
+                          <span className="change-percent-arrow" aria-hidden="true">
+                            {changePercentByTicker[row.ticker]! > 0 ? '\u25B2' : changePercentByTicker[row.ticker]! < 0 ? '\u25BC' : ''}
+                          </span>
+                          {formatPercent2(changePercentByTicker[row.ticker])}
+                        </span>
                       )}
                     </td>
                     <td>{formatShares(row.totalShares)}</td>
@@ -1082,9 +1130,6 @@ export default function DashboardPage() {
                           className={`target-proximity target-proximity-${row.targetDirection ?? 'neutral'}${row.targetProximityPercent >= 100 ? ' target-proximity-hit' : ''}`}
                           title={row.targetDirection === 'sell' ? 'Approaching sale target' : row.targetDirection === 'buy' ? 'Approaching buy target' : undefined}
                         >
-                          <span className="target-proximity-arrow" aria-hidden="true">
-                            {row.targetDirection === 'sell' ? '\u25B2' : row.targetDirection === 'buy' ? '\u25BC' : ''}
-                          </span>
                           <span className="target-proximity-track">
                             <span
                               className="target-proximity-fill"

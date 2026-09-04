@@ -654,6 +654,31 @@ body {
   min-width: 120px;
 }
 
+.change-percent {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.change-percent-arrow {
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.change-percent-up {
+  color: #16a34a;
+}
+
+.change-percent-down {
+  color: #dc2626;
+}
+
+.change-percent-flat {
+  color: #64748b;
+}
+
 .target-proximity-arrow {
   font-size: 0.7rem;
   line-height: 1;
