@@ -100,6 +100,7 @@ interface IComparisonPoint {
   cashCostBasis: number;
   stockValue: number;
   portfolioValue: number;
+  initialBuysValue: number;
   dowBenchmarkValue: number;
   dowBenchmarkShares: number;
   nasdaqBenchmarkValue: number;
@@ -2303,7 +2304,7 @@ async function buildPortfolioComparisonPoints(
     .input('userId', sql.NVarChar, userId)
     .input('endDate', sql.Date, parseDateOnly(range.endDate))
     .query(`
-      SELECT st.ticker, st.type, st.quantity, st.amount, st.transactionDate
+      SELECT st.ticker, st.type, st.quantity, st.amount, st.transactionDate, st.isInitialPurchase
         , COALESCE(exchangeSource.exchangeSourceQuantity, 0) AS exchangeSourceQuantity
         , CASE WHEN targetMapping.targetTransactionId IS NOT NULL THEN 1 ELSE 0 END AS isExchangeGenerated
       FROM StockTransactions st
@@ -2367,6 +2368,7 @@ async function buildPortfolioComparisonPoints(
     quantity: Number(row.quantity || 0),
     exchangeSourceQuantity: Number(row.exchangeSourceQuantity || 0),
     isExchangeGenerated: Number(row.isExchangeGenerated || 0) === 1,
+    isInitialPurchase: row.isInitialPurchase === true || Number(row.isInitialPurchase || 0) === 1,
     amount: Number(row.amount || 0)
   }));
 
@@ -2428,6 +2430,7 @@ async function buildPortfolioComparisonPoints(
   let sp500BenchmarkUnits = 0;
 
   const holdings = new Map<string, number>();
+  const initialBuyHoldings = new Map<string, number>();
   const points: IComparisonPoint[] = [];
 
   for (const pointDate of dates) {
@@ -2477,6 +2480,11 @@ async function buildPortfolioComparisonPoints(
           holdings.set(ticker, Number(shares || 0) * split.multiplier);
         }
       }
+      for (const [ticker, shares] of initialBuyHoldings.entries()) {
+        if (ticker === split.ticker) {
+          initialBuyHoldings.set(ticker, Number(shares || 0) * split.multiplier);
+        }
+      }
       splitIndex += 1;
     }
 
@@ -2496,9 +2504,19 @@ async function buildPortfolioComparisonPoints(
       if (event.type === 'buy' || event.type === 'div') {
         holdings.set(event.ticker, currentShares + adjustedQuantity);
         if (event.type === 'buy' && !event.isExchangeGenerated) buys += Number(event.amount || 0);
+        if (event.type === 'buy' && event.isInitialPurchase && !event.isExchangeGenerated) {
+          const currentInitialShares = Number(initialBuyHoldings.get(event.ticker) ?? 0);
+          initialBuyHoldings.set(event.ticker, currentInitialShares + adjustedQuantity);
+        }
       } else if (event.type === 'sell' || event.type === 'exchange') {
         holdings.set(event.ticker, currentShares - adjustedQuantity);
         sells += Number(event.amount || 0);
+
+        const remainingInitialShares = Number(initialBuyHoldings.get(event.ticker) ?? 0);
+        if (remainingInitialShares > ALLOCATION_TOLERANCE) {
+          const sharesToClose = Math.min(remainingInitialShares, adjustedQuantity);
+          initialBuyHoldings.set(event.ticker, remainingInitialShares - sharesToClose);
+        }
       }
       stockIndex += 1;
     }
@@ -2532,6 +2550,21 @@ async function buildPortfolioComparisonPoints(
     const sp500BenchmarkShares = sp500BenchmarkUnits;
     const sp500BenchmarkValue = calculateBenchmarkValueAtPoint(sp500BenchmarkUnits, pointDate, sp500BenchmarkQuotes);
 
+    let initialBuysHoldingsValue = 0;
+    for (const [ticker, shares] of initialBuyHoldings.entries()) {
+      const normalizedShares = Number(shares || 0);
+      if (!Number.isFinite(normalizedShares) || normalizedShares <= ALLOCATION_TOLERANCE) {
+        continue;
+      }
+      const quotes = historicalQuotesByTicker.get(ticker) ?? [];
+      const pointQuote = resolveClosestHistoricalCloseOnOrBefore(quotes, pointDate);
+      const closePrice = Number(pointQuote?.close);
+      if (Number.isFinite(closePrice) && closePrice > 0) {
+        initialBuysHoldingsValue += normalizedShares * closePrice;
+      }
+    }
+    const initialBuysValue = initialBuysHoldingsValue;
+
     points.push({
       date: pointDate,
       hasCashFlowEvent,
@@ -2539,6 +2572,7 @@ async function buildPortfolioComparisonPoints(
       cashCostBasis,
       stockValue,
       portfolioValue: availableCash + stockValue,
+      initialBuysValue,
       dowBenchmarkValue,
       dowBenchmarkShares,
       nasdaqBenchmarkValue,

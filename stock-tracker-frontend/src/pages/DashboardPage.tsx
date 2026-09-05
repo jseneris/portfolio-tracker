@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { useAppAuth } from '../auth'
 import {
   CashTransaction,
   CreateStockInput,
@@ -216,6 +217,7 @@ function getPerformanceClassName(value: number | null) {
 type HoldingsSortColumn = 'ticker' | 'marketValue' | 'targetProximityPercent' | 'lotCount'
 
 export default function DashboardPage() {
+  const auth = useAppAuth()
   const [data, setData] = useState<PortfolioSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [addStockError, setAddStockError] = useState<string | null>(null)
@@ -236,7 +238,6 @@ export default function DashboardPage() {
   const [saleAllocationsBySaleId, setSaleAllocationsBySaleId] = useState<Record<string, SaleAllocation[]>>({})
   const [historicalLoadedEndDate, setHistoricalLoadedEndDate] = useState<string | null>(null)
   const [splitEvents, setSplitEvents] = useState<StockSplitEvent[]>([])
-  const initialLoadStartedRef = useRef(false)
   const updateCurrentPricesRef = useRef<() => Promise<void>>(async () => {})
   const [updatingPrices, setUpdatingPrices] = useState(false)
   const [isLivePollingActive, setIsLivePollingActive] = useState(false)
@@ -804,10 +805,30 @@ export default function DashboardPage() {
   updateCurrentPricesRef.current = updateCurrentPrices
 
   useEffect(() => {
-    if (!initialLoadStartedRef.current) {
-      initialLoadStartedRef.current = true
-      loadSummary()
+    if (auth.isConfigured && !auth.isAuthenticated) {
+      return
     }
+
+    let cancelled = false
+
+    async function loadWithAuthRetry() {
+      try {
+        await loadSummary()
+      } catch (err: unknown) {
+        if (cancelled) {
+          return
+        }
+        const message = err instanceof Error ? err.message : ''
+        if (message.includes('401')) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1000))
+          if (!cancelled) {
+            await loadSummary()
+          }
+        }
+      }
+    }
+
+    void loadWithAuthRetry()
 
     const handlePortfolioUpdated = () => {
       loadSummary(true)
@@ -816,9 +837,10 @@ export default function DashboardPage() {
     window.addEventListener(PORTFOLIO_UPDATED_EVENT, handlePortfolioUpdated)
 
     return () => {
+      cancelled = true
       window.removeEventListener(PORTFOLIO_UPDATED_EVENT, handlePortfolioUpdated)
     }
-  }, [])
+  }, [auth.isConfigured, auth.isAuthenticated])
 
   // Live-price polling: only while this tab is visible and the US market is open.
   useEffect(() => {

@@ -219,6 +219,7 @@ export default function ComparisonPage() {
     const values = points.flatMap((point) => [
       point.portfolioValue,
       point.cashCostBasis,
+      point.initialBuysValue,
       point.dowBenchmarkValue,
       point.nasdaqBenchmarkValue,
       point.sp500BenchmarkValue,
@@ -244,6 +245,17 @@ export default function ComparisonPage() {
     const portfolioPath = buildPath(
       points,
       (point) => point.portfolioValue,
+      plotWidth,
+      plotHeight,
+      minY,
+      maxY,
+      margin.left,
+      margin.top
+    )
+
+    const initialBuysPath = buildPath(
+      points,
+      (point) => point.initialBuysValue,
       plotWidth,
       plotHeight,
       minY,
@@ -338,11 +350,13 @@ export default function ComparisonPage() {
         x,
         portfolioValue: point.portfolioValue,
         cashCostBasis: point.cashCostBasis,
+        initialBuysValue: point.initialBuysValue,
         dowBenchmarkValue: point.dowBenchmarkValue,
         nasdaqBenchmarkValue: point.nasdaqBenchmarkValue,
         sp500BenchmarkValue: point.sp500BenchmarkValue,
         portfolioY: getYForValue(point.portfolioValue),
         cashBasisY: getYForValue(point.cashCostBasis),
+        initialBuysY: getYForValue(point.initialBuysValue),
         dowY: getYForValue(point.dowBenchmarkValue),
         nasdaqY: getYForValue(point.nasdaqBenchmarkValue),
         sp500Y: getYForValue(point.sp500BenchmarkValue),
@@ -358,6 +372,7 @@ export default function ComparisonPage() {
       plotWidth,
       plotHeight,
       portfolioPath,
+      initialBuysPath,
       cashBasisAreaPath,
       dowPath,
       nasdaqPath,
@@ -382,7 +397,7 @@ export default function ComparisonPage() {
     }
 
     const tooltipWidth = 232
-    const tooltipHeight = 128
+    const tooltipHeight = 146
     const minX = 8
     const maxX = chart.width - tooltipWidth - 8
     const x = Math.max(minX, Math.min(maxX, hoveredPoint.x + 12))
@@ -734,6 +749,7 @@ export default function ComparisonPage() {
               <path d={chart.nasdaqPath} fill="none" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
               <path d={chart.sp500Path} fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
               <path d={chart.dowPath} fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
+              <path d={chart.initialBuysPath} fill="none" stroke="#8b5cf6" strokeWidth="2" strokeLinecap="round" strokeDasharray="6 4" opacity="0.8" />
               <path d={chart.portfolioPath} fill="none" stroke="#16a34a" strokeWidth="3" strokeLinecap="round" />
 
               {hoveredPoint ? (
@@ -748,6 +764,7 @@ export default function ComparisonPage() {
 
                   <circle className="comparison-hover-point comparison-hover-point-portfolio" cx={hoveredPoint.x} cy={hoveredPoint.portfolioY} r="4" />
                   <circle className="comparison-hover-point comparison-hover-point-basis" cx={hoveredPoint.x} cy={hoveredPoint.cashBasisY} r="3.5" />
+                  <circle className="comparison-hover-point comparison-hover-point-initial-buys" cx={hoveredPoint.x} cy={hoveredPoint.initialBuysY} r="3.5" />
                   <circle className="comparison-hover-point comparison-hover-point-dow" cx={hoveredPoint.x} cy={hoveredPoint.dowY} r="3.5" />
                   <circle className="comparison-hover-point comparison-hover-point-nasdaq" cx={hoveredPoint.x} cy={hoveredPoint.nasdaqY} r="3.5" />
                   <circle className="comparison-hover-point comparison-hover-point-sp500" cx={hoveredPoint.x} cy={hoveredPoint.sp500Y} r="3.5" />
@@ -758,9 +775,10 @@ export default function ComparisonPage() {
                       <text x="12" y="18">Date: {formatDateShort(hoveredPoint.date)}</text>
                       <text x="12" y="38">Portfolio: {formatCurrency2(hoveredPoint.portfolioValue)}</text>
                       <text x="12" y="56">Cash Basis: {formatCurrency2(hoveredPoint.cashCostBasis)}</text>
-                      <text x="12" y="74">DOW: {formatCurrency2(hoveredPoint.dowBenchmarkValue)}</text>
-                      <text x="12" y="92">Nasdaq: {formatCurrency2(hoveredPoint.nasdaqBenchmarkValue)}</text>
-                      <text x="12" y="110">S&amp;P 500: {formatCurrency2(hoveredPoint.sp500BenchmarkValue)}</text>
+                      <text x="12" y="74">Initial Buys (held): {formatCurrency2(hoveredPoint.initialBuysValue)}</text>
+                      <text x="12" y="92">DOW: {formatCurrency2(hoveredPoint.dowBenchmarkValue)}</text>
+                      <text x="12" y="110">Nasdaq: {formatCurrency2(hoveredPoint.nasdaqBenchmarkValue)}</text>
+                      <text x="12" y="126">S&amp;P 500: {formatCurrency2(hoveredPoint.sp500BenchmarkValue)}</text>
                     </g>
                   ) : null}
                 </>
@@ -768,6 +786,7 @@ export default function ComparisonPage() {
             </svg>
             <div className="comparison-legend">
               <span><i className="legend-dot legend-dot-portfolio" />Portfolio Value</span>
+              <span><i className="legend-dot legend-dot-initial-buys" />Initial Buys Value</span>
               <span><i className="legend-dot legend-dot-basis" />Cash Cost Basis (deposit/withdrawal days)</span>
               <span><i className="legend-dot legend-dot-dow" />DOW Benchmark</span>
               <span><i className="legend-dot legend-dot-nasdaq" />Nasdaq Benchmark</span>

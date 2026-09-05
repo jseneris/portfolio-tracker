@@ -277,6 +277,7 @@ export type PortfolioComparisonPoint = {
   cashCostBasis: number
   stockValue: number
   portfolioValue: number
+  initialBuysValue: number
   dowBenchmarkValue: number
   dowBenchmarkShares: number
   nasdaqBenchmarkValue: number

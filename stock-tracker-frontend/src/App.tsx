@@ -8,6 +8,7 @@ import StockHistoryPage from './pages/StockHistoryPage'
 import ComparisonPage from './pages/ComparisonPage'
 import StockSplitsPage from './pages/StockSplitsPage'
 import UserSettingsPage from './pages/UserSettingsPage'
+import AllocationsPage from './pages/AllocationsPage'
 
 export default function App() {
   const auth = useAppAuth()
@@ -61,6 +62,7 @@ export default function App() {
             <NavLink to="/cash">Cash</NavLink>
             <NavLink to="/stocks">Stocks</NavLink>
             <NavLink to="/holdings">Holdings</NavLink>
+            <NavLink to="/allocations">Allocations</NavLink>
             <NavLink to="/splits">Splits</NavLink>
             <NavLink to="/comparison">Compare</NavLink>
             <NavLink to="/user-settings">User</NavLink>
@@ -80,6 +82,7 @@ export default function App() {
           <Route path="/stocks" element={<StocksPage />} />
           <Route path="/stocks/:ticker" element={<StockHistoryPage />} />
           <Route path="/holdings" element={<HoldingsPage />} />
+          <Route path="/allocations" element={<AllocationsPage />} />
           <Route path="/splits" element={<StockSplitsPage />} />
           <Route path="/comparison" element={<ComparisonPage />} />
           <Route path="/comparison-all" element={<ComparisonPage />} />

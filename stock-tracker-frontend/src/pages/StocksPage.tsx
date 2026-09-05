@@ -41,6 +41,8 @@ export default function StocksPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [closedSortColumn, setClosedSortColumn] = useState<'ticker' | 'closingDate'>('ticker')
+  const [closedSortDirection, setClosedSortDirection] = useState<'asc' | 'desc'>('asc')
 
   const closedHoldings = useMemo(() => {
     const sharesByTicker = new Map<string, number>()
@@ -72,7 +74,7 @@ export default function StocksPage() {
   }, [allTransactions])
 
   const closedHoldingsWithPerformance = useMemo(() => {
-    const byTicker = new Map<string, { buyTotal: number; sellTotal: number }>()
+    const byTicker = new Map<string, { buyTotal: number; sellTotal: number; closingDate: string }>()
 
     for (const transaction of allTransactions) {
       const ticker = String(transaction.ticker || '').toUpperCase()
@@ -82,26 +84,72 @@ export default function StocksPage() {
 
       const amount = Number(transaction.amount)
       const safeAmount = Number.isFinite(amount) ? amount : 0
-      const existing = byTicker.get(ticker) ?? { buyTotal: 0, sellTotal: 0 }
+      const existing = byTicker.get(ticker) ?? { buyTotal: 0, sellTotal: 0, closingDate: '' }
 
       if (transaction.type === 'buy') {
         existing.buyTotal += safeAmount
-      } else if (transaction.type === 'sell') {
+      } else if (transaction.type === 'sell' || transaction.type === 'exchange') {
         existing.sellTotal += safeAmount
+        const txDate = typeof transaction.transactionDate === 'string' ? transaction.transactionDate : ''
+        if (txDate && txDate > existing.closingDate) {
+          existing.closingDate = txDate
+        }
       }
 
       byTicker.set(ticker, existing)
     }
 
     return closedHoldings.map((ticker) => {
-      const totals = byTicker.get(ticker) ?? { buyTotal: 0, sellTotal: 0 }
+      const totals = byTicker.get(ticker) ?? { buyTotal: 0, sellTotal: 0, closingDate: '' }
       const salesPerformance = totals.sellTotal - totals.buyTotal
       return {
         ticker,
         salesPerformance,
+        closingDate: totals.closingDate,
       }
     })
   }, [allTransactions, closedHoldings])
+
+  const sortedClosedHoldings = useMemo(() => {
+    const directionMultiplier = closedSortDirection === 'asc' ? 1 : -1
+
+    return [...closedHoldingsWithPerformance].sort((a, b) => {
+      if (closedSortColumn === 'closingDate') {
+        const aDate = a.closingDate || ''
+        const bDate = b.closingDate || ''
+        const aEmpty = aDate.length === 0
+        const bEmpty = bDate.length === 0
+        if (aEmpty && bEmpty) {
+          return a.ticker.localeCompare(b.ticker)
+        }
+        if (aEmpty) {
+          return 1
+        }
+        if (bEmpty) {
+          return -1
+        }
+        return aDate.localeCompare(bDate) * directionMultiplier || a.ticker.localeCompare(b.ticker)
+      }
+
+      return a.ticker.localeCompare(b.ticker) * directionMultiplier
+    })
+  }, [closedHoldingsWithPerformance, closedSortColumn, closedSortDirection])
+
+  function handleClosedSort(column: 'ticker' | 'closingDate') {
+    if (closedSortColumn === column) {
+      setClosedSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setClosedSortColumn(column)
+    setClosedSortDirection('asc')
+  }
+
+  function getClosedSortIndicator(column: 'ticker' | 'closingDate') {
+    if (closedSortColumn !== column) {
+      return ''
+    }
+    return closedSortDirection === 'asc' ? ' ▲' : ' ▼'
+  }
 
   async function loadTransactions() {
     setLoading(true)
@@ -158,18 +206,24 @@ export default function StocksPage() {
           <table className="table">
             <thead>
               <tr>
-                <th>Ticker</th>
+                <th className="sortable-header" onClick={() => handleClosedSort('ticker')}>
+                  Ticker{getClosedSortIndicator('ticker')}
+                </th>
+                <th className="sortable-header" onClick={() => handleClosedSort('closingDate')}>
+                  Closing Date{getClosedSortIndicator('closingDate')}
+                </th>
                 <th>Sales Performance</th>
               </tr>
             </thead>
             <tbody>
-              {closedHoldingsWithPerformance.map((holding) => (
+              {sortedClosedHoldings.map((holding) => (
                 <tr key={holding.ticker}>
                   <td>
                     <Link className="link-button" to={`/stocks/${encodeURIComponent(holding.ticker)}`}>
                       {holding.ticker}
                     </Link>
                   </td>
+                  <td>{holding.closingDate ? formatDate(holding.closingDate) : '--'}</td>
                   <td className={getPerformanceClassName(holding.salesPerformance)}>
                     {formatCurrency2(holding.salesPerformance)}
                   </td>

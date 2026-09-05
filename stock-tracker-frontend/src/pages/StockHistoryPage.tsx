@@ -27,8 +27,10 @@ import {
   getStockSummaryByTicker,
   getStockTransactionsByTicker,
   setInitialPurchaseFlag,
+  HistoricalPrice,
 } from '../api'
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
+import { createSplitMultiplierResolver } from '../portfolioSnapshot'
 
 const ALLOCATION_TOLERANCE = 1e-6
 const LOT_STATE_TOLERANCE = 1e-6
@@ -83,6 +85,10 @@ function toUtcDayTimestamp(value: string) {
     return Number.NaN
   }
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
+}
+
+function toDateOnly(value: string): string {
+  return typeof value === 'string' && value.length >= 10 ? value.slice(0, 10) : ''
 }
 
 function getPositiveTransactionState(lot: PurchaseLot): PositiveTransactionState {
@@ -185,11 +191,11 @@ type TransactionBreakdown = {
   divAmount: number
 }
 
-function buildEmptyBreakdown(): TransactionBreakdown {
+export function buildEmptyBreakdown(): TransactionBreakdown {
   return { buyCount: 0, buyAmount: 0, sellCount: 0, sellAmount: 0, divCount: 0, divAmount: 0 }
 }
 
-function accumulateBreakdown(breakdown: TransactionBreakdown, transaction: StockTransaction) {
+export function accumulateBreakdown(breakdown: TransactionBreakdown, transaction: StockTransaction) {
   const type = String(transaction.type || '').toLowerCase()
   const amount = Number(transaction.amount)
   const safeAmount = Number.isFinite(amount) ? amount : 0
@@ -204,6 +210,183 @@ function accumulateBreakdown(breakdown: TransactionBreakdown, transaction: Stock
     breakdown.divCount += 1
     breakdown.divAmount += safeAmount
   }
+}
+
+type SplitMultiplierPoint = {
+  day: number
+  multiplier: number
+}
+
+export function getSharesAtDate(
+  transactions: StockTransaction[],
+  date: string,
+  splitTimeline: SplitMultiplierPoint[]
+): number {
+  let totalShares = 0
+
+  for (const transaction of transactions) {
+    const transactionDate = toDateOnly(transaction.transactionDate)
+    if (!transactionDate || transactionDate > date) {
+      continue
+    }
+
+    const rawQuantity = transaction.type === 'exchange'
+      ? Number(transaction.exchangeSourceQuantity)
+      : Number(transaction.quantity)
+    if (!Number.isFinite(rawQuantity) || rawQuantity <= 0) {
+      continue
+    }
+
+    const transactionDay = toUtcDayTimestamp(transaction.transactionDate)
+    let cumulativeMultiplier = 1
+    if (Number.isFinite(transactionDay)) {
+      for (const split of splitTimeline) {
+        if (split.day <= toUtcDayTimestamp(date) && transactionDay <= split.day) {
+          cumulativeMultiplier *= split.multiplier
+        }
+      }
+    }
+
+    const adjustedQuantity = rawQuantity * cumulativeMultiplier
+    if (transaction.type === 'buy' || transaction.type === 'div') {
+      totalShares += adjustedQuantity
+    } else if (transaction.type === 'sell' || transaction.type === 'exchange') {
+      totalShares -= adjustedQuantity
+    }
+  }
+
+  return totalShares
+}
+
+export function findPriceOnOrBefore(
+  prices: Array<{ priceDate: string; closePrice: number }>,
+  date: string
+): number | null {
+  let bestDate = ''
+  let bestPrice: number | null = null
+
+  for (const price of prices) {
+    const priceDate = toDateOnly(price.priceDate)
+    const closePrice = Number(price.closePrice)
+    if (!priceDate || priceDate > date || !Number.isFinite(closePrice) || closePrice <= 0) {
+      continue
+    }
+
+    if (priceDate > bestDate) {
+      bestDate = priceDate
+      bestPrice = closePrice
+    }
+  }
+
+  return bestPrice
+}
+
+export type YearPerformanceRow = {
+  year: number
+  performance: number | null
+  isCurrentYear: boolean
+}
+
+export function calculateYearlyPerformance(args: {
+  transactions: StockTransaction[]
+  historicalPrices: Array<{ priceDate: string; closePrice: number }>
+  splitEvents: StockSplitEvent[]
+  finalValue: number | null
+  asOfDate: string
+}): { years: YearPerformanceRow[]; overall: number | null } {
+  const { transactions, historicalPrices, splitEvents, finalValue, asOfDate } = args
+
+  const splitTimeline: SplitMultiplierPoint[] = splitEvents
+    .filter((split) => split.isActive !== false)
+    .map((split) => ({
+      day: toUtcDayTimestamp(split.splitDate),
+      multiplier: Number(split.multiplier),
+    }))
+    .filter((entry) => Number.isFinite(entry.day) && Number.isFinite(entry.multiplier) && entry.multiplier > 0)
+
+  const normalizedTransactions = transactions
+    .filter((transaction) => toDateOnly(transaction.transactionDate))
+    .slice()
+    .sort((first, second) => toDateOnly(first.transactionDate).localeCompare(toDateOnly(second.transactionDate)))
+
+  const firstTransactionDate = normalizedTransactions.length > 0
+    ? toDateOnly(normalizedTransactions[0].transactionDate)
+    : ''
+  const startYear = firstTransactionDate ? Number(firstTransactionDate.slice(0, 4)) : NaN
+  const currentYear = Number(asOfDate.slice(0, 4))
+
+  if (!Number.isFinite(startYear) || !Number.isFinite(currentYear) || startYear > currentYear) {
+    return { years: [], overall: null }
+  }
+
+  const years: YearPerformanceRow[] = []
+  let netInvested = 0
+  let previousValue = 0
+
+  for (let year = startYear; year <= currentYear; year += 1) {
+    const yearStartDate = `${year}-01-01`
+    const isCurrentYear = year === currentYear
+    const yearEndDate = isCurrentYear ? asOfDate : `${year}-12-31`
+    const investedAtYearStart = netInvested
+
+    for (const transaction of normalizedTransactions) {
+      const transactionDate = toDateOnly(transaction.transactionDate)
+      if (transactionDate < yearStartDate || transactionDate > yearEndDate) {
+        continue
+      }
+
+      const amount = Number(transaction.amount)
+      if (!Number.isFinite(amount)) {
+        continue
+      }
+
+      if (transaction.type === 'buy' || transaction.type === 'div') {
+        netInvested += amount
+      } else if (transaction.type === 'sell') {
+        netInvested -= amount
+      }
+    }
+
+    const yearEndValue = isCurrentYear
+      ? finalValue
+      : (() => {
+          const yearEndPrice = findPriceOnOrBefore(historicalPrices, yearEndDate)
+          if (yearEndPrice == null) {
+            return null
+          }
+          return getSharesAtDate(normalizedTransactions, yearEndDate, splitTimeline) * yearEndPrice
+        })()
+
+    const performance = yearEndValue == null
+      ? null
+      : yearEndValue - previousValue - (netInvested - investedAtYearStart)
+    years.push({ year, performance, isCurrentYear })
+
+    if (yearEndValue != null) {
+      previousValue = yearEndValue
+    }
+  }
+
+  const overall = finalValue == null ? null : finalValue - netInvested
+
+  return { years, overall }
+}
+
+function formatBreakdownPerformance(value: number | null) {
+  return value == null ? '--' : formatCurrency2(value)
+}
+
+function getBreakdownPerformanceClassName(value: number | null) {
+  if (value == null) {
+    return ''
+  }
+  if (value > ALLOCATION_TOLERANCE) {
+    return 'value-positive'
+  }
+  if (value < -ALLOCATION_TOLERANCE) {
+    return 'value-negative'
+  }
+  return ''
 }
 
 export default function StockHistoryPage() {
@@ -234,6 +417,7 @@ export default function StockHistoryPage() {
   const [availableCash, setAvailableCash] = useState<number | null>(null)
   const [latestHistoricalPrice, setLatestHistoricalPrice] = useState<number | null>(null)
   const [livePrice, setLivePrice] = useState<number | null>(null)
+  const [historicalPrices, setHistoricalPrices] = useState<HistoricalPrice[]>([])
   const [sellLotsSource, setSellLotsSource] = useState<PurchaseLot[]>([])
   const [loadingAllocations, setLoadingAllocations] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -490,6 +674,27 @@ export default function StockHistoryPage() {
 
     return { overall, years }
   }, [allTickerTransactions])
+
+  const yearlyPerformance = useMemo(() => {
+    const tickerHistoricalPrices = historicalPrices.filter(
+      (price) => String(price.ticker || '').toUpperCase() === ticker
+    )
+
+    const result = calculateYearlyPerformance({
+      transactions: allTickerTransactions,
+      historicalPrices: tickerHistoricalPrices,
+      splitEvents,
+      finalValue: currentValue,
+      asOfDate: new Date().toISOString().slice(0, 10),
+    })
+
+    const performanceByYear = new Map<number, YearPerformanceRow>()
+    for (const row of result.years) {
+      performanceByYear.set(row.year, row)
+    }
+
+    return { performanceByYear, overall: result.overall }
+  }, [allTickerTransactions, currentValue, historicalPrices, splitEvents, ticker])
 
   const initialPurchasePerformance = useMemo(() => {
     const initialPurchaseTransactions = allTickerTransactions.filter(
@@ -833,6 +1038,16 @@ export default function StockHistoryPage() {
       setSummary(tickerSummaryData)
       setSaleAllocations({})
 
+      const earliestTxDate = txData.reduce((earliest, transaction) => {
+        const transactionDate = toDateOnly(transaction.transactionDate)
+        return transactionDate && (!earliest || transactionDate < earliest) ? transactionDate : earliest
+      }, '')
+      const priceStartDate = earliestTxDate ? `${earliestTxDate.slice(0, 4)}-01-01` : '1980-01-01'
+
+      getHistoricalPrices(priceStartDate, new Date().toISOString().slice(0, 10))
+        .then((prices) => setHistoricalPrices(prices))
+        .catch(() => setHistoricalPrices([]))
+
       const sellTransactionIds = txData
         .filter((transaction) => transaction.type === 'sell')
         .map((transaction) => transaction.id)
@@ -941,48 +1156,12 @@ export default function StockHistoryPage() {
       return
     }
 
-    let cancelled = false
-
-    async function loadLatestHistoricalPrice() {
-      try {
-        const today = new Date().toISOString().slice(0, 10)
-        const historicalPrices = await getHistoricalPrices('1980-01-01', today)
-
-        let latestPriceDate = ''
-        let latestPriceValue: number | null = null
-
-        for (const row of historicalPrices) {
-          if (String(row.ticker).toUpperCase() !== ticker) {
-            continue
-          }
-
-          const close = Number(row.closePrice)
-          if (!Number.isFinite(close)) {
-            continue
-          }
-
-          if (row.priceDate > latestPriceDate) {
-            latestPriceDate = row.priceDate
-            latestPriceValue = close
-          }
-        }
-
-        if (!cancelled) {
-          setLatestHistoricalPrice(latestPriceValue)
-        }
-      } catch {
-        if (!cancelled) {
-          setLatestHistoricalPrice(null)
-        }
-      }
-    }
-
-    loadLatestHistoricalPrice()
-
-    return () => {
-      cancelled = true
-    }
-  }, [ticker])
+    const today = new Date().toISOString().slice(0, 10)
+    setLatestHistoricalPrice(findPriceOnOrBefore(
+      historicalPrices.filter((row) => String(row.ticker).toUpperCase() === ticker),
+      today
+    ))
+  }, [historicalPrices, ticker])
 
   useEffect(() => {
     if (!ticker) {
@@ -1385,6 +1564,7 @@ export default function StockHistoryPage() {
                   <th>Sale Amount</th>
                   <th>Dividends</th>
                   <th>Dividend Amount</th>
+                  <th>Performance</th>
                 </tr>
               </thead>
               <tbody>
@@ -1396,6 +1576,7 @@ export default function StockHistoryPage() {
                   <td>{formatCurrency2(performanceBreakdown.overall.sellAmount)}</td>
                   <td>{performanceBreakdown.overall.divCount}</td>
                   <td>{formatCurrency2(performanceBreakdown.overall.divAmount)}</td>
+                  <td className={getBreakdownPerformanceClassName(yearlyPerformance.overall)}>{formatBreakdownPerformance(yearlyPerformance.overall)}</td>
                 </tr>
                 {performanceBreakdown.years.map((row) => (
                   <tr key={row.year}>
@@ -1406,10 +1587,14 @@ export default function StockHistoryPage() {
                     <td>{formatCurrency2(row.sellAmount)}</td>
                     <td>{row.divCount}</td>
                     <td>{formatCurrency2(row.divAmount)}</td>
+                    <td className={getBreakdownPerformanceClassName(yearlyPerformance.performanceByYear.get(row.year)?.performance ?? null)}>
+                      {formatBreakdownPerformance(yearlyPerformance.performanceByYear.get(row.year)?.performance ?? null)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <p className="hint">Performance is the total return for the period, including unrealized gains: period-end market value minus net amount invested (buys plus dividend reinvestments minus sales). All Time matches the summary performance above.</p>
           </div>
 
           {splitEvents.length > 0 ? (
