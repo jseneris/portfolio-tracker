@@ -7,7 +7,7 @@ Node.js/Express backend for the Stock Tracker application with SQL Server databa
 ### 1. Install Dependencies
 
 ```bash
-cd backend
+cd stock-tracker-backend
 npm install
 ```
 
@@ -28,7 +28,17 @@ DB_NAME=your-db
 npm run dev
 ```
 
-The API will start on `http://localhost:5000` and automatically create the required database tables.
+The API will start on `http://localhost:5000` and automatically create the required database tables. The API does not start scheduled jobs.
+
+### 4. Start Local Scheduled Jobs
+
+Run this in a separate VS Code terminal when you want the local scheduler active:
+
+```bash
+npm run scheduler
+```
+
+The scheduler process connects to the configured SQL Server and runs the daily EOD sync at its configured time. Stop the terminal process to stop future scheduled runs.
 
 
 
@@ -46,7 +56,8 @@ AUTH0_AUDIENCE=your-api-identifier
 ## Scripts
 
 - `npm run dev` - Start development server with watch mode
+- `npm run scheduler` - Start the local scheduled-job process
 - `npm run build` - Compile TypeScript to JavaScript
-- `npm start` - Run compiled server
+- `npm start` - Run the compiled HTTP API (Railway command)
 - `npm run seed` - (Future) Seed database with sample data
 # GitHub write access verified 2026-07-05T20:43:01Z
