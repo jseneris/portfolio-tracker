@@ -1,5 +1,5 @@
 import { Auth0Provider, useAuth0 } from '@auth0/auth0-react'
-import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'react'
+import { createContext, useContext, useLayoutEffect, useMemo, type ReactNode } from 'react'
 
 type AppAuthContextValue = {
   isConfigured: boolean
@@ -62,7 +62,7 @@ function DevAuthProvider({ children }: { children: ReactNode }) {
 function Auth0Bridge({ children }: { children: ReactNode }) {
   const { isAuthenticated, isLoading, loginWithRedirect, logout, getAccessTokenSilently, user } = useAuth0()
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isAuthenticated) {
       setAccessTokenGetter(async () => null)
       return
