@@ -22,6 +22,11 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Health check
+app.get('/api/health', (req: Request, res: Response) => {
+  res.json({ status: 'ok' });
+});
+
 app.use(authenticateRequest);
 
 // Routes
@@ -30,11 +35,6 @@ app.use('/api/stocks', stockRoutes);
 app.use('/api/lots', lotsRoutes);
 app.use('/api/display-lots', displayLotsRoutes);
 app.use('/api/user-settings', userSettingsRoutes);
-
-// Health check
-app.get('/api/health', (req: Request, res: Response) => {
-  res.json({ status: 'ok' });
-});
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
