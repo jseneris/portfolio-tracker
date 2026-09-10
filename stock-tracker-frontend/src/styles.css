@@ -372,6 +372,17 @@ body {
   opacity: 1;
 }
 
+.price-cell {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.price-as-of-date {
+  font-size: 0.7rem;
+  color: var(--muted-text, #6b7280);
+}
+
 .stacked-label {
   display: flex;
   flex-direction: column;

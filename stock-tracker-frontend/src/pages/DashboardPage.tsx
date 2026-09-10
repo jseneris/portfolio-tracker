@@ -87,6 +87,17 @@ function formatPercent2(value: number | null | undefined, fallback = '--') {
   return `${value.toFixed(2)}%`
 }
 
+function formatDateOnlyLabel(value: string | null | undefined): string {
+  if (!value) {
+    return 'unknown date'
+  }
+  const parsed = new Date(`${value}T00:00:00Z`)
+  if (Number.isNaN(parsed.getTime())) {
+    return value
+  }
+  return parsed.toLocaleDateString(undefined, { timeZone: 'UTC' })
+}
+
 type TargetDirection = 'buy' | 'sell' | null
 
 function calculateTargetProximity(
@@ -648,6 +659,9 @@ export default function DashboardPage() {
         ticker: row.ticker,
         totalShares: hydrated?.totalShares ?? row.totalShares,
         latestPrice: hydrated?.latestPrice ?? null,
+        priceDate: hydrated?.priceDate ?? null,
+        isLivePrice: hydrated?.isLivePrice ?? false,
+        historicalChangePercent: hydrated?.historicalChangePercent ?? null,
         marketValue: hydrated?.marketValue ?? null,
         costBasis,
         gainLoss,
@@ -1185,20 +1199,33 @@ export default function DashboardPage() {
                       {holdingsLoading && row.latestPrice == null ? (
                         <span className="table-skeleton table-skeleton-sm" aria-label="Loading price" />
                       ) : (
-                        formatStockPrice4(row.latestPrice)
+                        <div className="price-cell">
+                          <span>{formatStockPrice4(row.latestPrice)}</span>
+                          {row.latestPrice != null && !row.isLivePrice ? (
+                            <span className="price-as-of-date">as of {formatDateOnlyLabel(row.priceDate)}</span>
+                          ) : null}
+                        </div>
                       )}
                     </td>
                     <td>
-                      {changePercentByTicker[row.ticker] == null ? (
-                        '--'
-                      ) : (
-                        <span className={`change-percent change-percent-${changePercentByTicker[row.ticker]! > 0 ? 'up' : changePercentByTicker[row.ticker]! < 0 ? 'down' : 'flat'}`}>
-                          <span className="change-percent-arrow" aria-hidden="true">
-                            {changePercentByTicker[row.ticker]! > 0 ? '\u25B2' : changePercentByTicker[row.ticker]! < 0 ? '\u25BC' : ''}
+                      {(() => {
+                        const liveChangePercent = changePercentByTicker[row.ticker]
+                        const changePercent = liveChangePercent ?? row.historicalChangePercent
+                        if (changePercent == null) {
+                          return '--'
+                        }
+                        return (
+                          <span className={`change-percent change-percent-${changePercent > 0 ? 'up' : changePercent < 0 ? 'down' : 'flat'}`}>
+                            <span className="change-percent-arrow" aria-hidden="true">
+                              {changePercent > 0 ? '\u25B2' : changePercent < 0 ? '\u25BC' : ''}
+                            </span>
+                            {formatPercent2(changePercent)}
+                            {liveChangePercent == null ? (
+                              <span className="price-as-of-date"> as of {formatDateOnlyLabel(row.priceDate)}</span>
+                            ) : null}
                           </span>
-                          {formatPercent2(changePercentByTicker[row.ticker])}
-                        </span>
-                      )}
+                        )
+                      })()}
                     </td>
                     <td>{formatShares(row.totalShares)}</td>
                     <td>

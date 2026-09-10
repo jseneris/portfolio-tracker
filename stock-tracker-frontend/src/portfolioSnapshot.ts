@@ -11,6 +11,9 @@ export type PortfolioSnapshotHolding = {
   totalShares: number
   latestPrice: number | null
   marketValue: number | null
+  priceDate: string | null
+  isLivePrice: boolean
+  historicalChangePercent: number | null
 }
 
 export type PortfolioSnapshot = {
@@ -97,7 +100,8 @@ export function calculatePortfolioSnapshot(args: {
     }
   }
 
-  const priceByTicker = new Map<string, { date: string; price: number }>()
+  const priceByTicker = new Map<string, { date: string; price: number; isLive: boolean }>()
+  const recentClosesByTicker = new Map<string, Array<{ date: string; price: number }>>()
   for (const historicalPrice of historicalPrices) {
     const ticker = String(historicalPrice.ticker || '').toUpperCase()
     const priceDate = toDateOnly(historicalPrice.priceDate)
@@ -108,7 +112,26 @@ export function calculatePortfolioSnapshot(args: {
 
     const existingPrice = priceByTicker.get(ticker)
     if (!existingPrice || priceDate > existingPrice.date) {
-      priceByTicker.set(ticker, { date: priceDate, price: closePrice })
+      priceByTicker.set(ticker, { date: priceDate, price: closePrice, isLive: false })
+    }
+
+    const closesForTicker = recentClosesByTicker.get(ticker) ?? []
+    const existingForDate = closesForTicker.find((entry) => entry.date === priceDate)
+    if (existingForDate) {
+      existingForDate.price = closePrice
+    } else {
+      closesForTicker.push({ date: priceDate, price: closePrice })
+    }
+    recentClosesByTicker.set(ticker, closesForTicker)
+  }
+
+  const historicalChangePercentByTicker = new Map<string, number>()
+  for (const [ticker, closes] of recentClosesByTicker.entries()) {
+    const sortedCloses = [...closes].sort((first, second) => first.date.localeCompare(second.date))
+    const latestClose = sortedCloses[sortedCloses.length - 1]
+    const previousClose = sortedCloses[sortedCloses.length - 2]
+    if (previousClose && Number.isFinite(previousClose.price) && previousClose.price !== 0) {
+      historicalChangePercentByTicker.set(ticker, ((latestClose.price - previousClose.price) / previousClose.price) * 100)
     }
   }
 
@@ -116,7 +139,7 @@ export function calculatePortfolioSnapshot(args: {
     const normalizedTicker = String(ticker || '').toUpperCase()
     const currentPrice = Number(price)
     if (normalizedTicker && Number.isFinite(currentPrice) && currentPrice > 0) {
-      priceByTicker.set(normalizedTicker, { date: snapshotDate, price: currentPrice })
+      priceByTicker.set(normalizedTicker, { date: snapshotDate, price: currentPrice, isLive: true })
     }
   }
 
@@ -125,12 +148,17 @@ export function calculatePortfolioSnapshot(args: {
     .filter((holding) => Number.isFinite(holding.totalShares) && holding.totalShares > HOLDING_TOLERANCE)
     .sort((first, second) => first.ticker.localeCompare(second.ticker))
     .map((holding) => {
-      const latestPrice = Number(priceByTicker.get(holding.ticker)?.price)
+      const priceInfo = priceByTicker.get(holding.ticker)
+      const latestPrice = Number(priceInfo?.price)
       const hasPrice = Number.isFinite(latestPrice)
+      const historicalChangePercent = historicalChangePercentByTicker.get(holding.ticker)
       return {
         ...holding,
         latestPrice: hasPrice ? latestPrice : null,
         marketValue: hasPrice ? holding.totalShares * latestPrice : null,
+        priceDate: hasPrice ? priceInfo!.date : null,
+        isLivePrice: hasPrice ? priceInfo!.isLive : false,
+        historicalChangePercent: Number.isFinite(historicalChangePercent) ? Number(historicalChangePercent) : null,
       }
     })
 
