@@ -40,6 +40,17 @@ npm run scheduler
 
 The scheduler process connects to the configured SQL Server and runs the daily EOD sync at its configured time. Stop the terminal process to stop future scheduled runs.
 
+### 5. Run Daily EOD Sync Once
+
+Build the backend, then run the one-shot command below. This is the command used by a Railway Cron Job and exits after completing the sync:
+
+```bash
+npm run build
+npm run daily-eod
+```
+
+For Railway, deploy a second service from this same `stock-tracker-backend` directory. Set its build command to `npm run build`, start command to `npm run daily-eod`, and configure the service Cron Schedule in UTC. The service needs the same `DB_SERVER`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` variables as the API.
+
 
 
 ## Authentication
@@ -67,5 +78,6 @@ FRONTEND_URL=http://localhost:5173,https://portfolio-tracker-ten-gamma.vercel.ap
 - `npm run scheduler` - Start the local scheduled-job process
 - `npm run build` - Compile TypeScript to JavaScript
 - `npm start` - Run the compiled HTTP API (Railway command)
+- `npm run daily-eod` - Run the compiled daily EOD sync once (Railway Cron command)
 - `npm run seed` - (Future) Seed database with sample data
 # GitHub write access verified 2026-07-05T20:43:01Z

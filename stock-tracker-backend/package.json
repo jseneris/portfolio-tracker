@@ -8,6 +8,7 @@
     "scheduler": "tsx src/jobs/scheduler-entry.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "daily-eod": "node dist/jobs/daily-eod-entry.js",
     "seed": "tsx src/scripts/seed.ts",
     "test": "vitest run"
   },
