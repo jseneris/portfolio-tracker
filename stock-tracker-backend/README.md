@@ -53,6 +53,14 @@ AUTH0_DOMAIN=your-domain.auth0.com
 AUTH0_AUDIENCE=your-api-identifier
 ```
 
+## CORS Origins
+
+Set `FRONTEND_URL` to one allowed browser origin or to a comma-separated list. For local development and the deployed Vercel frontend, use:
+
+```env
+FRONTEND_URL=http://localhost:5173,https://portfolio-tracker-ten-gamma.vercel.app
+```
+
 ## Scripts
 
 - `npm run dev` - Start development server with watch mode
