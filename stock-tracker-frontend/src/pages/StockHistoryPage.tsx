@@ -1471,10 +1471,9 @@ export default function StockHistoryPage() {
 
   return (
     <section>
-      <div className="panel row-between">
+      <div className="panel panel-tight row-between">
         <div>
-          <h2>{ticker || 'Ticker'} Transaction History</h2>
-          <p>All stock transactions recorded for this ticker.</p>
+          <h2 style={{ margin: 0 }}>{ticker || 'Ticker'} Transactions</h2>
           {companyProfile ? (
             <p className="hint">
               {companyProfile.companyName ?? ticker}
@@ -1514,8 +1513,9 @@ export default function StockHistoryPage() {
       ) : null}
 
       {!loading && !error && summary ? (
-        <>
-          <div className="panel stat-grid">
+        <details className="panel collapsible-panel" open={false}>
+          <summary>Summary &amp; Performance</summary>
+          <div className="stat-grid">
             <div className="stat"><div className="label">Total Shares</div><div className="value">{formatNumber(summary.totalShares, 6)}</div></div>
             <button
               className="stat stat-clickable"
@@ -1535,7 +1535,7 @@ export default function StockHistoryPage() {
           </div>
 
           {salesSummary.saleCount > 0 ? (
-            <div className="panel stat-grid" style={{ marginTop: '0.75rem' }}>
+            <div className="stat-grid" style={{ marginTop: '0.75rem' }}>
               <div className="stat"><div className="label">Sales Cost Basis</div><div className="value">{formatCurrency2(salesSummary.salesCostBasis)}</div></div>
               <div className="stat"><div className="label">Exhausted Purchase Lots Cost Basis (No Div)</div><div className="value">{formatCurrency2(salesSummary.exhaustedPurchaseLotsCostBasis)}</div></div>
               <div className="stat"><div className="label">Sales Performance</div><div className={getPerformanceClassName(salesSummary.performance)}>{formatCurrency2(salesSummary.performance)}</div></div>
@@ -1543,7 +1543,7 @@ export default function StockHistoryPage() {
           ) : null}
 
           {initialPurchasePerformance ? (
-            <div className="panel stat-grid" style={{ marginTop: '0.75rem' }}>
+            <div className="stat-grid" style={{ marginTop: '0.75rem' }}>
               <div className="stat"><div className="label">Initial Buy Shares ({initialPurchasePerformance.count})</div><div className="value">{formatNumber(initialPurchasePerformance.totalShares, 6)}</div></div>
               <div className="stat"><div className="label">Initial Buy Cost Basis</div><div className="value">{formatCurrency2(initialPurchasePerformance.totalCost)}</div></div>
               <div className="stat"><div className="label">Initial Buy Current Value</div><div className="value">{formatCurrency2(initialPurchasePerformance.currentValue)}</div></div>
@@ -1552,7 +1552,7 @@ export default function StockHistoryPage() {
             </div>
           ) : null}
 
-          <div className="panel" style={{ marginTop: '0.75rem' }}>
+          <div style={{ marginTop: '0.75rem' }}>
             <h3 style={{ marginTop: 0 }}>Performance Breakdown</h3>
             <table className="table">
               <thead>
@@ -1598,7 +1598,7 @@ export default function StockHistoryPage() {
           </div>
 
           {splitEvents.length > 0 ? (
-            <div className="panel" style={{ marginTop: '0.75rem' }}>
+            <div style={{ marginTop: '0.75rem' }}>
               <h3 style={{ marginTop: 0 }}>Split Events</h3>
               <table className="table">
                 <thead>
@@ -1626,16 +1626,16 @@ export default function StockHistoryPage() {
           ) : null}
 
           {displayLotsOutOfSync ? (
-            <div className="panel status status-warning">
+            <div className="status status-warning">
               Display lots are out of sync by {formatNumber(Math.abs(displayLotShareDelta), 6)} shares.
               Display lots total {formatNumber(totalDisplayLotShares, 6)} while open purchase lots total {formatNumber(totalOpenPurchaseShares, 6)}.
             </div>
           ) : null}
-        </>
+        </details>
       ) : null}
 
       {!loading && !error ? (
-        <div className="panel">
+        <div className="panel panel-tight">
           {splitEvents.length > 0 ? (
             <div className="row-between" style={{ marginBottom: '0.75rem' }}>
               <p style={{ margin: 0, color: '#5b6472' }}>
@@ -1654,6 +1654,7 @@ export default function StockHistoryPage() {
           {transactionTimeline.length === 0 ? (
             <p>No transactions found for {ticker}.</p>
           ) : (
+            <div className="table-scroll">
             <table className="table">
               <thead>
                 <tr>
@@ -1798,6 +1799,7 @@ export default function StockHistoryPage() {
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       ) : null}

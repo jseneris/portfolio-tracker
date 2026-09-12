@@ -87,9 +87,9 @@ body {
 }
 
 .app-main {
-  max-width: 980px;
+  max-width: 1720px;
   margin: 0 auto;
-  padding: 1.25rem;
+  padding: 1rem 1.5rem;
 }
 
 .panel {
@@ -100,10 +100,40 @@ body {
   margin-bottom: 1rem;
 }
 
+.panel-tight {
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 0.6rem;
+}
+
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 0.8rem;
+}
+
+.stat-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.4rem;
+  align-items: baseline;
+}
+
+.stat-strip .stat {
+  border: none;
+  background: none;
+  padding: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.stat-strip .stat .label {
+  font-size: 0.78rem;
+}
+
+.stat-strip .stat .value {
+  font-size: 0.98rem;
+  margin-top: 0;
 }
 
 .stat {
@@ -122,6 +152,28 @@ body {
   font-size: 1.1rem;
   font-weight: 700;
   margin-top: 0.2rem;
+}
+
+.collapsible-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: revert;
+}
+
+.collapsible-panel[open] summary {
+  margin-bottom: 0.6rem;
+}
+
+.table-scroll {
+  max-height: 72vh;
+  overflow: auto;
+}
+
+.table-scroll .table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel-bg);
+  z-index: 1;
 }
 
 .value-positive {
@@ -153,12 +205,13 @@ body {
 .table {
   width: 100%;
   border-collapse: collapse;
+  font-size: 0.9rem;
 }
 
 .table th,
 .table td {
   text-align: left;
-  padding: 0.55rem;
+  padding: 0.35rem 0.55rem;
   border-bottom: 1px solid #e2e8f0;
 }
 
@@ -668,17 +721,25 @@ body {
 
 .target-proximity {
   display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
   min-width: 120px;
 }
 
 .change-percent {
   display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+}
+
+.change-percent-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
 }
 
 .change-percent-arrow {
@@ -707,7 +768,7 @@ body {
 
 .target-proximity-track {
   position: relative;
-  flex: 1;
+  width: 100%;
   height: 8px;
   min-width: 56px;
   border-radius: 999px;
@@ -727,7 +788,7 @@ body {
   font-size: 0.8rem;
   font-variant-numeric: tabular-nums;
   color: #334155;
-  min-width: 3.2rem;
+  width: 100%;
 }
 
 .target-proximity-buy .target-proximity-arrow {

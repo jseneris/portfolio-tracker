@@ -1113,10 +1113,9 @@ export default function DashboardPage() {
 
   return (
     <section>
-      <div className="panel row-between">
+      <div className="panel panel-tight row-between">
         <div>
-          <h2>Dashboard (MVP)</h2>
-          <p>Portfolio snapshot by date using transaction history and stored historical prices.</p>
+          <h2>Dashboard</h2>
         </div>
         <div className="stack-right">
           <div className="inline-actions">
@@ -1153,7 +1152,7 @@ export default function DashboardPage() {
 
       {data ? (
         <>
-          <div className="panel stat-grid">
+          <div className="panel panel-tight stat-strip">
             <div className="stat"><div className="label">Portfolio Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedPortfolioValue)}</div></div>
             <div className="stat">
               <div className="label">Change vs Prev. Day</div>
@@ -1169,9 +1168,11 @@ export default function DashboardPage() {
             <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(snapshot.availableCash)}</div></div>
           </div>
 
-          <div className="panel">
-            <h3>Holdings</h3>
-            {holdingsLoading ? <p>Loading prices and market values...</p> : null}
+          <div className="panel panel-tight">
+            <div className="row-between">
+              <h3 style={{ margin: 0 }}>Holdings</h3>
+              {holdingsLoading ? <small>Loading prices and market values...</small> : null}
+            </div>
             <table className="table">
               <thead>
                 <tr>
@@ -1216,12 +1217,14 @@ export default function DashboardPage() {
                         }
                         return (
                           <span className={`change-percent change-percent-${changePercent > 0 ? 'up' : changePercent < 0 ? 'down' : 'flat'}`}>
-                            <span className="change-percent-arrow" aria-hidden="true">
-                              {changePercent > 0 ? '\u25B2' : changePercent < 0 ? '\u25BC' : ''}
+                            <span className="change-percent-main">
+                              <span className="change-percent-arrow" aria-hidden="true">
+                                {changePercent > 0 ? '\u25B2' : changePercent < 0 ? '\u25BC' : ''}
+                              </span>
+                              {formatPercent2(changePercent)}
                             </span>
-                            {formatPercent2(changePercent)}
                             {liveChangePercent == null ? (
-                              <span className="price-as-of-date"> as of {formatDateOnlyLabel(row.priceDate)}</span>
+                              <span className="price-as-of-date">as of {formatDateOnlyLabel(row.priceDate)}</span>
                             ) : null}
                           </span>
                         )
@@ -1253,6 +1256,7 @@ export default function DashboardPage() {
                           className={`target-proximity target-proximity-${row.targetDirection ?? 'neutral'}${row.targetProximityPercent >= 100 ? ' target-proximity-hit' : ''}`}
                           title={row.targetDirection === 'sell' ? 'Approaching sale target' : row.targetDirection === 'buy' ? 'Approaching buy target' : undefined}
                         >
+                          <span className="target-proximity-value">{formatPercent2(row.targetProximityPercent)}</span>
                           <span className="target-proximity-track">
                             <span
                               className="target-proximity-fill"
@@ -1265,7 +1269,6 @@ export default function DashboardPage() {
                               }}
                             />
                           </span>
-                          <span className="target-proximity-value">{formatPercent2(row.targetProximityPercent)}</span>
                         </div>
                       )}
                     </td>

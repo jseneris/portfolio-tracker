@@ -146,13 +146,23 @@ export default function CashPage() {
 
   return (
     <section>
-      <div className="panel">
-        <h2>Cash (MVP)</h2>
-        <p>Create and delete cash transactions. Summary updates after each successful transaction.</p>
+      <div className="panel panel-tight">
+        <h2 style={{ margin: 0 }}>Cash</h2>
       </div>
 
-      <div className="panel">
-        <h3>Add Transaction</h3>
+      {summary ? (
+        <div className="panel panel-tight stat-strip">
+          <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(summary.availableCash)}</div></div>
+          <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatCurrency2(summary.costBasis)}</div></div>
+          <div className="stat"><div className="label">Adjustments</div><div className="value">{formatCurrency2(summary.adjustments)}</div></div>
+          <div className="stat"><div className="label">Deposits</div><div className="value">{formatCurrency2(summary.deposits)}</div></div>
+          <div className="stat"><div className="label">Withdrawals</div><div className="value">{formatCurrency2(summary.withdrawals)}</div></div>
+          <div className="stat"><div className="label">Fees</div><div className="value">{formatCurrency2(summary.fees)}</div></div>
+        </div>
+      ) : null}
+
+      <details className="panel panel-tight collapsible-panel">
+        <summary>Add Transaction</summary>
         <form className="form-grid" onSubmit={onSubmit}>
           <label>
             Type
@@ -199,26 +209,16 @@ export default function CashPage() {
 
         {error ? <div className="status status-error">{error}</div> : null}
         {success ? <div className="status status-success">{success}</div> : null}
-      </div>
+      </details>
 
-      {summary ? (
-        <div className="panel stat-grid">
-          <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(summary.availableCash)}</div></div>
-          <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatCurrency2(summary.costBasis)}</div></div>
-          <div className="stat"><div className="label">Adjustments</div><div className="value">{formatCurrency2(summary.adjustments)}</div></div>
-          <div className="stat"><div className="label">Deposits</div><div className="value">{formatCurrency2(summary.deposits)}</div></div>
-          <div className="stat"><div className="label">Withdrawals</div><div className="value">{formatCurrency2(summary.withdrawals)}</div></div>
-          <div className="stat"><div className="label">Fees</div><div className="value">{formatCurrency2(summary.fees)}</div></div>
-        </div>
-      ) : null}
-
-      <div className="panel">
-        <h3>Cash Transactions</h3>
+      <div className="panel panel-tight">
+        <h3 style={{ marginTop: 0 }}>Cash Transactions</h3>
         {loading ? (
           <p>Loading cash transactions...</p>
         ) : transactions.length === 0 ? (
           <p>No cash transactions yet.</p>
         ) : (
+          <div className="table-scroll">
           <table className="table">
             <thead>
               <tr>
@@ -243,10 +243,9 @@ export default function CashPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
-
-      <div style={{ marginTop: '2rem', textAlign: 'center', color: '#999', fontSize: '0.85rem' }}>Cash Page</div>
     </section>
   )
 }

@@ -157,7 +157,7 @@ export default function StocksPage() {
     try {
       const result = await getStockTransactions()
       setAllTransactions(result)
-      setTransactions(result.slice(0, 10))
+      setTransactions(result)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to load stock transactions.')
     } finally {
@@ -187,17 +187,15 @@ export default function StocksPage() {
 
   return (
     <section>
-      <div className="panel">
-        <h2>Recent Transactions</h2>
-        <p>Last 10 stock transactions. Click a ticker to view full history and add transactions.</p>
+      <div className="panel panel-tight">
+        <h2 style={{ margin: 0 }}>Stock Transaction History</h2>
       </div>
 
       {success ? <div className="panel status status-success">{success}</div> : null}
       {error ? <div className="panel status status-error">{error}</div> : null}
 
-      <div className="panel">
-        <h3>Closed Holdings (0 Shares)</h3>
-        <p>Tickers you no longer hold. Use links below to view full stock history.</p>
+      <details className="panel panel-tight collapsible-panel">
+        <summary>Closed Holdings (0 Shares)</summary>
         {loading ? (
           <p>Loading closed holdings...</p>
         ) : closedHoldingsWithPerformance.length === 0 ? (
@@ -232,14 +230,15 @@ export default function StocksPage() {
             </tbody>
           </table>
         )}
-      </div>
+      </details>
 
-      <div className="panel">
+      <div className="panel panel-tight">
         {loading ? (
           <p>Loading transactions...</p>
         ) : transactions.length === 0 ? (
           <p>No stock transactions yet. Click a ticker on the Dashboard to add one.</p>
         ) : (
+          <div className="table-scroll">
           <table className="table">
             <thead>
               <tr>
@@ -276,8 +275,9 @@ export default function StocksPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
-      <div style={{ marginTop: '2rem', textAlign: 'center', color: '#999', fontSize: '0.85rem' }}>Stocks Page</div>    </section>
+    </section>
   )
 }
