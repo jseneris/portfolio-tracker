@@ -31,6 +31,92 @@ export function calculatePortfolioValue(availableCash: number, holdingsMarketVal
   return holdingsMarketValue == null ? null : availableCash + holdingsMarketValue
 }
 
+export function calculateYearlyGainLoss(args: {
+  cashTransactions: CashTransaction[]
+  currentPortfolioValue: number | null
+  previousYearEndPortfolioValue: number | null
+  snapshotDate: string
+}): number | null {
+  const { cashTransactions, currentPortfolioValue, previousYearEndPortfolioValue, snapshotDate } = args
+
+  if (currentPortfolioValue == null || previousYearEndPortfolioValue == null) {
+    return null
+  }
+
+  const currentYear = Number(snapshotDate.slice(0, 4))
+  if (!Number.isFinite(currentYear)) {
+    return null
+  }
+
+  const yearStartDate = `${currentYear}-01-01`
+  const netCurrentYearCashFlow = cashTransactions
+    .filter((transaction) => {
+      const transactionDate = toDateOnly(transaction.transactionDate)
+      return transactionDate >= yearStartDate && transactionDate <= snapshotDate
+    })
+    .reduce((sum, transaction) => {
+      const amount = Number(transaction.amount || 0)
+      if (!Number.isFinite(amount)) {
+        return sum
+      }
+
+      if (transaction.type === 'deposit') {
+        return sum + amount
+      }
+      if (transaction.type === 'withdrawal') {
+        return sum - amount
+      }
+      return sum
+    }, 0)
+
+  return currentPortfolioValue - previousYearEndPortfolioValue - netCurrentYearCashFlow
+}
+
+export function calculateTickerYearlyGainLoss(args: {
+  stockTransactions: StockTransaction[]
+  ticker: string
+  currentMarketValue: number | null
+  previousYearEndMarketValue: number | null
+  snapshotDate: string
+}): number | null {
+  const { stockTransactions, ticker, currentMarketValue, previousYearEndMarketValue, snapshotDate } = args
+
+  if (currentMarketValue == null || previousYearEndMarketValue == null) {
+    return null
+  }
+
+  const currentYear = Number(snapshotDate.slice(0, 4))
+  const normalizedTicker = String(ticker || '').toUpperCase()
+  if (!Number.isFinite(currentYear) || !normalizedTicker) {
+    return null
+  }
+
+  const yearStartDate = `${currentYear}-01-01`
+  const netCurrentYearInvested = stockTransactions
+    .filter((transaction) => {
+      const transactionDate = toDateOnly(transaction.transactionDate)
+      return String(transaction.ticker || '').toUpperCase() === normalizedTicker
+        && transactionDate >= yearStartDate
+        && transactionDate <= snapshotDate
+    })
+    .reduce((sum, transaction) => {
+      const amount = Number(transaction.amount || 0)
+      if (!Number.isFinite(amount)) {
+        return sum
+      }
+
+      if (transaction.type === 'buy' || transaction.type === 'div') {
+        return sum + amount
+      }
+      if (transaction.type === 'sell') {
+        return sum - amount
+      }
+      return sum
+    }, 0)
+
+  return currentMarketValue - previousYearEndMarketValue - netCurrentYearInvested
+}
+
 export function createSplitMultiplierResolver(splitEvents: StockSplitEvent[], snapshotDate: string) {
   const activeSplits = splitEvents
     .filter((split) => split.isActive !== false)

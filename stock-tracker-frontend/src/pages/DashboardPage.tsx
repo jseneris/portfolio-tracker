@@ -25,7 +25,7 @@ import {
   StockSplitEvent,
 } from '../api'
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
-import { calculatePortfolioSnapshot, createSplitMultiplierResolver } from '../portfolioSnapshot'
+import { calculatePortfolioSnapshot, calculateTickerYearlyGainLoss, calculateYearlyGainLoss, createSplitMultiplierResolver } from '../portfolioSnapshot'
 
 const DEFAULT_SALE_TARGET_PERCENT = 10
 const DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS = 5
@@ -33,6 +33,7 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10
 const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25
+const POST_MARKET_CLOSE_POLLING_BUFFER_MINUTES = 10
 
 export function getSplitAdjustedTargetBasePrice(
   transaction: StockTransaction | undefined,
@@ -246,7 +247,7 @@ function isUsMarketOpenNow(): boolean {
   return isWeekday
     && !closures.fullDay.has(dateKey)
     && minutesSinceMidnight >= 9 * 60 + 30
-    && minutesSinceMidnight < closingMinutes
+    && minutesSinceMidnight < closingMinutes + POST_MARKET_CLOSE_POLLING_BUFFER_MINUTES
 }
 
 function calculateStockCostBasisExcludingDividends(lots: PurchaseLot[]): number {
@@ -631,9 +632,27 @@ export default function DashboardPage() {
     const snapshotByTicker = new Map(
       snapshot.holdings.map((row) => [row.ticker, row] as const)
     )
+    const previousYearEndMarketValueByTicker = new Map<string, number | null>()
+    const currentYear = Number(snapshotDate.slice(0, 4))
+    if (Number.isFinite(currentYear)) {
+      const previousYearEndSnapshot = calculatePortfolioSnapshot({
+        stockTransactions,
+        cashTransactions,
+        historicalPrices,
+        splitEvents,
+        snapshotDate: `${currentYear - 1}-12-31`,
+      })
+
+      for (const holding of previousYearEndSnapshot.holdings) {
+        previousYearEndMarketValueByTicker.set(holding.ticker, holding.marketValue)
+      }
+    }
 
     return summaryHoldings.map((row) => {
       const hydrated = snapshotByTicker.get(row.ticker)
+      const previousYearEndMarketValue = previousYearEndMarketValueByTicker.has(row.ticker)
+        ? previousYearEndMarketValueByTicker.get(row.ticker) ?? null
+        : 0
       const hasSnapshotCostBasis = Object.prototype.hasOwnProperty.call(
         snapshot.stockCostBasisExcludingDividendsByTicker,
         row.ticker
@@ -648,6 +667,13 @@ export default function DashboardPage() {
       const gainLoss = performance == null
         ? null
         : performance + Number(snapshot.realizedSalesPerformanceByTicker[row.ticker] ?? 0)
+      const yearlyGainLoss = calculateTickerYearlyGainLoss({
+        stockTransactions,
+        ticker: row.ticker,
+        currentMarketValue: hydrated?.marketValue ?? null,
+        previousYearEndMarketValue,
+        snapshotDate,
+      })
 
       const targetProximity = calculateTargetProximity(
         hydrated?.latestPrice ?? null,
@@ -665,12 +691,13 @@ export default function DashboardPage() {
         marketValue: hydrated?.marketValue ?? null,
         costBasis,
         gainLoss,
+        yearlyGainLoss,
         targetProximityPercent: targetProximity.percent,
         targetDirection: targetProximity.direction,
         lotCount: Number(displayLotCountsByTicker[row.ticker] ?? snapshot.lotCountByTicker[row.ticker] ?? row.lotCount),
       }
     })
-  }, [summaryHoldings, snapshot.holdings, snapshot.stockCostBasisExcludingDividendsByTicker, snapshot.realizedSalesPerformanceByTicker, snapshot.lotCountByTicker, displayLotCountsByTicker, saleTargetsByTicker, buyTargetsByTicker])
+  }, [summaryHoldings, snapshot.holdings, snapshot.stockCostBasisExcludingDividendsByTicker, snapshot.realizedSalesPerformanceByTicker, snapshot.lotCountByTicker, stockTransactions, cashTransactions, historicalPrices, splitEvents, snapshotDate, displayLotCountsByTicker, saleTargetsByTicker, buyTargetsByTicker])
 
   const displayedHoldingsMarketValue = useMemo(() => {
     if (holdingsRows.some((row) => row.marketValue == null || !Number.isFinite(row.marketValue))) {
@@ -699,6 +726,30 @@ export default function DashboardPage() {
   const portfolioValueChangeSinceYesterday = displayedPortfolioValue == null || previousDayPortfolioValue == null
     ? null
     : displayedPortfolioValue - previousDayPortfolioValue
+
+  const previousYearEndPortfolioValue = useMemo(() => {
+    const currentYear = Number(snapshotDate.slice(0, 4))
+    if (!Number.isFinite(currentYear)) {
+      return null
+    }
+
+    const previousYearEndSnapshot = calculatePortfolioSnapshot({
+      stockTransactions,
+      cashTransactions,
+      historicalPrices,
+      splitEvents,
+      snapshotDate: `${currentYear - 1}-12-31`,
+    })
+
+    return previousYearEndSnapshot.portfolioValue
+  }, [stockTransactions, cashTransactions, historicalPrices, splitEvents, snapshotDate])
+
+  const yearlyGainLoss = calculateYearlyGainLoss({
+    cashTransactions,
+    currentPortfolioValue: displayedPortfolioValue,
+    previousYearEndPortfolioValue,
+    snapshotDate,
+  })
 
   const sortedHoldingsRows = useMemo(() => {
     const directionMultiplier = holdingsSortDirection === 'asc' ? 1 : -1
@@ -1155,6 +1206,16 @@ export default function DashboardPage() {
           <div className="panel panel-tight stat-strip">
             <div className="stat"><div className="label">Portfolio Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedPortfolioValue)}</div></div>
             <div className="stat">
+              <div className="label">Yearly Gain/Loss</div>
+              <div className={`value ${getPerformanceClassName(yearlyGainLoss)}`}>
+                {holdingsLoading
+                  ? 'Loading...'
+                  : yearlyGainLoss == null
+                    ? '--'
+                    : `${yearlyGainLoss >= 0 ? '+' : ''}${formatCurrency2(yearlyGainLoss)}`}
+              </div>
+            </div>
+            <div className="stat">
               <div className="label">Change vs Prev. Day</div>
               <div className={`value ${getPerformanceClassName(portfolioValueChangeSinceYesterday)}`}>
                 {holdingsLoading
@@ -1182,6 +1243,7 @@ export default function DashboardPage() {
                   <th>Total Shares</th>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('marketValue')}>Market Value{getHoldingsSortIndicator('marketValue')}</th>
                   <th>Gain/Loss</th>
+                  <th>Yearly Gain</th>
                   <th>Buy Target</th>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('targetProximityPercent')}>Target %{getHoldingsSortIndicator('targetProximityPercent')}</th>
                   <th>Sale Target</th>
@@ -1239,6 +1301,7 @@ export default function DashboardPage() {
                       )}
                     </td>
                     <td className={getPerformanceClassName(row.gainLoss)}>{formatCurrency2(row.gainLoss)}</td>
+                    <td className={getPerformanceClassName(row.yearlyGainLoss)}>{formatCurrency2(row.yearlyGainLoss)}</td>
                     <td>
                       {holdingsLoading && buyTargetsByTicker[row.ticker] == null ? (
                         <span className="table-skeleton table-skeleton-sm" aria-label="Loading buy target" />

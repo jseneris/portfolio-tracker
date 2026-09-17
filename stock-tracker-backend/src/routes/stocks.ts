@@ -2873,13 +2873,13 @@ async function fetchYahooDailyCloses(ticker: string, firstRequestedDate: string,
   const period1 = addUtcDays(parseDateOnly(firstRequestedDate), -14);
   const period2 = addUtcDays(parseDateOnly(lastRequestedDate), 1);
 
-  const historical = await yahooFinance.historical(ticker, {
+  const chart = await yahooFinance.chart(ticker, {
     period1,
     period2,
     interval: '1d'
-  });
+  } as any);
 
-  const rows = Array.isArray(historical) ? (historical as any[]) : [];
+  const rows = Array.isArray((chart as any)?.quotes) ? (chart as any).quotes : [];
 
   const quotes: IPricePoint[] = rows
     .map((row: any): IPricePoint => ({
