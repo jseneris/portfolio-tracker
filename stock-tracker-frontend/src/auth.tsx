@@ -108,6 +108,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     <Auth0Provider
       domain={auth0Domain}
       clientId={auth0ClientId}
+      cacheLocation="localstorage"
+      useRefreshTokens
       authorizationParams={{
         redirect_uri: auth0RedirectUri,
         ...(auth0Audience ? { audience: auth0Audience } : {}),
