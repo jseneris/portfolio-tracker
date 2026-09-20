@@ -300,7 +300,7 @@ function getPerformanceClassName(value: number | null) {
   return ''
 }
 
-type HoldingsSortColumn = 'ticker' | 'marketValue' | 'targetProximityPercent' | 'lotCount'
+type HoldingsSortColumn = 'ticker' | 'historicalChangePercent' | 'marketValue' | 'gainLoss' | 'yearlyGainLoss' | 'targetProximityPercent' | 'lotCount'
 
 export default function DashboardPage() {
   const auth = useAppAuth()
@@ -759,8 +759,12 @@ export default function DashboardPage() {
         return a.ticker.localeCompare(b.ticker) * directionMultiplier
       }
 
-      const aValue = a[holdingsSortColumn]
-      const bValue = b[holdingsSortColumn]
+      const aValue = holdingsSortColumn === 'historicalChangePercent'
+        ? changePercentByTicker[a.ticker] ?? a.historicalChangePercent
+        : a[holdingsSortColumn]
+      const bValue = holdingsSortColumn === 'historicalChangePercent'
+        ? changePercentByTicker[b.ticker] ?? b.historicalChangePercent
+        : b[holdingsSortColumn]
       const aIsNil = aValue == null || !Number.isFinite(aValue)
       const bIsNil = bValue == null || !Number.isFinite(bValue)
 
@@ -776,7 +780,7 @@ export default function DashboardPage() {
 
       return (Number(aValue) - Number(bValue)) * directionMultiplier
     })
-  }, [holdingsRows, holdingsSortColumn, holdingsSortDirection])
+  }, [changePercentByTicker, holdingsRows, holdingsSortColumn, holdingsSortDirection])
 
   function handleHoldingsSort(column: HoldingsSortColumn) {
     if (column === holdingsSortColumn) {
@@ -1239,11 +1243,11 @@ export default function DashboardPage() {
                 <tr>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('ticker')}>Ticker{getHoldingsSortIndicator('ticker')}</th>
                   <th>Price</th>
-                  <th>Change %</th>
+                  <th className="sortable-header" onClick={() => handleHoldingsSort('historicalChangePercent')}>Change %{getHoldingsSortIndicator('historicalChangePercent')}</th>
                   <th>Total Shares</th>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('marketValue')}>Market Value{getHoldingsSortIndicator('marketValue')}</th>
-                  <th>Gain/Loss</th>
-                  <th>Yearly Gain</th>
+                  <th className="sortable-header" onClick={() => handleHoldingsSort('gainLoss')}>Gain/Loss{getHoldingsSortIndicator('gainLoss')}</th>
+                  <th className="sortable-header" onClick={() => handleHoldingsSort('yearlyGainLoss')}>Yearly Gain{getHoldingsSortIndicator('yearlyGainLoss')}</th>
                   <th>Buy Target</th>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('targetProximityPercent')}>Target %{getHoldingsSortIndicator('targetProximityPercent')}</th>
                   <th>Sale Target</th>
