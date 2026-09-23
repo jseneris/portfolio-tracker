@@ -87,6 +87,18 @@ function toUtcDayTimestamp(value: string) {
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
 }
 
+function isOverOneYearOld(purchaseDate: string, referenceDate = new Date().toISOString().slice(0, 10)) {
+  const purchaseDay = toUtcDayTimestamp(purchaseDate)
+  const referenceDay = toUtcDayTimestamp(referenceDate)
+  if (!Number.isFinite(purchaseDay) || !Number.isFinite(referenceDay)) {
+    return false
+  }
+
+  const oneYearAnniversary = new Date(purchaseDay)
+  oneYearAnniversary.setUTCFullYear(oneYearAnniversary.getUTCFullYear() + 1)
+  return referenceDay > oneYearAnniversary.getTime()
+}
+
 function toDateOnly(value: string): string {
   return typeof value === 'string' && value.length >= 10 ? value.slice(0, 10) : ''
 }
@@ -414,6 +426,8 @@ export default function StockHistoryPage() {
   const [saleAllocations, setSaleAllocations] = useState<Record<string, SaleAllocation[]>>({})
   const [splitEvents, setSplitEvents] = useState<StockSplitEvent[]>([])
   const [showOriginalPreSplit, setShowOriginalPreSplit] = useState(false)
+  const [showDividends, setShowDividends] = useState(true)
+  const [showSales, setShowSales] = useState(true)
   const [availableCash, setAvailableCash] = useState<number | null>(null)
   const [latestHistoricalPrice, setLatestHistoricalPrice] = useState<number | null>(null)
   const [livePrice, setLivePrice] = useState<number | null>(null)
@@ -768,11 +782,15 @@ export default function StockHistoryPage() {
       | { kind: 'transaction'; date: number; transaction: StockTransaction }
       | { kind: 'split'; date: number; split: StockSplitEvent }
 
-    const txEntries: TimelineEntry[] = transactions.map((transaction) => ({
-      kind: 'transaction',
-      date: new Date(transaction.transactionDate).getTime(),
-      transaction,
-    }))
+    const txEntries: TimelineEntry[] = transactions
+      .filter((transaction) => {
+        return (showDividends || transaction.type !== 'div') && (showSales || transaction.type !== 'sell')
+      })
+      .map((transaction) => ({
+        kind: 'transaction',
+        date: new Date(transaction.transactionDate).getTime(),
+        transaction,
+      }))
 
     const splitEntries: TimelineEntry[] = splitEvents.map((split) => ({
       kind: 'split',
@@ -781,7 +799,7 @@ export default function StockHistoryPage() {
     }))
 
     return [...txEntries, ...splitEntries].sort((a, b) => b.date - a.date)
-  }, [transactions, splitEvents])
+  }, [transactions, splitEvents, showDividends, showSales])
 
   const adjustedTransactionValuesById = useMemo(() => {
     const splitTimeline = splitEvents
@@ -1636,6 +1654,25 @@ export default function StockHistoryPage() {
 
       {!loading && !error ? (
         <div className="panel panel-tight">
+          <div className="inline-actions" style={{ marginBottom: '0.75rem' }}>
+            <label>
+              <input
+                type="checkbox"
+                checked={showDividends}
+                onChange={(event) => setShowDividends(event.target.checked)}
+              />
+              Show dividends
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={showSales}
+                onChange={(event) => setShowSales(event.target.checked)}
+              />
+              Show sales
+            </label>
+          </div>
+
           {splitEvents.length > 0 ? (
             <div className="row-between" style={{ marginBottom: '0.75rem' }}>
               <p style={{ margin: 0, color: '#5b6472' }}>
@@ -1696,7 +1733,14 @@ export default function StockHistoryPage() {
                   const quantityToDisplay = isPartialLotRow ? partialRemainingShares : displayQuantity
                   return [
                       <tr key={transaction.id}>
-                        <td>{formatDate(transaction.transactionDate)}</td>
+                        <td>
+                          <div className="purchase-age-cell">
+                            <span>{formatDate(transaction.transactionDate)}</span>
+                            {transaction.type === 'buy' && isOverOneYearOld(transaction.transactionDate) ? (
+                              <span className="pill pill-long-term" title="Purchase is over one year old">1y+</span>
+                            ) : null}
+                          </div>
+                        </td>
                         <td>{transaction.type}</td>
                         <td>
                           {transaction.type === 'buy' || transaction.type === 'div' ? (
@@ -1773,7 +1817,14 @@ export default function StockHistoryPage() {
                                     {saleAllocations[transaction.id].map((alloc, index) => (
                                       <tr key={index} style={{ borderBottom: '1px solid #eee' }}>
                                         <td style={{ padding: '0.5rem' }}>{alloc.sourceType === 'purchase' ? 'buy' : 'div'}</td>
-                                        <td style={{ padding: '0.5rem' }}>{formatDate(alloc.purchaseDate)}</td>
+                                        <td style={{ padding: '0.5rem' }}>
+                                          <div className="purchase-age-cell">
+                                            <span>{formatDate(alloc.purchaseDate)}</span>
+                                            {alloc.sourceType === 'purchase' && isOverOneYearOld(alloc.purchaseDate, transaction.transactionDate) ? (
+                                              <span className="pill pill-long-term" title="Purchase was held for over one year when sold">1y+</span>
+                                            ) : null}
+                                          </div>
+                                        </td>
                                         <td style={{ padding: '0.5rem' }}>
                                           <div className="sale-lot-cost-cell">
                                             <span>{formatStockPrice4(alloc.unitCost)}</span>
@@ -1970,7 +2021,14 @@ export default function StockHistoryPage() {
                         return (
                           <tr key={lot.id}>
                             <td>{lot.sourceType === 'purchase' ? 'Buy' : 'Dividend'}</td>
-                            <td>{formatDate(lot.purchaseDate)}</td>
+                            <td>
+                              <div className="purchase-age-cell">
+                                <span>{formatDate(lot.purchaseDate)}</span>
+                                {lot.sourceType === 'purchase' && isOverOneYearOld(lot.purchaseDate, form.transactionDate) ? (
+                                  <span className="pill pill-long-term" title="Purchase will be over one year old on the sale date">1y+</span>
+                                ) : null}
+                              </div>
+                            </td>
                             <td>{formatNumber(displayRemaining, 6)}</td>
                             <td>
                               <div className="sale-lot-cost-cell">

@@ -31,6 +31,8 @@ Create `.env` or use Replit Secrets:
 
 ## Recent MVP Updates
 
+- All frontend routes now use an iPhone-responsive layout with compact navigation, shrink-safe forms and summary grids, touch-sized controls, viewport-contained tables, charts, and modals.
+- Dashboard holdings use compact mobile rows showing ticker, price, and target percentage, with an expandable detail view for the remaining fields.
 - Dashboard now includes an Add Stock modal (ticker, shares, price, date) for quick buy-entry workflow.
 - Dashboard holdings ticker values now link to a stock-specific route at /stocks/:ticker.
 - Holdings now provides a dashboard-style historical snapshot selected by date, applying the selected date when the date field loses focus, with summary cards and a Stock Ticker, Shares, Price, and Value table.

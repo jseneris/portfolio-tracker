@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppAuth } from '../auth'
 import {
@@ -331,6 +331,7 @@ export default function DashboardPage() {
   const [changePercentByTicker, setChangePercentByTicker] = useState<Record<string, number | null>>({})
   const [holdingsSortColumn, setHoldingsSortColumn] = useState<HoldingsSortColumn>('targetProximityPercent')
   const [holdingsSortDirection, setHoldingsSortDirection] = useState<'asc' | 'desc'>('desc')
+  const [expandedHoldingTickers, setExpandedHoldingTickers] = useState<Set<string>>(() => new Set())
 
   function normalizePositivePercent(value: unknown, fallback: number): number {
     const parsed = Number(value)
@@ -798,6 +799,18 @@ export default function DashboardPage() {
     return holdingsSortDirection === 'asc' ? ' ▲' : ' ▼'
   }
 
+  function toggleHoldingDetails(ticker: string) {
+    setExpandedHoldingTickers((previous) => {
+      const next = new Set(previous)
+      if (next.has(ticker)) {
+        next.delete(ticker)
+      } else {
+        next.add(ticker)
+      }
+      return next
+    })
+  }
+
   const performanceClassName =
     snapshot.performance == null || !Number.isFinite(snapshot.performance)
       ? 'value'
@@ -1238,25 +1251,43 @@ export default function DashboardPage() {
               <h3 style={{ margin: 0 }}>Holdings</h3>
               {holdingsLoading ? <small>Loading prices and market values...</small> : null}
             </div>
-            <table className="table">
+            <table className="table holdings-table">
               <thead>
                 <tr>
+                  <th className="holdings-expand-column" aria-label="Holding details" />
                   <th className="sortable-header" onClick={() => handleHoldingsSort('ticker')}>Ticker{getHoldingsSortIndicator('ticker')}</th>
                   <th>Price</th>
-                  <th className="sortable-header" onClick={() => handleHoldingsSort('historicalChangePercent')}>Change %{getHoldingsSortIndicator('historicalChangePercent')}</th>
-                  <th>Total Shares</th>
-                  <th className="sortable-header" onClick={() => handleHoldingsSort('marketValue')}>Market Value{getHoldingsSortIndicator('marketValue')}</th>
-                  <th className="sortable-header" onClick={() => handleHoldingsSort('gainLoss')}>Gain/Loss{getHoldingsSortIndicator('gainLoss')}</th>
-                  <th className="sortable-header" onClick={() => handleHoldingsSort('yearlyGainLoss')}>Yearly Gain{getHoldingsSortIndicator('yearlyGainLoss')}</th>
-                  <th>Buy Target</th>
+                  <th className="holdings-secondary-column sortable-header" onClick={() => handleHoldingsSort('historicalChangePercent')}>Change %{getHoldingsSortIndicator('historicalChangePercent')}</th>
+                  <th className="holdings-secondary-column">Total Shares</th>
+                  <th className="holdings-secondary-column sortable-header" onClick={() => handleHoldingsSort('marketValue')}>Market Value{getHoldingsSortIndicator('marketValue')}</th>
+                  <th className="holdings-secondary-column sortable-header" onClick={() => handleHoldingsSort('gainLoss')}>Gain/Loss{getHoldingsSortIndicator('gainLoss')}</th>
+                  <th className="holdings-secondary-column sortable-header" onClick={() => handleHoldingsSort('yearlyGainLoss')}>Yearly Gain{getHoldingsSortIndicator('yearlyGainLoss')}</th>
+                  <th className="holdings-secondary-column">Buy Target</th>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('targetProximityPercent')}>Target %{getHoldingsSortIndicator('targetProximityPercent')}</th>
-                  <th>Sale Target</th>
-                  <th className="sortable-header" onClick={() => handleHoldingsSort('lotCount')}>Lots{getHoldingsSortIndicator('lotCount')}</th>
+                  <th className="holdings-secondary-column">Sale Target</th>
+                  <th className="holdings-secondary-column sortable-header" onClick={() => handleHoldingsSort('lotCount')}>Lots{getHoldingsSortIndicator('lotCount')}</th>
                 </tr>
               </thead>
               <tbody>
-                {sortedHoldingsRows.map((row) => (
-                  <tr key={row.ticker}>
+                {sortedHoldingsRows.map((row) => {
+                  const isExpanded = expandedHoldingTickers.has(row.ticker)
+                  const liveChangePercent = changePercentByTicker[row.ticker]
+                  const changePercent = liveChangePercent ?? row.historicalChangePercent
+
+                  return (
+                  <Fragment key={row.ticker}>
+                  <tr>
+                    <td className="holdings-expand-column">
+                      <button
+                        className="holdings-expand-button"
+                        type="button"
+                        aria-expanded={isExpanded}
+                        aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${row.ticker} holding details`}
+                        onClick={() => toggleHoldingDetails(row.ticker)}
+                      >
+                        {isExpanded ? '▼' : '▶'}
+                      </button>
+                    </td>
                     <td>
                       <Link className="link-button" to={`/stocks/${encodeURIComponent(row.ticker)}`}>
                         {row.ticker}
@@ -1274,14 +1305,8 @@ export default function DashboardPage() {
                         </div>
                       )}
                     </td>
-                    <td>
-                      {(() => {
-                        const liveChangePercent = changePercentByTicker[row.ticker]
-                        const changePercent = liveChangePercent ?? row.historicalChangePercent
-                        if (changePercent == null) {
-                          return '--'
-                        }
-                        return (
+                    <td className="holdings-secondary-column">
+                      {changePercent == null ? '--' : (
                           <span className={`change-percent change-percent-${changePercent > 0 ? 'up' : changePercent < 0 ? 'down' : 'flat'}`}>
                             <span className="change-percent-main">
                               <span className="change-percent-arrow" aria-hidden="true">
@@ -1293,20 +1318,19 @@ export default function DashboardPage() {
                               <span className="price-as-of-date">as of {formatDateOnlyLabel(row.priceDate)}</span>
                             ) : null}
                           </span>
-                        )
-                      })()}
+                      )}
                     </td>
-                    <td>{formatShares(row.totalShares)}</td>
-                    <td>
+                    <td className="holdings-secondary-column">{formatShares(row.totalShares)}</td>
+                    <td className="holdings-secondary-column">
                       {holdingsLoading && row.marketValue == null ? (
                         <span className="table-skeleton table-skeleton-md" aria-label="Loading market value" />
                       ) : (
                         formatCurrency2(row.marketValue)
                       )}
                     </td>
-                    <td className={getPerformanceClassName(row.gainLoss)}>{formatCurrency2(row.gainLoss)}</td>
-                    <td className={getPerformanceClassName(row.yearlyGainLoss)}>{formatCurrency2(row.yearlyGainLoss)}</td>
-                    <td>
+                    <td className={`holdings-secondary-column ${getPerformanceClassName(row.gainLoss)}`}>{formatCurrency2(row.gainLoss)}</td>
+                    <td className={`holdings-secondary-column ${getPerformanceClassName(row.yearlyGainLoss)}`}>{formatCurrency2(row.yearlyGainLoss)}</td>
+                    <td className="holdings-secondary-column">
                       {holdingsLoading && buyTargetsByTicker[row.ticker] == null ? (
                         <span className="table-skeleton table-skeleton-sm" aria-label="Loading buy target" />
                       ) : (
@@ -1339,16 +1363,34 @@ export default function DashboardPage() {
                         </div>
                       )}
                     </td>
-                    <td>
+                    <td className="holdings-secondary-column">
                       {holdingsLoading && saleTargetsByTicker[row.ticker] == null ? (
                         <span className="table-skeleton table-skeleton-sm" aria-label="Loading sale target" />
                       ) : (
                         formatStockPrice4(saleTargetsByTicker[row.ticker] ?? null)
                       )}
                     </td>
-                    <td>{row.lotCount}</td>
+                    <td className="holdings-secondary-column">{row.lotCount}</td>
                   </tr>
-                ))}
+                  {isExpanded ? (
+                    <tr className="holdings-detail-row">
+                      <td colSpan={4}>
+                        <dl className="holdings-detail-grid">
+                          <div><dt>Change %</dt><dd className={getPerformanceClassName(changePercent)}>{formatPercent2(changePercent)}</dd></div>
+                          <div><dt>Total Shares</dt><dd>{formatShares(row.totalShares)}</dd></div>
+                          <div><dt>Market Value</dt><dd>{formatCurrency2(row.marketValue)}</dd></div>
+                          <div><dt>Gain/Loss</dt><dd className={getPerformanceClassName(row.gainLoss)}>{formatCurrency2(row.gainLoss)}</dd></div>
+                          <div><dt>Yearly Gain</dt><dd className={getPerformanceClassName(row.yearlyGainLoss)}>{formatCurrency2(row.yearlyGainLoss)}</dd></div>
+                          <div><dt>Buy Target</dt><dd>{formatStockPrice4(buyTargetsByTicker[row.ticker] ?? null)}</dd></div>
+                          <div><dt>Sale Target</dt><dd>{formatStockPrice4(saleTargetsByTicker[row.ticker] ?? null)}</dd></div>
+                          <div><dt>Lots</dt><dd>{row.lotCount}</dd></div>
+                        </dl>
+                      </td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
+                  )
+                })}
               </tbody>
             </table>
           </div>

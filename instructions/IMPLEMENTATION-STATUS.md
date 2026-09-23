@@ -1,6 +1,6 @@
 # Implementation Status
 
-Last updated: 2026-08-08
+Last updated: 2026-09-23
 
 ## Current State
 
@@ -29,6 +29,8 @@ Backend behavior has shifted to:
 - Compare page year dropdown is dynamic from transaction years plus `All`.
 - Compare page `All` view uses the backend continuous series directly instead of stitching per-year results.
 - Dashboard holdings table includes a `Gain/Loss` column combining realized sales performance with open-position performance for the selected snapshot date.
+- All routes support iPhone-width layouts through responsive navigation, forms, summary grids, tables, charts, modals, and touch targets.
+- Dashboard holdings collapse to ticker, price, and target percentage on mobile, with expandable rows for secondary values.
 
 ### Tests
 - Test files are being refactored from legacy composition assumptions to CSV/index-based semantics.
