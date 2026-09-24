@@ -29,6 +29,7 @@ Backend behavior has shifted to:
 	- stock valuation on non-trading days falls back to the closest prior close.
 
 ### Frontend
+- Partial lots expose their consuming sale allocations, and expanded partial/sold transaction details include per-allocation and aggregate gain/loss.
 - Individual stock pages edit persistent Buy on Dip and Buy Restricted-until preferences.
 - Dashboard Target % displays active restrictions with precedence; otherwise Buy on Dip displays as 100%.
 - Compare page year dropdown is dynamic from transaction years plus `All`.

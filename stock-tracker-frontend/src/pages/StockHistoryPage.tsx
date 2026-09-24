@@ -425,6 +425,7 @@ export default function StockHistoryPage() {
   const [allocations, setAllocations] = useState<Record<string, string>>({})
   const [displayLotInputs, setDisplayLotInputs] = useState<string[]>([])
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null)
+  const [expandedPartialTransactionId, setExpandedPartialTransactionId] = useState<string | null>(null)
   const [saleAllocations, setSaleAllocations] = useState<Record<string, SaleAllocation[]>>({})
   const [splitEvents, setSplitEvents] = useState<StockSplitEvent[]>([])
   const [showOriginalPreSplit, setShowOriginalPreSplit] = useState(false)
@@ -1398,6 +1399,10 @@ export default function StockHistoryPage() {
     }
   }
 
+  function togglePartialLotSales(transactionId: string) {
+    setExpandedPartialTransactionId((current) => current === transactionId ? null : transactionId)
+  }
+
   async function onInitializeDisplayLots() {
     setLotsError(null)
     setLotsBusy(true)
@@ -1825,6 +1830,16 @@ export default function StockHistoryPage() {
                     lotState === 'partial' &&
                     Number.isFinite(partialRemainingShares)
                   const quantityToDisplay = isPartialLotRow ? partialRemainingShares : displayQuantity
+                  const partialLotIds = isPartialLotRow
+                    ? new Set(sellLotsSource.filter((lot) => lot.transactionId === transaction.id).map((lot) => lot.id))
+                    : new Set<string>()
+                  const partialLotSales = isPartialLotRow
+                    ? allTickerTransactions
+                        .filter((sale) => sale.type === 'sell')
+                        .flatMap((sale) => (saleAllocations[sale.id] ?? [])
+                          .filter((allocation) => partialLotIds.has(allocation.lotId))
+                          .map((allocation) => ({ sale, allocation })))
+                    : []
                   return [
                       <tr key={transaction.id}>
                         <td>
@@ -1870,6 +1885,15 @@ export default function StockHistoryPage() {
                         </td>
                         <td>{formatCurrency2(transaction.amount)}</td>
                         <td>
+                          {isPartialLotRow ? (
+                            <button
+                              className="button button-secondary"
+                              type="button"
+                              onClick={() => togglePartialLotSales(transaction.id)}
+                            >
+                              {expandedPartialTransactionId === transaction.id ? '▼' : '▶'} Sales
+                            </button>
+                          ) : null}
                           {transaction.type === 'sell' ? (
                             <button
                               className="button button-secondary"
@@ -1891,27 +1915,96 @@ export default function StockHistoryPage() {
                           ) : null}
                         </td>
                       </tr>,
+                      isPartialLotRow && expandedPartialTransactionId === transaction.id ? (
+                        <tr key={`${transaction.id}-partial-sales`}>
+                          <td colSpan={7}>
+                            <div className="transaction-lot-details">
+                              <h4>Sales Consuming This Lot</h4>
+                              {partialLotSales.length > 0 ? (
+                                <>
+                                  <div className="table-scroll">
+                                    <table className="table">
+                                      <thead>
+                                        <tr>
+                                          <th>Sale Date</th>
+                                          <th>Sale Price</th>
+                                          <th>Quantity Consumed</th>
+                                          <th>Proceeds</th>
+                                          <th>Cost Basis</th>
+                                          <th>Gain/Loss</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {partialLotSales.map(({ sale, allocation }) => {
+                                          const quantity = Number(allocation.quantity)
+                                          const salePrice = Number(sale.price)
+                                          const unitCost = Number(allocation.unitCost)
+                                          const proceeds = quantity * salePrice
+                                          const allocationCost = quantity * unitCost
+                                          const gainLoss = proceeds - allocationCost
+                                          return (
+                                            <tr key={`${sale.id}-${allocation.lotId}`}>
+                                              <td>{formatDate(sale.transactionDate)}</td>
+                                              <td>{formatStockPrice4(salePrice)}</td>
+                                              <td>{formatNumber(quantity)}</td>
+                                              <td>{formatCurrency2(proceeds)}</td>
+                                              <td>{formatCurrency2(allocationCost)}</td>
+                                              <td className={getPerformanceClassName(gainLoss)}>{formatCurrency2(gainLoss)}</td>
+                                            </tr>
+                                          )
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  <div className="transaction-gain-loss-summary">
+                                    <span>Consumed gain/loss</span>
+                                    {(() => {
+                                      const gainLoss = partialLotSales.reduce((sum, { sale, allocation }) => {
+                                        return sum + (Number(sale.price) - Number(allocation.unitCost)) * Number(allocation.quantity)
+                                      }, 0)
+                                      return <strong className={getPerformanceClassName(gainLoss)}>{formatCurrency2(gainLoss)}</strong>
+                                    })()}
+                                  </div>
+                                </>
+                              ) : (
+                                <p>No sale allocations found for this partial lot.</p>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null,
                       transaction.type === 'sell' && expandedSaleId === transaction.id ? (
                         <tr key={`${transaction.id}-allocations`}>
                           <td colSpan={7}>
-                            <div style={{ padding: '1rem', backgroundColor: '#f5f5f5' }}>
-                              <h4 style={{ marginTop: 0 }}>Purchase Lots Consumed</h4>
+                            <div className="transaction-lot-details">
+                              <h4>Purchase Lots Consumed</h4>
                               {saleAllocations[transaction.id] && saleAllocations[transaction.id].length > 0 ? (
-                                <table style={{ width: '100%', fontSize: '0.9em', borderCollapse: 'collapse' }}>
+                                <>
+                                <div className="table-scroll">
+                                <table className="table">
                                   <thead>
-                                    <tr style={{ borderBottom: '1px solid #ddd' }}>
-                                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Original Type</th>
-                                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Purchase Date</th>
-                                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Unit Cost</th>
-                                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Quantity Consumed</th>
-                                      <th style={{ textAlign: 'left', padding: '0.5rem' }}>Total Cost</th>
+                                    <tr>
+                                      <th>Original Type</th>
+                                      <th>Purchase Date</th>
+                                      <th>Unit Cost</th>
+                                      <th>Quantity Consumed</th>
+                                      <th>Proceeds</th>
+                                      <th>Total Cost</th>
+                                      <th>Gain/Loss</th>
                                     </tr>
                                   </thead>
                                   <tbody>
-                                    {saleAllocations[transaction.id].map((alloc, index) => (
-                                      <tr key={index} style={{ borderBottom: '1px solid #eee' }}>
-                                        <td style={{ padding: '0.5rem' }}>{alloc.sourceType === 'purchase' ? 'buy' : 'div'}</td>
-                                        <td style={{ padding: '0.5rem' }}>
+                                    {saleAllocations[transaction.id].map((alloc, index) => {
+                                      const quantity = Number(alloc.quantity)
+                                      const salePrice = Number(transaction.price)
+                                      const unitCost = Number(alloc.unitCost)
+                                      const proceeds = quantity * salePrice
+                                      const allocationCost = unitCost * quantity
+                                      const gainLoss = proceeds - allocationCost
+                                      return (
+                                      <tr key={index}>
+                                        <td>{alloc.sourceType === 'purchase' ? 'buy' : 'div'}</td>
+                                        <td>
                                           <div className="purchase-age-cell">
                                             <span>{formatDate(alloc.purchaseDate)}</span>
                                             {alloc.sourceType === 'purchase' && isOverOneYearOld(alloc.purchaseDate, transaction.transactionDate) ? (
@@ -1919,7 +2012,7 @@ export default function StockHistoryPage() {
                                             ) : null}
                                           </div>
                                         </td>
-                                        <td style={{ padding: '0.5rem' }}>
+                                        <td>
                                           <div className="sale-lot-cost-cell">
                                             <span>{formatStockPrice4(alloc.unitCost)}</span>
                                             <span className={getSalePriceComparisonClassName(Number(alloc.unitCost), Number(transaction.price))}>
@@ -1927,12 +2020,26 @@ export default function StockHistoryPage() {
                                             </span>
                                           </div>
                                         </td>
-                                        <td style={{ padding: '0.5rem' }}>{formatNumber(alloc.quantity)}</td>
-                                        <td style={{ padding: '0.5rem' }}>{formatCurrency2(alloc.unitCost * alloc.quantity)}</td>
+                                        <td>{formatNumber(quantity)}</td>
+                                        <td>{formatCurrency2(proceeds)}</td>
+                                        <td>{formatCurrency2(allocationCost)}</td>
+                                        <td className={getPerformanceClassName(gainLoss)}>{formatCurrency2(gainLoss)}</td>
                                       </tr>
-                                    ))}
+                                      )
+                                    })}
                                   </tbody>
                                 </table>
+                                </div>
+                                <div className="transaction-gain-loss-summary">
+                                  <span>Transaction gain/loss</span>
+                                  {(() => {
+                                    const transactionGainLoss = saleAllocations[transaction.id].reduce((sum, allocation) => {
+                                      return sum + (Number(transaction.price) - Number(allocation.unitCost)) * Number(allocation.quantity)
+                                    }, 0)
+                                    return <strong className={getPerformanceClassName(transactionGainLoss)}>{formatCurrency2(transactionGainLoss)}</strong>
+                                  })()}
+                                </div>
+                                </>
                               ) : (
                                 <p>No purchase lots found for this sale.</p>
                               )}
