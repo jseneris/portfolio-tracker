@@ -1327,6 +1327,8 @@ export default function StockHistoryPage() {
       }
     }
 
+    let saleGainLoss: number | null = null
+
     if (form.type === 'sell') {
       if (availableLots.length === 0) {
         setError('No open lots are available for this ticker.')
@@ -1340,12 +1342,47 @@ export default function StockHistoryPage() {
         return
       }
 
+      const saleProceeds = Number(payload.quantity || 0) * Number(payload.price || 0)
+      const saleCostBasis = allocationPayload.reduce((sum, row) => {
+        const lot = availableLots.find((candidate) => candidate.id === row.lotId)
+        const unitCost = Number(lot?.unitCost)
+        return Number.isFinite(unitCost) ? sum + (unitCost * row.quantity) : sum
+      }, 0)
+      saleGainLoss = saleProceeds - saleCostBasis
+
       payload.allocations = allocationPayload
     }
 
     setSaving(true)
     try {
       await createStockTransaction(payload)
+
+      if (form.type === 'buy' && buyOnDip) {
+        try {
+          await updateTickerPreference(ticker, {
+            buyOnDip: false,
+            buyRestricted,
+            buyRestrictedUntil: buyRestricted ? buyRestrictedUntil : null,
+          })
+        } catch {
+          // Best-effort: the buy transaction already succeeded, so a preference update failure is non-blocking.
+        }
+      }
+
+      if (form.type === 'sell' && saleGainLoss != null && saleGainLoss < -ALLOCATION_TOLERANCE) {
+        const restrictedUntilDate = new Date()
+        restrictedUntilDate.setUTCDate(restrictedUntilDate.getUTCDate() + 31)
+        try {
+          await updateTickerPreference(ticker, {
+            buyOnDip,
+            buyRestricted: true,
+            buyRestrictedUntil: restrictedUntilDate.toISOString().slice(0, 10),
+          })
+        } catch {
+          // Best-effort: the sell transaction already succeeded, so a preference update failure is non-blocking.
+        }
+      }
+
       setSaving(false)
       setSuccess('Transaction created.')
       emitPortfolioUpdated()

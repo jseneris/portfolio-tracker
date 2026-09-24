@@ -21,6 +21,7 @@ import {
   getPortfolioSummary,
   getStockTransactions,
   getTickerPreferences,
+  updateTickerPreference,
   UserTargetSettings,
   getUserTargetSettings,
   getAllStockSplits,
@@ -1182,6 +1183,20 @@ export default function DashboardPage() {
     setAddStockSaving(true)
     try {
       await createStockTransaction(payload)
+
+      const existingPreference = tickerPreferencesByTicker[payload.ticker]
+      if (existingPreference?.buyOnDip) {
+        try {
+          await updateTickerPreference(payload.ticker, {
+            buyOnDip: false,
+            buyRestricted: existingPreference.buyRestricted,
+            buyRestrictedUntil: existingPreference.buyRestrictedUntil,
+          })
+        } catch {
+          // Best-effort: the buy transaction already succeeded, so a preference update failure is non-blocking.
+        }
+      }
+
       emitPortfolioUpdated()
       closeAddStockModal()
     } catch (err: unknown) {
