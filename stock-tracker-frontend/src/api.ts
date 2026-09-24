@@ -303,6 +303,20 @@ export type UserTargetSettings = {
   buyTargetPercentFor6OrMoreDisplayLots: number
 }
 
+export type TickerPreference = {
+  ticker: string
+  buyOnDip: boolean
+  buyRestricted: boolean
+  buyRestrictedUntil: string | null
+  isBuyRestricted: boolean
+}
+
+export type UpdateTickerPreferenceInput = {
+  buyOnDip: boolean
+  buyRestricted: boolean
+  buyRestrictedUntil: string | null
+}
+
 // ============================================================================
 // Internal Request Helpers
 // ============================================================================
@@ -507,6 +521,24 @@ export async function getUserTargetSettings(): Promise<UserTargetSettings> {
 
 export async function updateUserTargetSettings(payload: UserTargetSettings): Promise<UserTargetSettings> {
   return requestApi<UserTargetSettings>('/api/user-settings/targets', {
+    method: 'PUT',
+    body: payload,
+  })
+}
+
+export async function getTickerPreferences(): Promise<TickerPreference[]> {
+  return requestApi<TickerPreference[]>('/api/ticker-preferences')
+}
+
+export async function getTickerPreference(ticker: string): Promise<TickerPreference> {
+  return requestApi<TickerPreference>(`/api/ticker-preferences/${encodeURIComponent(ticker)}`)
+}
+
+export async function updateTickerPreference(
+  ticker: string,
+  payload: UpdateTickerPreferenceInput
+): Promise<TickerPreference> {
+  return requestApi<TickerPreference>(`/api/ticker-preferences/${encodeURIComponent(ticker)}`, {
     method: 'PUT',
     body: payload,
   })

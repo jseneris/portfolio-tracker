@@ -330,6 +330,52 @@ body {
   gap: 0.45rem;
 }
 
+.ticker-preferences-content {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.ticker-preferences-panel h3,
+.ticker-preferences-panel p {
+  margin: 0;
+}
+
+.ticker-preferences-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.25rem;
+  white-space: nowrap;
+}
+
+.checkbox-label input {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.ticker-restriction-date {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.ticker-restriction-date input {
+  min-height: 2.25rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+
 .button {
   border: 1px solid #cbd5e1;
   border-radius: 0.45rem;
@@ -863,6 +909,30 @@ body {
   color: #16a34a;
 }
 
+.target-proximity-buy-on-dip .target-proximity-fill {
+  background: #2563eb;
+  box-shadow: 0 0 0 1px #2563eb inset;
+}
+
+.target-proximity-buy-on-dip .target-proximity-value {
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.buy-restricted-indicator {
+  display: inline-flex;
+  flex-direction: column;
+  color: #991b1b;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.buy-restricted-indicator small {
+  color: #64748b;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
 .holdings-expand-column,
 .holdings-detail-row {
   display: none;
@@ -1147,6 +1217,25 @@ body {
     flex-direction: column;
     align-items: stretch;
     width: 100%;
+  }
+
+  .ticker-preferences-content,
+  .ticker-preferences-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ticker-preferences-form {
+    width: 100%;
+  }
+
+  .checkbox-label {
+    min-height: 44px;
+  }
+
+  .ticker-restriction-date input {
+    min-height: 44px;
+    font-size: 16px;
   }
 
   .inline-actions .button,

@@ -10,6 +10,7 @@ import stockRoutes from './routes/stocks.js';
 import lotsRoutes from './routes/lots.js';
 import displayLotsRoutes from './routes/display-lots.js';
 import userSettingsRoutes from './routes/user-settings.js';
+import tickerPreferencesRoutes from './routes/ticker-preferences.js';
 
 
 const app: Express = express();
@@ -39,6 +40,7 @@ app.use('/api/stocks', stockRoutes);
 app.use('/api/lots', lotsRoutes);
 app.use('/api/display-lots', displayLotsRoutes);
 app.use('/api/user-settings', userSettingsRoutes);
+app.use('/api/ticker-preferences', tickerPreferencesRoutes);
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {

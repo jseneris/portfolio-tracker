@@ -31,6 +31,7 @@ Create `.env` or use Replit Secrets:
 
 ## Recent MVP Updates
 
+- Individual stock pages persist Buy on Dip and dated Buy Restricted preferences; dashboard Target % shows active restrictions or a 100% Buy on Dip signal.
 - All frontend routes now use an iPhone-responsive layout with compact navigation, shrink-safe forms and summary grids, touch-sized controls, viewport-contained tables, charts, and modals.
 - Dashboard holdings use compact mobile rows showing ticker, price, and target percentage, with an expandable detail view for the remaining fields.
 - Dashboard now includes an Add Stock modal (ticker, shares, price, date) for quick buy-entry workflow.

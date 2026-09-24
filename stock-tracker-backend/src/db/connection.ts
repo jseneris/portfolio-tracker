@@ -227,6 +227,21 @@ async function createTablesIfNotExist() {
         updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
       );
 
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'UserTickerPreferences')
+      CREATE TABLE UserTickerPreferences (
+        id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+        userId NVARCHAR(255) NOT NULL,
+        ticker NVARCHAR(10) NOT NULL,
+        buyOnDip BIT NOT NULL DEFAULT 0,
+        buyRestricted BIT NOT NULL DEFAULT 0,
+        buyRestrictedUntil DATE NULL,
+        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        CONSTRAINT CK_UserTickerPreferences_RestrictionDate CHECK (
+          buyRestricted = 0 OR buyRestrictedUntil IS NOT NULL
+        )
+      );
+
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StockExchanges')
       CREATE TABLE StockExchanges (
         id UNIQUEIDENTIFIER PRIMARY KEY,
@@ -317,6 +332,11 @@ async function createTablesIfNotExist() {
 
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_UserSettings_UserId')
       CREATE UNIQUE INDEX UX_UserSettings_UserId ON UserSettings(userId);
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_UserTickerPreferences_UserId')
+      CREATE INDEX IX_UserTickerPreferences_UserId ON UserTickerPreferences(userId);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_UserTickerPreferences_UserId_Ticker')
+      CREATE UNIQUE INDEX UX_UserTickerPreferences_UserId_Ticker ON UserTickerPreferences(userId, ticker);
 
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_StockExchanges_ExchangeTransactionId')
       CREATE UNIQUE INDEX UX_StockExchanges_ExchangeTransactionId ON StockExchanges(exchangeTransactionId);

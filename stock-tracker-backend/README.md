@@ -49,6 +49,8 @@ npm run build
 npm run daily-eod
 ```
 
+Individual ticker lookup failures are logged as warnings and do not fail the cron run. Database initialization failures and job-level exceptions still exit unsuccessfully.
+
 For Railway, deploy a second service from this same `stock-tracker-backend` directory. Set its build command to `npm run build`, start command to `npm run daily-eod`, and configure the service Cron Schedule in UTC. The service needs the same `DB_SERVER`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` variables as the API.
 
 

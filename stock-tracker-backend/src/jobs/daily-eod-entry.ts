@@ -11,7 +11,9 @@ async function runDailyEodJob(): Promise<void> {
     console.log('[daily-eod] Sync complete:', summary);
 
     if (summary.failedTickers.length > 0) {
-      process.exitCode = 1;
+      console.warn(
+        `[daily-eod] Completed with ${summary.failedTickers.length} ticker warning(s); successful ticker updates were retained.`
+      );
     }
   } catch (error) {
     console.error('[daily-eod] Sync failed:', error);

@@ -1,6 +1,6 @@
 # Implementation Status
 
-Last updated: 2026-09-23
+Last updated: 2026-09-24
 
 ## Current State
 
@@ -13,10 +13,13 @@ Backend behavior has shifted to:
 
 ### Schema
 - Cash, stock, source-lot, split, display-lot, historical-price, users/settings tables are present.
+- `UserTickerPreferences` persists Buy on Dip and dated Buy Restricted signals per `(userId, ticker)`.
 - `DisplayLots.lotsCsv` and `UserSplitActivations` are active parts of current workflows.
 - Legacy compatibility tables for display-lot composition/allocation and split-adjustment audit have been removed from the active schema.
 
 ### Routes
+- Ticker preference endpoints support user-scoped list, read-with-defaults, and upsert operations.
+- The one-shot Daily EOD job reports individual ticker lookup failures as partial-success warnings; only job-level failures produce a nonzero exit.
 - Display lot endpoints are index-based for combine/split/delete operations.
 - Stock create/delete flows reconcile display quantities through CSV parsing/serialization helpers.
 - Manual split endpoint is on `/api/lots/ticker/:ticker/split` and uses activation model.
@@ -26,6 +29,8 @@ Backend behavior has shifted to:
 	- stock valuation on non-trading days falls back to the closest prior close.
 
 ### Frontend
+- Individual stock pages edit persistent Buy on Dip and Buy Restricted-until preferences.
+- Dashboard Target % displays active restrictions with precedence; otherwise Buy on Dip displays as 100%.
 - Compare page year dropdown is dynamic from transaction years plus `All`.
 - Compare page `All` view uses the backend continuous series directly instead of stitching per-year results.
 - Dashboard holdings table includes a `Gain/Loss` column combining realized sales performance with open-position performance for the selected snapshot date.

@@ -68,6 +68,13 @@ This document reflects the schema currently created by [stock-tracker-backend/sr
 ### UserSettings
 - Purpose: per-user target settings and thresholds.
 
+### UserTickerPreferences
+- Purpose: persistent per-user/per-ticker dashboard buying signals.
+- Key fields:
+- `buyOnDip` (forces the displayed dashboard Target % to 100%).
+- `buyRestricted` and `buyRestrictedUntil` (restriction remains active through the stored date).
+- Unique index: `UX_UserTickerPreferences_UserId_Ticker`.
+
 ## Current Split Model
 
 - Split events are stored globally in `StockSplits`.

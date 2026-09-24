@@ -5,7 +5,7 @@ excludeAgent: "code-review"
 
 # API Endpoints (Current Implementation)
 
-Last updated: 2026-08-31
+Last updated: 2026-09-24
 
 Authentication and scoping notes:
 - `authenticateRequest` middleware is applied globally before route handlers.
@@ -229,6 +229,22 @@ Request body:
 ### PUT /api/user-settings/targets
 - Upserts user target settings.
 - Validates all target fields are finite positive numbers and bounds-checks large values.
+
+## Ticker Preferences
+
+### GET /api/ticker-preferences
+- Returns all persistent ticker preferences for the current user.
+- Includes `buyOnDip`, `buyRestricted`, `buyRestrictedUntil`, and computed `isBuyRestricted`.
+
+### GET /api/ticker-preferences/:ticker
+- Returns one normalized ticker preference for the current user.
+- Returns neutral defaults when no row exists.
+
+### PUT /api/ticker-preferences/:ticker
+- Upserts one row keyed by current user and normalized ticker.
+- Request fields: `buyOnDip`, `buyRestricted`, and `buyRestrictedUntil`.
+- A valid `YYYY-MM-DD` restriction date is required when `buyRestricted` is enabled.
+- Restrictions are active through the selected date and expire automatically afterward.
 
 ## Health
 

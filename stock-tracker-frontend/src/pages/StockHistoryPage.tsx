@@ -26,7 +26,9 @@ import {
   getStockSplitsByTicker,
   getStockSummaryByTicker,
   getStockTransactionsByTicker,
+  getTickerPreference,
   setInitialPurchaseFlag,
+  updateTickerPreference,
   HistoricalPrice,
 } from '../api'
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
@@ -428,6 +430,11 @@ export default function StockHistoryPage() {
   const [showOriginalPreSplit, setShowOriginalPreSplit] = useState(false)
   const [showDividends, setShowDividends] = useState(true)
   const [showSales, setShowSales] = useState(true)
+  const [buyOnDip, setBuyOnDip] = useState(false)
+  const [buyRestricted, setBuyRestricted] = useState(false)
+  const [buyRestrictedUntil, setBuyRestrictedUntil] = useState('')
+  const [savingTickerPreference, setSavingTickerPreference] = useState(false)
+  const [tickerPreferenceError, setTickerPreferenceError] = useState<string | null>(null)
   const [availableCash, setAvailableCash] = useState<number | null>(null)
   const [latestHistoricalPrice, setLatestHistoricalPrice] = useState<number | null>(null)
   const [livePrice, setLivePrice] = useState<number | null>(null)
@@ -1045,16 +1052,20 @@ export default function StockHistoryPage() {
     setLoading(true)
     setError(null)
     try {
-      const [tickerSummaryData, txData, tickerLots, displayLotsData, cashSummaryData, splitEventsData] = await Promise.all([
+      const [tickerSummaryData, txData, tickerLots, displayLotsData, cashSummaryData, splitEventsData, tickerPreference] = await Promise.all([
         getStockSummaryByTicker(ticker),
         getStockTransactionsByTicker(ticker),
         getPurchaseLotsByTicker(ticker),
         getDisplayLotsByTicker(ticker),
         getCashSummary(),
         getStockSplitsByTicker(ticker),
+        getTickerPreference(ticker),
       ])
       setSummary(tickerSummaryData)
       setSaleAllocations({})
+      setBuyOnDip(tickerPreference.buyOnDip)
+      setBuyRestricted(tickerPreference.buyRestricted)
+      setBuyRestrictedUntil(tickerPreference.buyRestrictedUntil ?? '')
 
       const earliestTxDate = txData.reduce((earliest, transaction) => {
         const transactionDate = toDateOnly(transaction.transactionDate)
@@ -1487,6 +1498,35 @@ export default function StockHistoryPage() {
     }
   }
 
+  async function onSaveTickerPreference(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setTickerPreferenceError(null)
+    setSuccess(null)
+
+    if (buyRestricted && !buyRestrictedUntil) {
+      setTickerPreferenceError('Restricted until date is required when Buy Restricted is selected.')
+      return
+    }
+
+    setSavingTickerPreference(true)
+    try {
+      const preference = await updateTickerPreference(ticker, {
+        buyOnDip,
+        buyRestricted,
+        buyRestrictedUntil: buyRestricted ? buyRestrictedUntil : null,
+      })
+      setBuyOnDip(preference.buyOnDip)
+      setBuyRestricted(preference.buyRestricted)
+      setBuyRestrictedUntil(preference.buyRestrictedUntil ?? '')
+      setSuccess(`${ticker} trading preferences saved.`)
+      emitPortfolioUpdated()
+    } catch (err: unknown) {
+      setTickerPreferenceError(err instanceof Error ? err.message : 'Unable to save ticker preferences.')
+    } finally {
+      setSavingTickerPreference(false)
+    }
+  }
+
   return (
     <section>
       <div className="panel panel-tight row-between">
@@ -1516,6 +1556,60 @@ export default function StockHistoryPage() {
 
       {error ? <div className="panel status status-error">{error}</div> : null}
       {success ? <div className="panel status status-success">{success}</div> : null}
+
+      {!loading && !error ? (
+        <div className="panel panel-tight ticker-preferences-panel">
+          <div className="ticker-preferences-content">
+            <div>
+              <h3>Trading Preferences</h3>
+              <p className="hint">Ticker-specific dashboard signals for {ticker}.</p>
+            </div>
+            <form className="ticker-preferences-form" onSubmit={onSaveTickerPreference}>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={buyOnDip}
+                  onChange={(event) => setBuyOnDip(event.target.checked)}
+                  disabled={savingTickerPreference}
+                />
+                Buy on Dip
+              </label>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={buyRestricted}
+                  onChange={(event) => {
+                    const checked = event.target.checked
+                    setBuyRestricted(checked)
+                    if (!checked) {
+                      setBuyRestrictedUntil('')
+                    }
+                  }}
+                  disabled={savingTickerPreference}
+                />
+                Buy Restricted
+              </label>
+              {buyRestricted ? (
+                <label className="ticker-restriction-date">
+                  Restricted until
+                  <input
+                    type="date"
+                    min={new Date().toISOString().slice(0, 10)}
+                    value={buyRestrictedUntil}
+                    onChange={(event) => setBuyRestrictedUntil(event.target.value)}
+                    disabled={savingTickerPreference}
+                    required
+                  />
+                </label>
+              ) : null}
+              <button className="button button-primary" type="submit" disabled={savingTickerPreference || (buyRestricted && !buyRestrictedUntil)}>
+                {savingTickerPreference ? 'Saving...' : 'Save Preferences'}
+              </button>
+            </form>
+          </div>
+          {tickerPreferenceError ? <div className="status status-error">{tickerPreferenceError}</div> : null}
+        </div>
+      ) : null}
 
       {loading ? (
         <>

@@ -13,12 +13,14 @@ import {
   PortfolioSummary,
   PurchaseLot,
   StockTransaction,
+  TickerPreference,
   createStockTransaction,
   emitPortfolioUpdated,
   getCurrentPrices,
   getDisplayLots,
   getPortfolioSummary,
   getStockTransactions,
+  getTickerPreferences,
   UserTargetSettings,
   getUserTargetSettings,
   getAllStockSplits,
@@ -316,6 +318,7 @@ export default function DashboardPage() {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
   const [saleTargetsByTicker, setSaleTargetsByTicker] = useState<Record<string, number | null>>({})
   const [buyTargetsByTicker, setBuyTargetsByTicker] = useState<Record<string, number | null>>({})
+  const [tickerPreferencesByTicker, setTickerPreferencesByTicker] = useState<Record<string, TickerPreference>>({})
   const [displayLotCountsByTicker, setDisplayLotCountsByTicker] = useState<Record<string, number>>({})
   const snapshotDate = new Date().toISOString().slice(0, 10)
   const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([])
@@ -681,6 +684,7 @@ export default function DashboardPage() {
         saleTargetsByTicker[row.ticker] ?? null,
         buyTargetsByTicker[row.ticker] ?? null
       )
+      const tickerPreference = tickerPreferencesByTicker[row.ticker]
 
       return {
         ticker: row.ticker,
@@ -693,12 +697,15 @@ export default function DashboardPage() {
         costBasis,
         gainLoss,
         yearlyGainLoss,
-        targetProximityPercent: targetProximity.percent,
-        targetDirection: targetProximity.direction,
+        targetProximityPercent: tickerPreference?.buyOnDip ? 100 : targetProximity.percent,
+        targetDirection: tickerPreference?.buyOnDip ? 'buy' : targetProximity.direction,
+        buyOnDip: Boolean(tickerPreference?.buyOnDip),
+        isBuyRestricted: Boolean(tickerPreference?.isBuyRestricted),
+        buyRestrictedUntil: tickerPreference?.buyRestrictedUntil ?? null,
         lotCount: Number(displayLotCountsByTicker[row.ticker] ?? snapshot.lotCountByTicker[row.ticker] ?? row.lotCount),
       }
     })
-  }, [summaryHoldings, snapshot.holdings, snapshot.stockCostBasisExcludingDividendsByTicker, snapshot.realizedSalesPerformanceByTicker, snapshot.lotCountByTicker, stockTransactions, cashTransactions, historicalPrices, splitEvents, snapshotDate, displayLotCountsByTicker, saleTargetsByTicker, buyTargetsByTicker])
+  }, [summaryHoldings, snapshot.holdings, snapshot.stockCostBasisExcludingDividendsByTicker, snapshot.realizedSalesPerformanceByTicker, snapshot.lotCountByTicker, stockTransactions, cashTransactions, historicalPrices, splitEvents, snapshotDate, displayLotCountsByTicker, saleTargetsByTicker, buyTargetsByTicker, tickerPreferencesByTicker])
 
   const displayedHoldingsMarketValue = useMemo(() => {
     if (holdingsRows.some((row) => row.marketValue == null || !Number.isFinite(row.marketValue))) {
@@ -835,12 +842,13 @@ export default function DashboardPage() {
 
       const today = new Date().toISOString().slice(0, 10)
       const historicalEndDate = snapshotDate < today ? snapshotDate : today
-      const [transactionsResult, cashTransactionsResult, settingsResult, displayLotsResult, splitEventsResult] = await Promise.all([
+      const [transactionsResult, cashTransactionsResult, settingsResult, displayLotsResult, splitEventsResult, tickerPreferencesResult] = await Promise.all([
         getStockTransactions(),
         getCashTransactions(),
         getUserTargetSettings(),
         getDisplayLots(),
         getAllStockSplits(),
+        getTickerPreferences(),
       ])
       const tickers = getTickersFromTransactions(transactionsResult)
 
@@ -889,6 +897,9 @@ export default function DashboardPage() {
       setSplitEvents(splitEventsResult)
       setHistoricalLoadedEndDate(historicalEndDate)
       setDisplayLotCountsByTicker(displayLotCountsByTicker)
+      setTickerPreferencesByTicker(Object.fromEntries(
+        tickerPreferencesResult.map((preference) => [preference.ticker, preference])
+      ))
       setSaleTargetsByTicker(calculateSaleTargetsByTicker(
         summary,
         latestByTicker,
@@ -1338,14 +1349,19 @@ export default function DashboardPage() {
                       )}
                     </td>
                     <td>
-                      {holdingsLoading && row.targetProximityPercent == null ? (
+                      {holdingsLoading ? (
                         <span className="table-skeleton table-skeleton-sm" aria-label="Loading target percent" />
+                      ) : row.isBuyRestricted ? (
+                        <div className="buy-restricted-indicator" title={`Buy restricted through ${row.buyRestrictedUntil}`}>
+                          <span>Restricted</span>
+                          <small>until {formatDateOnlyLabel(row.buyRestrictedUntil)}</small>
+                        </div>
                       ) : row.targetProximityPercent == null ? (
                         formatPercent2(null)
                       ) : (
                         <div
-                          className={`target-proximity target-proximity-${row.targetDirection ?? 'neutral'}${row.targetProximityPercent >= 100 ? ' target-proximity-hit' : ''}`}
-                          title={row.targetDirection === 'sell' ? 'Approaching sale target' : row.targetDirection === 'buy' ? 'Approaching buy target' : undefined}
+                          className={`target-proximity target-proximity-${row.targetDirection ?? 'neutral'}${row.targetProximityPercent >= 100 ? ' target-proximity-hit' : ''}${row.buyOnDip ? ' target-proximity-buy-on-dip' : ''}`}
+                          title={row.buyOnDip ? 'Buy on Dip' : row.targetDirection === 'sell' ? 'Approaching sale target' : row.targetDirection === 'buy' ? 'Approaching buy target' : undefined}
                         >
                           <span className="target-proximity-value">{formatPercent2(row.targetProximityPercent)}</span>
                           <span className="target-proximity-track">
@@ -1353,7 +1369,9 @@ export default function DashboardPage() {
                               className="target-proximity-fill"
                               style={{
                                 width: `${
-                                  row.targetDirection === 'buy'
+                                  row.buyOnDip
+                                    ? 100
+                                    : row.targetDirection === 'buy'
                                     ? Math.min(100, Math.max(0, 100 - row.targetProximityPercent))
                                     : Math.min(100, Math.max(0, row.targetProximityPercent))
                                 }%`,

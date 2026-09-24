@@ -28,7 +28,8 @@ describe('19. Database Schema - Clean Install', () => {
         'UserSplitActivations',
         'HistoricalPrices',
         'Users',
-        'UserSettings'
+        'UserSettings',
+        'UserTickerPreferences'
       )
       ORDER BY name
     `);
@@ -43,6 +44,7 @@ describe('19. Database Schema - Clean Install', () => {
       'StockTransactions',
       'UserSplitActivations',
       'UserSettings',
+      'UserTickerPreferences',
       'Users',
     ]);
 
@@ -98,6 +100,24 @@ describe('19. Database Schema - Clean Install', () => {
       'updatedAt',
     ]);
 
+    const userTickerPreferencesColumnsResult = await pool.request().query(`
+      SELECT name
+      FROM sys.columns
+      WHERE object_id = OBJECT_ID('UserTickerPreferences')
+      ORDER BY column_id
+    `);
+
+    expectColumnsToMatch(userTickerPreferencesColumnsResult.recordset.map((row: any) => row.name), [
+      'id',
+      'userId',
+      'ticker',
+      'buyOnDip',
+      'buyRestricted',
+      'buyRestrictedUntil',
+      'createdAt',
+      'updatedAt',
+    ]);
+
     const stockTransactionColumnsResult = await pool.request().query(`
       SELECT name
       FROM sys.columns
@@ -116,6 +136,7 @@ describe('19. Database Schema - Clean Install', () => {
       'transactionDate',
       'splitAdjusted',
       'lastSplitId',
+      'isInitialPurchase',
       'createdAt',
       'updatedAt',
     ]);
