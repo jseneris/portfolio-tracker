@@ -1,5 +1,7 @@
-import { NavLink, Route, Routes } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Navigate, NavLink, Route, Routes } from 'react-router-dom'
 import { useAppAuth } from './auth'
+import { getUserProfile } from './api'
 import DashboardPage from './pages/DashboardPage'
 import CashPage from './pages/CashPage'
 import StocksPage from './pages/StocksPage'
@@ -9,9 +11,34 @@ import ComparisonPage from './pages/ComparisonPage'
 import StockSplitsPage from './pages/StockSplitsPage'
 import UserSettingsPage from './pages/UserSettingsPage'
 import AllocationsPage from './pages/AllocationsPage'
+import PortfolioInsightsPage from './pages/PortfolioInsightsPage'
 
 export default function App() {
   const auth = useAppAuth()
+  const [aiInsightsEnabled, setAiInsightsEnabled] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (auth.isLoading || !auth.isAuthenticated) {
+      setAiInsightsEnabled(false)
+      return () => {
+        cancelled = true
+      }
+    }
+
+    getUserProfile()
+      .then((profile) => {
+        if (!cancelled) setAiInsightsEnabled(profile.aiInsightsEnabled)
+      })
+      .catch(() => {
+        if (!cancelled) setAiInsightsEnabled(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [auth.isAuthenticated, auth.isLoading])
 
   if (auth.isLoading) {
     return (
@@ -65,6 +92,7 @@ export default function App() {
             <NavLink to="/allocations">Allocations</NavLink>
             <NavLink to="/splits">Splits</NavLink>
             <NavLink to="/comparison">Compare</NavLink>
+            {aiInsightsEnabled ? <NavLink to="/insights">Insights</NavLink> : null}
             <NavLink to="/user-settings">User</NavLink>
           </nav>
           {auth.isConfigured ? (
@@ -86,6 +114,10 @@ export default function App() {
           <Route path="/splits" element={<StockSplitsPage />} />
           <Route path="/comparison" element={<ComparisonPage />} />
           <Route path="/comparison-all" element={<ComparisonPage />} />
+          <Route
+            path="/insights"
+            element={aiInsightsEnabled ? <PortfolioInsightsPage /> : <Navigate to="/" replace />}
+          />
           <Route path="/user-settings" element={<UserSettingsPage />} />
         </Routes>
       </main>

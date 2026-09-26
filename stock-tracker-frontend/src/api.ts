@@ -303,6 +303,10 @@ export type UserTargetSettings = {
   buyTargetPercentFor6OrMoreDisplayLots: number
 }
 
+export type UserProfile = {
+  aiInsightsEnabled: boolean
+}
+
 export type TickerPreference = {
   ticker: string
   buyOnDip: boolean
@@ -315,6 +319,29 @@ export type UpdateTickerPreferenceInput = {
   buyOnDip: boolean
   buyRestricted: boolean
   buyRestrictedUntil: string | null
+}
+
+export type PortfolioInsightFact = {
+  id: string
+  type: 'concentration' | 'unrealized_loss_lot' | 'missing_price'
+  ticker: string
+  marketValue?: number
+  percentOfEquities?: number
+  quantity?: number
+  costBasis?: number
+  estimatedValue?: number
+  unrealizedLoss?: number
+  acquisitionDate?: string
+  daysHeld?: number
+  marketDate?: string | null
+  recentAcquisitionCount?: number
+}
+
+export type PortfolioInsightsReport = {
+  generatedAt: string
+  facts: PortfolioInsightFact[]
+  explanations: Array<{ factId: string; explanation: string }>
+  limitations: string[]
 }
 
 // ============================================================================
@@ -519,6 +546,10 @@ export async function getUserTargetSettings(): Promise<UserTargetSettings> {
   return requestApi<UserTargetSettings>('/api/user-settings/targets')
 }
 
+export async function getUserProfile(): Promise<UserProfile> {
+  return requestApi<UserProfile>('/api/user-settings/profile')
+}
+
 export async function updateUserTargetSettings(payload: UserTargetSettings): Promise<UserTargetSettings> {
   return requestApi<UserTargetSettings>('/api/user-settings/targets', {
     method: 'PUT',
@@ -542,6 +573,10 @@ export async function updateTickerPreference(
     method: 'PUT',
     body: payload,
   })
+}
+
+export async function generatePortfolioInsights(): Promise<PortfolioInsightsReport> {
+  return requestApi<PortfolioInsightsReport>('/api/portfolio-insights', { method: 'POST' })
 }
 
 // ============================================================================

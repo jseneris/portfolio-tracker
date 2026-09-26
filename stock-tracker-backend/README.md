@@ -66,6 +66,14 @@ AUTH0_DOMAIN=your-domain.auth0.com
 AUTH0_AUDIENCE=your-api-identifier
 ```
 
+## Portfolio Insights
+
+The authenticated `POST /api/portfolio-insights` endpoint compares open-lot cost basis with the latest stored close, identifies concentrated equity positions and unrealized-loss lots, and asks GitHub Copilot for explanations tied to those facts. It does not create trade instructions or determine tax treatment. Requests are limited to one per user per minute.
+
+For personal local use, install and sign in to the GitHub Copilot CLI with the same account as your Copilot subscription. The Node SDK uses that local sign-in; it does not use an OpenAI API key. Set `COPILOT_MODEL` in `.env.local` if you want a model other than `gpt-5.6-luna`. Model availability and credit costs depend on your Copilot plan.
+
+The Copilot SDK runs with tools disabled for this feature, receives only computed portfolio facts, and removes each inspection session after use. This setup is intended for a single local user; do not deploy a shared backend using your personal Copilot sign-in. Insights are educational estimates, not financial or tax advice.
+
 ## CORS Origins
 
 Set `FRONTEND_URL` to one allowed browser origin or to a comma-separated list. For local development and the deployed Vercel frontend, use:

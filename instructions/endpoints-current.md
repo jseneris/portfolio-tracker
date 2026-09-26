@@ -42,6 +42,19 @@ Authentication and scoping notes:
   - per-ticker holdings (`ticker`, `totalShares`, `costBasis`, `lotCount`).
 - Uses `PurchaseLots` for holdings calculations.
 
+## Portfolio Insights
+
+### GET /api/user-settings/profile
+- Returns the authenticated user's `aiInsightsEnabled` feature flag.
+- The flag defaults to `false` and is not writable through public user-settings routes.
+
+### POST /api/portfolio-insights
+- Requires the authenticated current user to have `Users.aiInsightsEnabled = 1` and a locally authenticated Copilot CLI session.
+- Returns `403` when AI insights are disabled for the current user.
+- Returns concentration facts, open-lot unrealized-loss estimates, missing-price tickers, model explanations linked to fact IDs, and limitations.
+- Uses the latest stored `HistoricalPrices` close and current user's open `PurchaseLots`. Recent acquisitions are checked only against lots tracked in this application.
+- Limited to one request per user per minute. Copilot receives portfolio facts and tickers, not user or transaction identifiers; agent tools are disabled and the inspection session is deleted afterward.
+
 ### GET /api/stocks
 - Returns all stock transactions for the current user.
 - Ordered by `transactionDate DESC, ticker ASC`.

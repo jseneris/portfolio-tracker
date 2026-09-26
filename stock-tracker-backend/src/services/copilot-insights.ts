@@ -1,0 +1,80 @@
+import { CopilotClient } from '@github/copilot-sdk';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+const INSIGHTS_RESPONSE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    explanations: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          factId: { type: 'string' },
+          explanation: { type: 'string' },
+        },
+        required: ['factId', 'explanation'],
+      },
+    },
+  },
+  required: ['explanations'],
+} satisfies Record<string, unknown>;
+
+let clientPromise: Promise<CopilotClient> | null = null;
+
+async function getCopilotClient(): Promise<CopilotClient> {
+  if (!clientPromise) {
+    const client = new CopilotClient({
+      mode: 'empty',
+      baseDirectory: join(homedir(), '.copilot'),
+      useLoggedInUser: true,
+      logLevel: 'error',
+    });
+
+    clientPromise = client.start()
+      .then(() => client)
+      .catch((error: unknown) => {
+        clientPromise = null;
+        throw error;
+      });
+  }
+
+  return clientPromise;
+}
+
+export async function generateCopilotInsights(prompt: string): Promise<string> {
+  const client = await getCopilotClient();
+  const session = await client.createSession({
+    model: process.env.COPILOT_MODEL?.trim() || 'gpt-5.6-luna',
+    availableTools: [],
+    skipCustomInstructions: true,
+    infiniteSessions: { enabled: false },
+    memory: { enabled: false },
+    enableSessionStore: false,
+  });
+
+  try {
+    const response = await session.sendAndWait(
+      { prompt, responseSchema: INSIGHTS_RESPONSE_SCHEMA },
+      30_000
+    );
+    if (!response?.data.content) {
+      throw new Error('Copilot returned an empty portfolio insights response.');
+    }
+    return response.data.content;
+  } finally {
+    await session.disconnect().catch(() => undefined);
+    await client.deleteSession(session.sessionId).catch(() => undefined);
+  }
+}
+
+export async function stopCopilotClient(): Promise<void> {
+  const pendingClient = clientPromise;
+  clientPromise = null;
+  const client = await pendingClient?.catch(() => null);
+  if (client) {
+    await client.stop().catch(() => undefined);
+  }
+}

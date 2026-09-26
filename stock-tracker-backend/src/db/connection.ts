@@ -209,9 +209,17 @@ async function createTablesIfNotExist() {
         email NVARCHAR(320) NULL,
         name NVARCHAR(255) NULL,
         pictureUrl NVARCHAR(1000) NULL,
+        aiInsightsEnabled BIT NOT NULL CONSTRAINT DF_Users_aiInsightsEnabled DEFAULT 0,
         createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
         updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
       );
+
+    IF NOT EXISTS (
+      SELECT 1 FROM sys.columns
+      WHERE object_id = OBJECT_ID('Users') AND name = 'aiInsightsEnabled'
+    )
+      ALTER TABLE Users
+      ADD aiInsightsEnabled BIT NOT NULL CONSTRAINT DF_Users_aiInsightsEnabled DEFAULT 0;
 
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'UserSettings')
       CREATE TABLE UserSettings (

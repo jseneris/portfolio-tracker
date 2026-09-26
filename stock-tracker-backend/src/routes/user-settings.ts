@@ -10,6 +10,23 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25;
 
+router.get('/profile', async (req: Request, res: Response) => {
+  try {
+    const userId = req.user?.id!;
+    const result = await getPool().request()
+      .input('userId', sql.NVarChar, userId)
+      .query(`
+        SELECT aiInsightsEnabled
+        FROM Users
+        WHERE id = @userId
+      `);
+
+    res.json({ aiInsightsEnabled: Boolean(result.recordset[0]?.aiInsightsEnabled) });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
 router.get('/targets', async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id!;

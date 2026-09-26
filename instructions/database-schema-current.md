@@ -64,6 +64,8 @@ This document reflects the schema currently created by [stock-tracker-backend/sr
 
 ### Users
 - Purpose: identity profile table.
+- `aiInsightsEnabled` (`BIT NOT NULL DEFAULT 0`) controls access to AI portfolio insights. It is not user-editable through the public API.
+- Admins can grant or revoke access with `UPDATE Users SET aiInsightsEnabled = 1 WHERE id = N'<user-id>'` or `UPDATE Users SET aiInsightsEnabled = 0 WHERE id = N'<user-id>'`.
 
 ### UserSettings
 - Purpose: per-user target settings and thresholds.

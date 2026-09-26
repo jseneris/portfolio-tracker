@@ -4,6 +4,7 @@ dotenv.config({ path: envPath });
 import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { initializeDatabase, closeDatabase } from './db/connection.js';
+import { stopCopilotClient } from './services/copilot-insights.js';
 import { authenticateRequest } from './auth.js';
 import cashRoutes from './routes/cash.js';
 import stockRoutes from './routes/stocks.js';
@@ -11,6 +12,7 @@ import lotsRoutes from './routes/lots.js';
 import displayLotsRoutes from './routes/display-lots.js';
 import userSettingsRoutes from './routes/user-settings.js';
 import tickerPreferencesRoutes from './routes/ticker-preferences.js';
+import portfolioInsightsRoutes from './routes/portfolio-insights.js';
 
 
 const app: Express = express();
@@ -41,6 +43,7 @@ app.use('/api/lots', lotsRoutes);
 app.use('/api/display-lots', displayLotsRoutes);
 app.use('/api/user-settings', userSettingsRoutes);
 app.use('/api/ticker-preferences', tickerPreferencesRoutes);
+app.use('/api/portfolio-insights', portfolioInsightsRoutes);
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
@@ -67,6 +70,7 @@ export async function startServer() {
 
 process.on('SIGINT', async () => {
   console.log('\nShutting down...');
+  await stopCopilotClient();
   await closeDatabase();
   process.exit(0);
 });

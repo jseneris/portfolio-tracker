@@ -14,6 +14,44 @@ describe('18. User Settings - Target Preferences', () => {
     await clearUserData();
   });
 
+  it('returns disabled AI insights access by default', async () => {
+    const response = await request(app)
+      .get('/api/user-settings/profile')
+      .set('x-user-id', TEST_USER_ID)
+      .expect(200);
+
+    expect(response.body).toEqual({ aiInsightsEnabled: false });
+
+    await request(app)
+      .post('/api/portfolio-insights')
+      .set('x-user-id', TEST_USER_ID)
+      .expect(403);
+  });
+
+  it('preserves an enabled AI insights flag across authenticated requests', async () => {
+    await request(app)
+      .get('/api/user-settings/profile')
+      .set('x-user-id', TEST_USER_ID)
+      .expect(200);
+
+    const pool = getPool();
+    await pool.request()
+      .input('userId', sql.NVarChar, TEST_USER_ID)
+      .query('UPDATE Users SET aiInsightsEnabled = 1 WHERE id = @userId');
+
+    await request(app)
+      .get('/api/health')
+      .set('x-user-id', TEST_USER_ID)
+      .expect(200);
+
+    const response = await request(app)
+      .get('/api/user-settings/profile')
+      .set('x-user-id', TEST_USER_ID)
+      .expect(200);
+
+    expect(response.body).toEqual({ aiInsightsEnabled: true });
+  });
+
   it('returns default target values on an empty database', async () => {
     const response = await request(app)
       .get('/api/user-settings/targets')
