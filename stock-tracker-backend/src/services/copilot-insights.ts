@@ -57,13 +57,14 @@ export async function generateCopilotInsights(prompt: string): Promise<string> {
 
   try {
     const response = await session.sendAndWait(
-      { prompt, responseSchema: INSIGHTS_RESPONSE_SCHEMA },
+      `${prompt}\n\nRespond with only a JSON object (no markdown, no code fences) matching this JSON Schema:\n${JSON.stringify(INSIGHTS_RESPONSE_SCHEMA)}`,
       30_000
     );
-    if (!response?.data.content) {
+    const content = response?.data.content?.trim();
+    if (!content) {
       throw new Error('Copilot returned an empty portfolio insights response.');
     }
-    return response.data.content;
+    return content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   } finally {
     await session.disconnect().catch(() => undefined);
     await client.deleteSession(session.sessionId).catch(() => undefined);
