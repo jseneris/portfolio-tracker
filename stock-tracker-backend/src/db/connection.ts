@@ -287,6 +287,25 @@ async function createTablesIfNotExist() {
           FOREIGN KEY (exchangeId) REFERENCES StockExchanges(id) ON DELETE CASCADE
       );
 
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Messages')
+      CREATE TABLE Messages (
+        id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+        userId NVARCHAR(255) NOT NULL,
+        type NVARCHAR(30) NOT NULL CONSTRAINT CK_Messages_Type CHECK (type IN ('buy-target-hit', 'sell-target-hit')),
+        ticker NVARCHAR(10) NOT NULL,
+        targetPrice DECIMAL(18, 8) NULL,
+        triggerPrice DECIMAL(18, 8) NOT NULL,
+        body NVARCHAR(500) NOT NULL,
+        isRead BIT NOT NULL DEFAULT 0,
+        readAt DATETIME2 NULL,
+        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+      );
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Messages_UserId_CreatedAt')
+      CREATE INDEX IX_Messages_UserId_CreatedAt ON Messages(userId, createdAt DESC);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Messages_Unread')
+      CREATE INDEX IX_Messages_Unread ON Messages(userId, ticker, type) WHERE isRead = 0;
+
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_UserId')
       CREATE INDEX IX_PurchaseLots_UserId ON PurchaseLots(userId);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_Ticker')

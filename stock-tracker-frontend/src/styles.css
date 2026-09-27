@@ -98,6 +98,87 @@ body {
   color: #ffffff;
 }
 
+.nav-badge {
+  display: inline-block;
+  min-width: 1.25rem;
+  margin-left: 0.35rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.25rem;
+  text-align: center;
+}
+
+.messages-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.message-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.message-item {
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.message-item:last-child {
+  border-bottom: none;
+}
+
+.message-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.6rem 0.25rem;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-unread .message-summary {
+  font-weight: 700;
+}
+
+.message-type {
+  min-width: 2.5rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.3rem;
+  color: #ffffff;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.message-type-buy {
+  background: #15803d;
+}
+
+.message-type-sell {
+  background: #b91c1c;
+}
+
+.message-date {
+  margin-left: auto;
+  opacity: 0.75;
+  font-weight: 400;
+}
+
+.message-body {
+  margin: 0 0 0.75rem;
+  padding: 0 0.25rem;
+}
+
 .app-main {
   width: 100%;
   max-width: 1720px;

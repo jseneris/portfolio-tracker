@@ -344,6 +344,18 @@ export type PortfolioInsightsReport = {
   limitations: string[]
 }
 
+export type AppMessage = {
+  id: string
+  type: 'buy-target-hit' | 'sell-target-hit'
+  ticker: string
+  targetPrice: number | null
+  triggerPrice: number
+  body: string
+  isRead: boolean
+  readAt: string | null
+  createdAt: string
+}
+
 // ============================================================================
 // Internal Request Helpers
 // ============================================================================
@@ -403,6 +415,23 @@ async function requestApi<T>(path: string, options: RequestOptions = {}): Promis
 
 export async function getPortfolioSummary(): Promise<PortfolioSummary> {
   return requestApi<PortfolioSummary>('/api/stocks/portfolio/summary')
+}
+
+export async function getMessages(unreadOnly = false): Promise<AppMessage[]> {
+  return requestApi<AppMessage[]>(`/api/messages${unreadOnly ? '?unreadOnly=true' : ''}`)
+}
+
+export async function getUnreadMessageCount(): Promise<number> {
+  const result = await requestApi<{ count: number }>('/api/messages/unread-count')
+  return result.count
+}
+
+export async function openMessage(id: string): Promise<AppMessage> {
+  return requestApi<AppMessage>(`/api/messages/${encodeURIComponent(id)}`)
+}
+
+export async function markAllMessagesRead(): Promise<void> {
+  await requestApi<{ updated: number }>('/api/messages/read-all', { method: 'POST' })
 }
 
 export async function getCashTransactions(): Promise<CashTransaction[]> {

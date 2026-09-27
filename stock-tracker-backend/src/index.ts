@@ -13,6 +13,7 @@ import displayLotsRoutes from './routes/display-lots.js';
 import userSettingsRoutes from './routes/user-settings.js';
 import tickerPreferencesRoutes from './routes/ticker-preferences.js';
 import portfolioInsightsRoutes from './routes/portfolio-insights.js';
+import messagesRoutes from './routes/messages.js';
 
 
 const app: Express = express();
@@ -44,6 +45,7 @@ app.use('/api/display-lots', displayLotsRoutes);
 app.use('/api/user-settings', userSettingsRoutes);
 app.use('/api/ticker-preferences', tickerPreferencesRoutes);
 app.use('/api/portfolio-insights', portfolioInsightsRoutes);
+app.use('/api/messages', messagesRoutes);
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {

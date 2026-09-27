@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getPool } from '../db/connection.js';
 import sql from 'mssql';
 import YahooFinance from 'yahoo-finance2';
+import { fetchCurrentPrices } from '../services/current-prices.js';
 
 const router = Router();
 const yahooFinance = new YahooFinance();
@@ -51,14 +52,6 @@ interface IExistingSplit {
 interface IPricePoint {
   marketDate: string;
   close: number;
-}
-
-interface ICurrentPricePoint {
-  ticker: string;
-  price: number;
-  changePercent: number | null;
-  source: string;
-  asOf: string;
 }
 
 interface IHistoricalClosePoint {
@@ -665,38 +658,7 @@ router.post('/current-prices', async (req: Request, res: Response) => {
       return res.json({ source: 'yahoo-finance', prices: [], missingTickers: [] });
     }
 
-    const prices: ICurrentPricePoint[] = [];
-    const missingTickers: string[] = [];
-
-    for (const ticker of tickers) {
-      try {
-        const quote = await yahooFinance.quote(ticker) as any;
-        const price = Number(
-          quote?.regularMarketPrice
-          ?? quote?.postMarketPrice
-          ?? quote?.preMarketPrice
-          ?? quote?.bid
-          ?? quote?.ask
-        );
-
-        if (!Number.isFinite(price) || price <= 0) {
-          missingTickers.push(ticker);
-          continue;
-        }
-
-        const changePercent = Number(quote?.regularMarketChangePercent);
-
-        prices.push({
-          ticker,
-          price,
-          changePercent: Number.isFinite(changePercent) ? changePercent : null,
-          source: 'yahoo-finance',
-          asOf: new Date().toISOString(),
-        });
-      } catch {
-        missingTickers.push(ticker);
-      }
-    }
+    const { prices, missingTickers } = await fetchCurrentPrices(tickers);
 
     res.json({
       source: 'yahoo-finance',

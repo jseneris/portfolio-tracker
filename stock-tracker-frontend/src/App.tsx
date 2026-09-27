@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes } from 'react-router-dom'
 import { useAppAuth } from './auth'
-import { getUserProfile } from './api'
+import { getUnreadMessageCount, getUserProfile } from './api'
 import DashboardPage from './pages/DashboardPage'
 import CashPage from './pages/CashPage'
 import StocksPage from './pages/StocksPage'
@@ -12,10 +12,43 @@ import StockSplitsPage from './pages/StockSplitsPage'
 import UserSettingsPage from './pages/UserSettingsPage'
 import AllocationsPage from './pages/AllocationsPage'
 import PortfolioInsightsPage from './pages/PortfolioInsightsPage'
+import MessagesPage, { MESSAGES_UPDATED_EVENT } from './pages/MessagesPage'
+
+const UNREAD_MESSAGES_POLL_MS = 5 * 60 * 1000
 
 export default function App() {
   const auth = useAppAuth()
   const [aiInsightsEnabled, setAiInsightsEnabled] = useState(false)
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0)
+
+  useEffect(() => {
+    if (auth.isLoading || !auth.isAuthenticated) {
+      setUnreadMessageCount(0)
+      return
+    }
+
+    let cancelled = false
+
+    function refreshUnreadCount() {
+      getUnreadMessageCount()
+        .then((count) => {
+          if (!cancelled) setUnreadMessageCount(count)
+        })
+        .catch(() => undefined)
+    }
+
+    refreshUnreadCount()
+    const intervalId = window.setInterval(refreshUnreadCount, UNREAD_MESSAGES_POLL_MS)
+    window.addEventListener('focus', refreshUnreadCount)
+    window.addEventListener(MESSAGES_UPDATED_EVENT, refreshUnreadCount)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', refreshUnreadCount)
+      window.removeEventListener(MESSAGES_UPDATED_EVENT, refreshUnreadCount)
+    }
+  }, [auth.isAuthenticated, auth.isLoading])
 
   useEffect(() => {
     let cancelled = false
@@ -93,6 +126,10 @@ export default function App() {
             <NavLink to="/splits">Splits</NavLink>
             <NavLink to="/comparison">Compare</NavLink>
             {aiInsightsEnabled ? <NavLink to="/insights">Insights</NavLink> : null}
+            <NavLink to="/messages">
+              Messages
+              {unreadMessageCount > 0 ? <span className="nav-badge">{unreadMessageCount}</span> : null}
+            </NavLink>
             <NavLink to="/user-settings">User</NavLink>
           </nav>
           {auth.isConfigured ? (
@@ -118,6 +155,7 @@ export default function App() {
             path="/insights"
             element={aiInsightsEnabled ? <PortfolioInsightsPage /> : <Navigate to="/" replace />}
           />
+          <Route path="/messages" element={<MessagesPage />} />
           <Route path="/user-settings" element={<UserSettingsPage />} />
         </Routes>
       </main>
