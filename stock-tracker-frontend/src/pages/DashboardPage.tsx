@@ -853,6 +853,20 @@ export default function DashboardPage() {
       ])
       const tickers = getTickersFromTransactions(transactionsResult)
 
+      if (tickers.length > 0) {
+        try {
+          const livePricesResult = await getCurrentPrices(tickers)
+          applyCurrentPricePayload(livePricesResult, true)
+        } catch (err: unknown) {
+          // Fall back to historical closes when live pricing is unavailable.
+          setCurrentPricesByTicker({})
+          setChangePercentByTicker({})
+        }
+      } else {
+        setCurrentPricesByTicker({})
+        setChangePercentByTicker({})
+      }
+
       const earliestTransactionDate = transactionsResult.reduce((earliest, tx) => {
         const txDate = toDateOnly(tx.transactionDate)
         if (!txDate) {
@@ -927,6 +941,39 @@ export default function DashboardPage() {
     }
   }
 
+  function applyCurrentPricePayload(result: { prices: Array<{ ticker?: string; price?: number; changePercent?: number | null }> }, replaceExisting = false) {
+    const nextPrices: Record<string, number> = {}
+    const nextChangePercents: Record<string, number | null> = {}
+
+    for (const row of result.prices) {
+      const ticker = String(row.ticker || '').toUpperCase()
+      const price = Number(row.price)
+      if (ticker && Number.isFinite(price) && price > 0) {
+        nextPrices[ticker] = price
+        const changePercent = Number(row.changePercent)
+        nextChangePercents[ticker] = Number.isFinite(changePercent) ? changePercent : null
+      }
+    }
+
+    if (replaceExisting) {
+      setCurrentPricesByTicker(nextPrices)
+      setChangePercentByTicker(nextChangePercents)
+    } else {
+      setCurrentPricesByTicker((previous) => ({
+        ...previous,
+        ...nextPrices,
+      }))
+      setChangePercentByTicker((previous) => ({
+        ...previous,
+        ...nextChangePercents,
+      }))
+    }
+
+    if (Object.keys(nextPrices).length === 0) {
+      setError('Unable to load current prices for the dashboard tickers.')
+    }
+  }
+
   async function updateCurrentPrices() {
     const tickers = summaryHoldings.map((row) => row.ticker)
     if (tickers.length === 0) {
@@ -938,31 +985,8 @@ export default function DashboardPage() {
 
     try {
       const result = await getCurrentPrices(tickers)
-      const nextPrices: Record<string, number> = {}
-      const nextChangePercents: Record<string, number | null> = {}
-      for (const row of result.prices) {
-        const ticker = String(row.ticker || '').toUpperCase()
-        const price = Number(row.price)
-        if (ticker && Number.isFinite(price) && price > 0) {
-          nextPrices[ticker] = price
-          const changePercent = Number(row.changePercent)
-          nextChangePercents[ticker] = Number.isFinite(changePercent) ? changePercent : null
-        }
-      }
-
-      setCurrentPricesByTicker((previous) => ({
-        ...previous,
-        ...nextPrices,
-      }))
-      setChangePercentByTicker((previous) => ({
-        ...previous,
-        ...nextChangePercents,
-      }))
+      applyCurrentPricePayload(result)
       setLastUpdatedAt(new Date())
-
-      if (Object.keys(nextPrices).length === 0) {
-        setError('Unable to load current prices for the dashboard tickers.')
-      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to update current prices')
     } finally {
