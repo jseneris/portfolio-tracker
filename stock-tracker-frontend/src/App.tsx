@@ -125,7 +125,7 @@ export default function App() {
             <NavLink to="/allocations">Allocations</NavLink>
             <NavLink to="/splits">Splits</NavLink>
             <NavLink to="/comparison">Compare</NavLink>
-            {aiInsightsEnabled ? <NavLink to="/insights">Insights</NavLink> : null}
+            {aiInsightsEnabled && window.location.hostname === 'localhost' ? <NavLink to="/insights">Insights</NavLink> : null}
             <NavLink to="/messages">
               Messages
               {unreadMessageCount > 0 ? <span className="nav-badge">{unreadMessageCount}</span> : null}

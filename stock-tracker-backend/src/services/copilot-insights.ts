@@ -1,4 +1,4 @@
-import { CopilotClient } from '@github/copilot-sdk';
+import { CopilotClient, RuntimeConnection } from '@github/copilot-sdk';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -26,8 +26,11 @@ let clientPromise: Promise<CopilotClient> | null = null;
 
 async function getCopilotClient(): Promise<CopilotClient> {
   if (!clientPromise) {
+    const copilotCliPath = process.env.COPILOT_CLI_PATH?.trim()
+      || join(process.env.APPDATA || join(homedir(), 'AppData', 'Roaming'), 'npm', 'node_modules', '@github', 'copilot', 'npm-loader.js');
     const client = new CopilotClient({
-      mode: 'empty',
+      connection: RuntimeConnection.forStdio({ path: copilotCliPath }),
+      mode: 'copilot-cli',
       baseDirectory: join(homedir(), '.copilot'),
       useLoggedInUser: true,
       logLevel: 'error',
