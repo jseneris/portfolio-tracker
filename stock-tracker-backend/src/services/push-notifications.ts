@@ -62,7 +62,7 @@ export async function sendPushNotification(userId: string, payload: PushPayload)
       if (statusCode === 404 || statusCode === 410) {
         try {
           await getPool().request()
-            .input('endpointHash', sql.Binary(32), endpointHash)
+            .input('endpointHash', sql.VarBinary(32), endpointHash)
             .query('DELETE FROM PushSubscriptions WHERE endpointHash = @endpointHash');
         } catch (deleteError) {
           console.error('[push] Unable to remove expired subscription:', deleteError);

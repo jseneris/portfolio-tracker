@@ -88,7 +88,7 @@ router.post('/subscription', async (req: Request, res: Response) => {
     const endpointHash = hashPushEndpoint(subscription.endpoint);
     await getPool().request()
       .input('userId', sql.NVarChar, req.user?.id!)
-      .input('endpointHash', sql.Binary(32), endpointHash)
+      .input('endpointHash', sql.VarBinary(32), endpointHash)
       .input('endpoint', sql.NVarChar(2048), subscription.endpoint)
       .input('p256dh', sql.NVarChar(255), subscription.p256dh)
       .input('auth', sql.NVarChar(255), subscription.auth)
@@ -119,7 +119,7 @@ router.delete('/subscription', async (req: Request, res: Response) => {
   try {
     await getPool().request()
       .input('userId', sql.NVarChar, req.user?.id!)
-      .input('endpointHash', sql.Binary(32), hashPushEndpoint(subscription.endpoint))
+      .input('endpointHash', sql.VarBinary(32), hashPushEndpoint(subscription.endpoint))
       .query('DELETE FROM PushSubscriptions WHERE userId = @userId AND endpointHash = @endpointHash');
 
     res.json({ enabled: false });
