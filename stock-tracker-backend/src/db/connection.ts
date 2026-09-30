@@ -306,6 +306,23 @@ async function createTablesIfNotExist() {
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Messages_Unread')
       CREATE INDEX IX_Messages_Unread ON Messages(userId, ticker, type) WHERE isRead = 0;
 
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PushSubscriptions')
+      CREATE TABLE PushSubscriptions (
+        id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+        userId NVARCHAR(255) NOT NULL,
+        endpointHash BINARY(32) NOT NULL,
+        endpoint NVARCHAR(2048) NOT NULL,
+        p256dh NVARCHAR(255) NOT NULL,
+        auth NVARCHAR(255) NOT NULL,
+        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+      );
+
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_PushSubscriptions_EndpointHash')
+      CREATE UNIQUE INDEX UX_PushSubscriptions_EndpointHash ON PushSubscriptions(endpointHash);
+    IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PushSubscriptions_UserId')
+      CREATE INDEX IX_PushSubscriptions_UserId ON PushSubscriptions(userId);
+
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_UserId')
       CREATE INDEX IX_PurchaseLots_UserId ON PurchaseLots(userId);
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PurchaseLots_Ticker')

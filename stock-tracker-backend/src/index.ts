@@ -14,6 +14,7 @@ import userSettingsRoutes from './routes/user-settings.js';
 import tickerPreferencesRoutes from './routes/ticker-preferences.js';
 import portfolioInsightsRoutes from './routes/portfolio-insights.js';
 import messagesRoutes from './routes/messages.js';
+import pushRoutes from './routes/push.js';
 
 
 const app: Express = express();
@@ -46,6 +47,7 @@ app.use('/api/user-settings', userSettingsRoutes);
 app.use('/api/ticker-preferences', tickerPreferencesRoutes);
 app.use('/api/portfolio-insights', portfolioInsightsRoutes);
 app.use('/api/messages', messagesRoutes);
+app.use('/api/push', pushRoutes);
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {

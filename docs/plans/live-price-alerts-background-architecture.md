@@ -16,6 +16,8 @@ Enable:
 - Historical price sync exists for backfill/comparison workflows.
 - No realtime transport, no always-on quote worker, and no notification delivery pipeline yet.
 
+Implemented since this baseline: the existing five-minute price-target cycle sends Web Push after it creates a new in-app message. Push subscriptions are stored per user in `PushSubscriptions`; the frontend uses a service worker and requires VAPID configuration. The API and scheduler must both run with the VAPID environment variables configured. On iOS/iPadOS, users must install the site to the Home Screen to receive Web Push.
+
 ## Required Architecture
 
 ### 1. Always-On Quote Worker (Server-Side)
@@ -71,7 +73,7 @@ If scaled horizontally:
 2. AlertRules/AlertState/AlertEvents + server alert evaluation.
 3. In-app alert visibility (badge/log) and status endpoints.
 4. Email/SMS notifications.
-5. Web Push service worker integration.
+5. Web Push service worker integration. (Implemented for current price-target messages.)
 6. Optional websocket/SSE low-latency streaming enhancements.
 
 ## Practical Notes

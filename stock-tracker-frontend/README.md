@@ -28,6 +28,7 @@ Create `.env` or use Replit Secrets:
 - Cash CRUD
 - Stock buy/dividend/sell (with explicit lot allocation)
 - Historical holdings snapshot with date-based portfolio value, cash, stock value, and per-ticker market values
+- Optional phone notifications for new price-target messages (requires server-side VAPID configuration and browser permission)
 
 ## Recent MVP Updates
 

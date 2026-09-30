@@ -2,6 +2,7 @@ import sql from 'mssql';
 import { getPool } from '../db/connection.js';
 import { fetchCurrentPrices } from './current-prices.js';
 import { isUsMarketOpen } from './market-hours.js';
+import { sendPushNotification, type PushPayload } from './push-notifications.js';
 
 const DEFAULT_SALE_TARGET_PERCENT = 10;
 const DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS = 5;
@@ -26,6 +27,7 @@ export type PriceTargetCycleOptions = {
   now?: Date;
   ignoreMarketHours?: boolean;
   getPrices?: (tickers: string[]) => Promise<Record<string, number>>;
+  sendNotification?: (userId: string, payload: PushPayload) => Promise<void>;
 };
 
 export type PriceTargetCycleSummary = {
@@ -212,6 +214,15 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
 
   let checked = 0;
   let created = 0;
+  const notify = options.sendNotification ?? sendPushNotification;
+
+  async function sendMessageNotification(userId: string, title: string, body: string): Promise<void> {
+    try {
+      await notify(userId, { title, body, url: '/messages' });
+    } catch (error) {
+      console.error('[price-target-alerts] Push notification failed:', error);
+    }
+  }
 
   for (const { userId, ticker } of holdings) {
     const price = Number(pricesByTicker[ticker]);
@@ -246,7 +257,10 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
         triggerPrice: price,
         body: `${ticker} hit its sell target of ${formatPrice(sellTarget)} (current price ${formatPrice(price)}).`,
       });
-      if (inserted) created += 1;
+      if (inserted) {
+        created += 1;
+        await sendMessageNotification(userId, `${ticker} sell target reached`, `${ticker} hit its sell target. Current price: ${formatPrice(price)}.`);
+      }
     }
 
     if (preference?.isBuyRestricted) {
@@ -265,7 +279,10 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
         triggerPrice: price,
         body,
       });
-      if (inserted) created += 1;
+      if (inserted) {
+        created += 1;
+        await sendMessageNotification(userId, `${ticker} buy target reached`, body);
+      }
     }
   }
 

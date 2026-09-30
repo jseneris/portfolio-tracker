@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AppMessage, getMessages, markAllMessagesRead, openMessage } from '../api'
+import { AppMessage, getMessages, markAllMessagesRead, openMessage, sendTestPushNotification } from '../api'
 
 export const MESSAGES_UPDATED_EVENT = 'messages-updated'
 
@@ -11,7 +11,9 @@ export default function MessagesPage() {
   const [messages, setMessages] = useState<AppMessage[]>([])
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [sendingTest, setSendingTest] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [testNotice, setTestNotice] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -62,6 +64,20 @@ export default function MessagesPage() {
     }
   }
 
+  async function onSendTestNotification() {
+    setSendingTest(true)
+    setError(null)
+    setTestNotice(null)
+    try {
+      const sent = await sendTestPushNotification()
+      setTestNotice(`Test notification accepted for ${sent} device${sent === 1 ? '' : 's'}.`)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to send a test notification')
+    } finally {
+      setSendingTest(false)
+    }
+  }
+
   const unreadCount = messages.filter((message) => !message.isRead).length
 
   return (
@@ -69,14 +85,20 @@ export default function MessagesPage() {
       <div className="panel messages-header">
         <div>
           <h2>Messages</h2>
-          <p>Price target alerts checked every 30 minutes while the US market is open.</p>
+          <p>Price target alerts are checked every five minutes while the US market is open.</p>
         </div>
-        <button className="button" onClick={() => void onMarkAllRead()} disabled={unreadCount === 0}>
-          Mark all read
-        </button>
+        <div className="messages-actions">
+          <button className="button" onClick={() => void onSendTestNotification()} disabled={sendingTest}>
+            {sendingTest ? 'Sending...' : 'Send Test Notification'}
+          </button>
+          <button className="button" onClick={() => void onMarkAllRead()} disabled={unreadCount === 0}>
+            Mark all read
+          </button>
+        </div>
       </div>
 
       {error ? <div className="panel status status-error">{error}</div> : null}
+      {testNotice ? <div className="panel status status-success">{testNotice}</div> : null}
 
       <div className="panel">
         {loading ? (

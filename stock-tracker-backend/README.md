@@ -38,7 +38,7 @@ Run this in a separate VS Code terminal when you want the local scheduler active
 npm run scheduler
 ```
 
-The scheduler process connects to the configured SQL Server and runs the daily EOD sync at its configured time. Stop the terminal process to stop future scheduled runs.
+The scheduler process connects to the configured SQL Server, checks price targets every five minutes during market hours, and runs the daily EOD sync at its configured time. Stop the process to stop future scheduled runs.
 
 ### 5. Run Daily EOD Sync Once
 
@@ -51,7 +51,21 @@ npm run daily-eod
 
 Individual ticker lookup failures are logged as warnings and do not fail the cron run. Database initialization failures and job-level exceptions still exit unsuccessfully.
 
-For Railway, deploy a second service from this same `stock-tracker-backend` directory. Set its build command to `npm run build`, start command to `npm run daily-eod`, and configure the service Cron Schedule in UTC. The service needs the same `DB_SERVER`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` variables as the API.
+For Railway, deploy the API with build command `npm run build` and start command `npm start`. Deploy a second, always-on service from this same `stock-tracker-backend` directory for scheduled jobs, with build command `npm run build` and start command `node dist/jobs/scheduler-entry.js`. Both services need the same database, authentication, CORS, and notification environment variables. The optional one-shot `npm run daily-eod` command can still be used for a separate Railway Cron Job, but do not schedule it if the always-on scheduler is already running the daily EOD sync.
+
+## Phone Notifications
+
+Web Push uses the browser's service worker and sends alerts only after a new price-target message is inserted. Generate a VAPID key pair once with `npx web-push generate-vapid-keys`, then configure these secrets on both the API and scheduler Railway services:
+
+```env
+VAPID_PUBLIC_KEY=your-public-key
+VAPID_PRIVATE_KEY=your-private-key
+VAPID_SUBJECT=mailto:you@example.com
+```
+
+Keep the private key secret. The public key is returned to the authenticated frontend by `/api/push/config`. The frontend must be served over HTTPS. On iPhone or iPad, users must add Stock Tracker to the Home Screen before enabling notifications.
+
+The Messages page includes a **Send Test Notification** action. It sends a push to the signed-in user's registered devices without creating a fake portfolio message.
 
 
 

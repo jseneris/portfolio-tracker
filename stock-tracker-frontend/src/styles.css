@@ -119,6 +119,12 @@ body {
   gap: 1rem;
 }
 
+.messages-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .message-list {
   list-style: none;
   margin: 0;
@@ -404,6 +410,27 @@ body {
 .target-settings-divider {
   border-top: 1px solid #e2e8f0;
   padding-top: 0.9rem;
+}
+
+.push-settings-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.push-settings-panel h3,
+.push-settings-panel p {
+  margin-top: 0;
+}
+
+.push-settings-panel p:last-child {
+  margin-bottom: 0;
+}
+
+.push-settings-detail {
+  color: #64748b;
 }
 
 .inline-actions {

@@ -19,6 +19,14 @@ async function runCycle(price: number) {
   return runPriceTargetAlertCycle({ ignoreMarketHours: true, getPrices: prices({ [TICKER]: price }) });
 }
 
+async function runCycleWithNotification(price: number, sendNotification: (userId: string, payload: { title: string; body: string; url: string }) => Promise<void>) {
+  return runPriceTargetAlertCycle({
+    ignoreMarketHours: true,
+    getPrices: prices({ [TICKER]: price }),
+    sendNotification,
+  });
+}
+
 async function listMessages(userId = TEST_USER_ID) {
   const response = await request(app)
     .get('/api/messages')
@@ -119,6 +127,24 @@ describe('23. Price Target Messages', () => {
       const afterRead = await listMessages();
       expect(afterRead).toHaveLength(2);
       expect(afterRead.filter((message) => !message.isRead)).toHaveLength(1);
+    });
+
+    it('sends a push only when a new unread target message is created', async () => {
+      await buyStock(TICKER, 10, 100, new Date('2026-01-05T15:00:00Z'));
+      const notifications: Array<{ userId: string; title: string; body: string; url: string }> = [];
+      const sendNotification = async (userId: string, payload: { title: string; body: string; url: string }) => {
+        notifications.push({ userId, ...payload });
+      };
+
+      await runCycleWithNotification(111, sendNotification);
+      await runCycleWithNotification(112, sendNotification);
+
+      expect(notifications).toHaveLength(1);
+      expect(notifications[0]).toMatchObject({
+        userId: TEST_USER_ID,
+        title: `${TICKER} sell target reached`,
+        url: '/messages',
+      });
     });
 
     it('suppresses buy messages while buying is restricted', async () => {

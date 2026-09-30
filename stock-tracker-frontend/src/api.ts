@@ -356,6 +356,20 @@ export type AppMessage = {
   createdAt: string
 }
 
+export type PushSubscriptionPayload = {
+  endpoint: string
+  keys: {
+    p256dh: string
+    auth: string
+  }
+}
+
+export type PushNotificationConfig = {
+  available: boolean
+  publicKey: string | null
+  subscriptionCount: number
+}
+
 // ============================================================================
 // Internal Request Helpers
 // ============================================================================
@@ -432,6 +446,29 @@ export async function openMessage(id: string): Promise<AppMessage> {
 
 export async function markAllMessagesRead(): Promise<void> {
   await requestApi<{ updated: number }>('/api/messages/read-all', { method: 'POST' })
+}
+
+export async function getPushNotificationConfig(): Promise<PushNotificationConfig> {
+  return requestApi<PushNotificationConfig>('/api/push/config')
+}
+
+export async function sendTestPushNotification(): Promise<number> {
+  const result = await requestApi<{ sent: number }>('/api/push/test', { method: 'POST' })
+  return result.sent
+}
+
+export async function savePushSubscription(subscription: PushSubscriptionPayload): Promise<void> {
+  await requestApi<{ enabled: boolean }>('/api/push/subscription', {
+    method: 'POST',
+    body: subscription,
+  })
+}
+
+export async function deletePushSubscription(subscription: PushSubscriptionPayload): Promise<void> {
+  await requestApi<{ enabled: boolean }>('/api/push/subscription', {
+    method: 'DELETE',
+    body: subscription,
+  })
 }
 
 export async function getCashTransactions(): Promise<CashTransaction[]> {

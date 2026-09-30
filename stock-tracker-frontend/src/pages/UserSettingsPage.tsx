@@ -1,5 +1,12 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { getUserTargetSettings, updateUserTargetSettings } from '../api'
+import {
+  deletePushSubscription,
+  getPushNotificationConfig,
+  getUserTargetSettings,
+  savePushSubscription,
+  updateUserTargetSettings,
+  type PushSubscriptionPayload,
+} from '../api'
 
 const DEFAULT_SALE_TARGET_PERCENT = 10
 const DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS = 5
@@ -7,6 +14,24 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10
 const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25
+
+function decodeApplicationServerKey(value: string): Uint8Array {
+  const padding = '='.repeat((4 - (value.length % 4)) % 4)
+  const decoded = window.atob(`${value}${padding}`.replace(/-/g, '+').replace(/_/g, '/'))
+  return Uint8Array.from(decoded, (character) => character.charCodeAt(0))
+}
+
+function getSubscriptionPayload(subscription: PushSubscription): PushSubscriptionPayload {
+  const json = subscription.toJSON()
+  if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) {
+    throw new Error('The browser returned an incomplete notification subscription.')
+  }
+
+  return {
+    endpoint: json.endpoint,
+    keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+  }
+}
 
 export default function UserSettingsPage() {
   const [saleTargetPercent, setSaleTargetPercent] = useState(String(DEFAULT_SALE_TARGET_PERCENT))
@@ -19,6 +44,45 @@ export default function UserSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [pushSupported, setPushSupported] = useState<boolean | null>(null)
+  const [pushAvailable, setPushAvailable] = useState(false)
+  const [pushPublicKey, setPushPublicKey] = useState<string | null>(null)
+  const [pushEnabled, setPushEnabled] = useState(false)
+  const [pushBusy, setPushBusy] = useState(false)
+  const [pushError, setPushError] = useState<string | null>(null)
+  const [pushNotice, setPushNotice] = useState<string | null>(null)
+  const [pushPermission, setPushPermission] = useState<NotificationPermission | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
+    setPushSupported(supported)
+    if (!supported) return
+
+    setPushPermission(Notification.permission)
+    getPushNotificationConfig()
+      .then(async (config) => {
+        if (cancelled) return
+        setPushAvailable(config.available)
+        setPushPublicKey(config.publicKey)
+        await navigator.serviceWorker.register('/service-worker.js')
+        const registration = await navigator.serviceWorker.ready
+        const subscription = await registration.pushManager.getSubscription()
+        if (!cancelled && subscription && config.available) {
+          await savePushSubscription(getSubscriptionPayload(subscription))
+          if (!cancelled) setPushEnabled(true)
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setPushError(err instanceof Error ? err.message : 'Unable to check phone notification settings.')
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -119,6 +183,52 @@ export default function UserSettingsPage() {
     }
   }
 
+  async function onTogglePushNotifications() {
+    setPushBusy(true)
+    setPushError(null)
+    setPushNotice(null)
+
+    try {
+      await navigator.serviceWorker.register('/service-worker.js')
+      const registration = await navigator.serviceWorker.ready
+      const currentSubscription = await registration.pushManager.getSubscription()
+
+      if (pushEnabled) {
+        if (currentSubscription) {
+          await deletePushSubscription(getSubscriptionPayload(currentSubscription))
+          await currentSubscription.unsubscribe()
+        }
+        setPushEnabled(false)
+        setPushNotice('Phone notifications are off on this device.')
+        return
+      }
+
+      if (!pushAvailable || !pushPublicKey) {
+        throw new Error('Phone notifications are not configured on the server.')
+      }
+
+      const permission = Notification.permission === 'default'
+        ? await Notification.requestPermission()
+        : Notification.permission
+      setPushPermission(permission)
+      if (permission !== 'granted') {
+        throw new Error('Notification permission was not granted. Check this site’s browser settings.')
+      }
+
+      const subscription = currentSubscription || await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: decodeApplicationServerKey(pushPublicKey),
+      })
+      await savePushSubscription(getSubscriptionPayload(subscription))
+      setPushEnabled(true)
+      setPushNotice('Phone notifications are enabled on this device.')
+    } catch (err: unknown) {
+      setPushError(err instanceof Error ? err.message : 'Unable to update phone notification settings.')
+    } finally {
+      setPushBusy(false)
+    }
+  }
+
   return (
     <section>
       <div className="panel">
@@ -128,6 +238,29 @@ export default function UserSettingsPage() {
 
       {error ? <div className="panel status status-error">{error}</div> : null}
       {success ? <div className="panel status status-success">{success}</div> : null}
+
+      <div className="panel push-settings-panel">
+        <div>
+          <h3>Phone Notifications</h3>
+          <p>Get a phone alert when a new price-target message is created.</p>
+          {pushSupported === false ? <p className="push-settings-detail">This browser does not support Web Push notifications.</p> : null}
+          {pushSupported && !pushAvailable ? <p className="push-settings-detail">Phone notifications are not configured on the server.</p> : null}
+          {pushSupported && pushPermission === 'denied' ? <p className="push-settings-detail">Notifications are blocked in this browser’s site settings.</p> : null}
+          {pushSupported && /iPhone|iPad|iPod/.test(navigator.userAgent) ? (
+            <p className="push-settings-detail">On iPhone or iPad, add Stock Tracker to the Home Screen to receive notifications.</p>
+          ) : null}
+        </div>
+        <button
+          className={pushEnabled ? 'button' : 'button button-primary'}
+          type="button"
+          onClick={() => void onTogglePushNotifications()}
+          disabled={pushSupported !== true || (!pushAvailable && !pushEnabled) || pushBusy}
+        >
+          {pushBusy ? 'Updating...' : pushEnabled ? 'Turn Off on This Device' : 'Enable Phone Notifications'}
+        </button>
+        {pushError ? <p className="status status-error">{pushError}</p> : null}
+        {pushNotice ? <p className="status status-success">{pushNotice}</p> : null}
+      </div>
 
       <div className="panel">
         {loading ? (
