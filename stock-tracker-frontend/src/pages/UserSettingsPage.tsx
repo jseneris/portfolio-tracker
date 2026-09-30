@@ -15,10 +15,15 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25
 
-function decodeApplicationServerKey(value: string): Uint8Array {
+function decodeApplicationServerKey(value: string): ArrayBuffer {
   const padding = '='.repeat((4 - (value.length % 4)) % 4)
   const decoded = window.atob(`${value}${padding}`.replace(/-/g, '+').replace(/_/g, '/'))
-  return Uint8Array.from(decoded, (character) => character.charCodeAt(0))
+  const buffer = new ArrayBuffer(decoded.length)
+  const bytes = new Uint8Array(buffer)
+  for (let index = 0; index < decoded.length; index += 1) {
+    bytes[index] = decoded.charCodeAt(index)
+  }
+  return buffer
 }
 
 function getSubscriptionPayload(subscription: PushSubscription): PushSubscriptionPayload {
