@@ -295,15 +295,46 @@ async function createTablesIfNotExist() {
       CREATE TABLE Messages (
         id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
         userId NVARCHAR(255) NOT NULL,
-        type NVARCHAR(30) NOT NULL CONSTRAINT CK_Messages_Type CHECK (type IN ('buy-target-hit', 'sell-target-hit')),
-        ticker NVARCHAR(10) NOT NULL,
+        type NVARCHAR(30) NOT NULL CONSTRAINT CK_Messages_Type CHECK (type IN ('buy-target-hit', 'sell-target-hit', 'ai-chat')),
+        ticker NVARCHAR(10) NULL,
         targetPrice DECIMAL(18, 8) NULL,
-        triggerPrice DECIMAL(18, 8) NOT NULL,
-        body NVARCHAR(500) NOT NULL,
+        triggerPrice DECIMAL(18, 8) NULL,
+        body NVARCHAR(MAX) NOT NULL,
         isRead BIT NOT NULL DEFAULT 0,
         readAt DATETIME2 NULL,
         createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
       );
+
+    IF EXISTS (
+      SELECT 1 FROM sys.check_constraints
+      WHERE parent_object_id = OBJECT_ID('Messages') AND name = 'CK_Messages_Type'
+        AND definition NOT LIKE '%ai-chat%'
+    )
+    BEGIN
+      ALTER TABLE Messages DROP CONSTRAINT CK_Messages_Type;
+      ALTER TABLE Messages ADD CONSTRAINT CK_Messages_Type
+        CHECK (type IN ('buy-target-hit', 'sell-target-hit', 'ai-chat'));
+    END;
+
+    IF EXISTS (
+      SELECT 1 FROM sys.columns
+      WHERE object_id = OBJECT_ID('Messages') AND name = 'ticker' AND is_nullable = 0
+    )
+    BEGIN
+      IF EXISTS (SELECT 1 FROM sys.indexes WHERE object_id = OBJECT_ID('Messages') AND name = 'IX_Messages_Unread')
+        DROP INDEX IX_Messages_Unread ON Messages;
+      ALTER TABLE Messages ALTER COLUMN ticker NVARCHAR(10) NULL;
+    END;
+    IF EXISTS (
+      SELECT 1 FROM sys.columns
+      WHERE object_id = OBJECT_ID('Messages') AND name = 'triggerPrice' AND is_nullable = 0
+    )
+      ALTER TABLE Messages ALTER COLUMN triggerPrice DECIMAL(18, 8) NULL;
+    IF EXISTS (
+      SELECT 1 FROM sys.columns
+      WHERE object_id = OBJECT_ID('Messages') AND name = 'body' AND max_length <> -1
+    )
+      ALTER TABLE Messages ALTER COLUMN body NVARCHAR(MAX) NOT NULL;
 
     IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Messages_UserId_CreatedAt')
       CREATE INDEX IX_Messages_UserId_CreatedAt ON Messages(userId, createdAt DESC);

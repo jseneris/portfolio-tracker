@@ -342,6 +342,51 @@ export type PortfolioInsightFact = {
 export type PortfolioInsightsReport = {
   reportId: string
   generatedAt: string
+  snapshot: {
+    generatedAt: string
+    valuationBasis: string
+    holdings: Array<{
+      ticker: string
+      quantity: number
+      costBasis: number
+      closePrice: number | null
+      marketDate: string | null
+      marketValue: number | null
+      unrealizedGainLoss: number | null
+      companyName: string | null
+      sector: string | null
+      industry: string | null
+      sizeClassification: string | null
+      profileUpdatedAt: string | null
+      percentOfPricedEquities: number | null
+      percentOfPortfolio: number | null
+    }>
+    openLots: Array<{
+      ticker: string
+      sourceType: string
+      acquisitionDate: string
+      quantity: number
+      unitCost: number
+      costBasis: number
+      closePrice: number | null
+      marketValue: number | null
+      unrealizedGainLoss: number | null
+      marketDate: string | null
+      recentAcquisitionCount: number
+    }>
+    cash: CashSummary
+    totals: {
+      holdingCount: number
+      openLotCount: number
+      equityCostBasis: number
+      pricedEquityValue: number
+      equityValue: number | null
+      portfolioValue: number | null
+      unrealizedGainLoss: number | null
+      cashPercentOfPortfolio: number | null
+    }
+    missingPriceTickers: string[]
+  }
   facts: PortfolioInsightFact[]
   explanations: Array<{ factId: string; explanation: string }>
   limitations: string[]
@@ -354,10 +399,10 @@ export type PortfolioInsightsChatTurn = {
 
 export type AppMessage = {
   id: string
-  type: 'buy-target-hit' | 'sell-target-hit'
-  ticker: string
+  type: 'buy-target-hit' | 'sell-target-hit' | 'ai-chat'
+  ticker: string | null
   targetPrice: number | null
-  triggerPrice: number
+  triggerPrice: number | null
   body: string
   isRead: boolean
   readAt: string | null
@@ -441,6 +486,13 @@ export async function getPortfolioSummary(): Promise<PortfolioSummary> {
 
 export async function getMessages(unreadOnly = false): Promise<AppMessage[]> {
   return requestApi<AppMessage[]>(`/api/messages${unreadOnly ? '?unreadOnly=true' : ''}`)
+}
+
+export async function saveAiChatMessage(question: string, answer: string): Promise<AppMessage> {
+  return requestApi<AppMessage>('/api/messages/ai-chat', {
+    method: 'POST',
+    body: { question, answer },
+  })
 }
 
 export async function getUnreadMessageCount(): Promise<number> {

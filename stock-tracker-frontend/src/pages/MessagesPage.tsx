@@ -125,7 +125,7 @@ export default function MessagesPage() {
       <div className="panel messages-header">
         <div>
           <h2>Messages</h2>
-          <p>Price target alerts are checked every five minutes while the US market is open.</p>
+          <p>Saved AI questions and responses appear here alongside price target alerts, which are checked every five minutes while the US market is open.</p>
         </div>
         <div className="messages-actions">
           <button className="button" onClick={() => void onSendTestNotification()} disabled={sendingTest}>
@@ -159,14 +159,14 @@ export default function MessagesPage() {
                       checked={selectedIds.has(message.id)}
                       disabled={selectionAction !== null}
                       onChange={() => toggleSelected(message.id)}
-                      aria-label={`Select ${message.ticker} message`}
+                      aria-label={`Select ${message.type === 'ai-chat' ? 'AI chat' : message.ticker} message`}
                     />
                   </label>
                   <button className="message-summary" onClick={() => void toggleMessage(message)}>
-                    <span className={`message-type message-type-${message.type === 'sell-target-hit' ? 'sell' : 'buy'}`}>
-                      {message.type === 'sell-target-hit' ? 'Sell' : 'Buy'}
+                    <span className={`message-type message-type-${message.type === 'ai-chat' ? 'ai' : message.type === 'sell-target-hit' ? 'sell' : 'buy'}`}>
+                      {message.type === 'ai-chat' ? 'AI' : message.type === 'sell-target-hit' ? 'Sell' : 'Buy'}
                     </span>
-                    <strong>{message.ticker}</strong>
+                    <strong>{message.type === 'ai-chat' ? 'Portfolio Q&A' : message.ticker}</strong>
                     <span className="message-date">{new Date(message.createdAt).toLocaleString()}</span>
                   </button>
                 </div>

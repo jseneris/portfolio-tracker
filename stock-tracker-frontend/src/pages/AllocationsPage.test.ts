@@ -32,6 +32,7 @@ describe('buildAllocationSlices', () => {
     expect(result.slices[1].percent).toBeCloseTo(60)
     expect(result.slices[0].percent).toBeCloseTo(20)
     expect(result.slices[0].isCash).toBe(true)
+    expect(result.slices.map((slice) => slice.tickers)).toEqual([[], ['AAPL'], ['MSFT']])
     expect(result.excludedTickers).toEqual([])
   })
 
@@ -71,6 +72,35 @@ describe('buildAllocationSlices', () => {
     })
 
     expect(result.slices.map((slice) => slice.label)).toEqual(['Available Cash', 'Mega Cap', 'Small Cap'])
+    expect(result.slices.map((slice) => slice.tickers)).toEqual([[], ['MEGA'], ['SMALL']])
+  })
+
+  it.each(['industry', 'size'] as const)('lists unique, alphabetized tickers in each %s category', (groupBy) => {
+    const result = buildAllocationSlices({
+      groupBy,
+      holdings: [
+        { ticker: 'MSFT', marketValue: 100 },
+        { ticker: 'AAPL', marketValue: 200 },
+        { ticker: 'MSFT', marketValue: 50 },
+        { ticker: 'UNKNOWN', marketValue: 50 },
+        { ticker: 'NOPRICE', marketValue: null },
+      ],
+      profilesByTicker: {
+        MSFT: makeProfile({ ticker: 'MSFT' }),
+        AAPL: makeProfile({ ticker: 'AAPL' }),
+        NOPRICE: makeProfile({ ticker: 'NOPRICE' }),
+      },
+      availableCash: 100,
+    })
+    const category = result.slices.find((slice) => slice.label === (groupBy === 'industry' ? 'Software' : 'Mega Cap'))
+    expect(category?.tickers).toEqual(['AAPL', 'MSFT'])
+    expect(category?.value).toBe(350)
+    expect(category?.percent).toBe(70)
+    expect(result.slices.find((slice) => slice.label.startsWith('Unknown'))?.tickers).toEqual(['UNKNOWN'])
+    expect(result.slices[0].tickers).toEqual([])
+    expect(result.excludedTickers).toEqual(['NOPRICE'])
+    expect(sortAllocationSlices(result.slices, 'label', 'asc').find((slice) => slice.key === category?.key)?.tickers)
+      .toEqual(['AAPL', 'MSFT'])
   })
 
   it('excludes holdings without a usable market value', () => {
@@ -127,9 +157,9 @@ describe('buildAllocationSlices', () => {
 
 describe('sortAllocationSlices', () => {
   const slices: AllocationSlice[] = [
-    { key: 'available-cash', label: 'Available Cash', value: 100, percent: 20, color: '#16a34a', isCash: true },
-    { key: 'MSFT', label: 'MSFT', value: 300, percent: 60, color: '#1d4ed8', isCash: false },
-    { key: 'AAPL', label: 'AAPL', value: 100, percent: 20, color: '#db2777', isCash: false },
+    { key: 'available-cash', label: 'Available Cash', value: 100, percent: 20, color: '#16a34a', isCash: true, tickers: [] },
+    { key: 'MSFT', label: 'MSFT', value: 300, percent: 60, color: '#1d4ed8', isCash: false, tickers: ['MSFT'] },
+    { key: 'AAPL', label: 'AAPL', value: 100, percent: 20, color: '#db2777', isCash: false, tickers: ['AAPL'] },
   ]
 
   it('returns the default order unchanged when no sort column is selected', () => {

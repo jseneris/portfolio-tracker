@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { askPortfolioInsights, generatePortfolioInsights, PortfolioInsightsChatTurn, PortfolioInsightsReport } from '../api'
+import { askPortfolioInsights, generatePortfolioInsights, PortfolioInsightsChatTurn, PortfolioInsightsReport, saveAiChatMessage } from '../api'
 import { formatCurrency2 } from '../formatters'
+import { MESSAGES_UPDATED_EVENT } from './MessagesPage'
 
 function formatPercent(value: number | undefined) {
   return typeof value === 'number' ? `${value.toFixed(2)}%` : '--'
@@ -12,6 +13,24 @@ function formatDate(value: string | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString()
 }
 
+export function ChatResponseActions({ saved, saving, disabled, error, onSend }: {
+  saved: boolean
+  saving: boolean
+  disabled: boolean
+  error?: string
+  onSend: () => void
+}) {
+  return (
+    <div>
+      <button className="button" type="button" onClick={onSend} disabled={disabled || saved || saving}>
+        {saved ? 'Sent to Messages' : saving ? 'Sending...' : 'Send to Messages'}
+      </button>
+      {saved ? <span role="status"> Question and response saved.</span> : null}
+      {error ? <p className="status status-error" role="alert">{error}</p> : null}
+    </div>
+  )
+}
+
 export default function PortfolioInsightsPage() {
   const [report, setReport] = useState<PortfolioInsightsReport | null>(null)
   const [loading, setLoading] = useState(false)
@@ -20,6 +39,9 @@ export default function PortfolioInsightsPage() {
   const [chatQuestion, setChatQuestion] = useState('')
   const [chatLoading, setChatLoading] = useState(false)
   const [chatError, setChatError] = useState<string | null>(null)
+  const [savingResponse, setSavingResponse] = useState<number | null>(null)
+  const [savedResponses, setSavedResponses] = useState<Set<number>>(() => new Set())
+  const [saveErrors, setSaveErrors] = useState<Record<number, string>>({})
 
   async function runReview() {
     setLoading(true)
@@ -30,10 +52,37 @@ export default function PortfolioInsightsPage() {
       setChatMessages([])
       setChatQuestion('')
       setChatError(null)
+      setSavedResponses(new Set())
+      setSaveErrors({})
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to generate portfolio review.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function sendResponseToMessages(index: number) {
+    if (savingResponse !== null || savedResponses.has(index) || loading) return
+    const answer = chatMessages[index]
+    const question = chatMessages[index - 1]
+    if (answer?.role !== 'assistant' || question?.role !== 'user') return
+    setSavingResponse(index)
+    setSaveErrors((errors) => {
+      const next = { ...errors }
+      delete next[index]
+      return next
+    })
+    try {
+      await saveAiChatMessage(question.content, answer.content)
+      setSavedResponses((saved) => new Set(saved).add(index))
+      window.dispatchEvent(new Event(MESSAGES_UPDATED_EVENT))
+    } catch (err: unknown) {
+      setSaveErrors((errors) => ({
+        ...errors,
+        [index]: err instanceof Error ? err.message : 'Unable to send this response to Messages.',
+      }))
+    } finally {
+      setSavingResponse(null)
     }
   }
 
@@ -74,9 +123,9 @@ export default function PortfolioInsightsPage() {
         <div>
           <p className="eyebrow">Portfolio review</p>
           <h2>Holdings & tax considerations</h2>
-          <p className="muted-text">Fact-based portfolio observations for your review.</p>
+          <p className="muted-text">Fact-based observations and questions about your complete read-only portfolio snapshot.</p>
         </div>
-        <button className="button button-primary" onClick={() => void runReview()} disabled={loading || chatLoading}>
+        <button className="button button-primary" onClick={() => void runReview()} disabled={loading || chatLoading || savingResponse !== null}>
           {loading ? 'Reviewing...' : report ? 'Refresh review' : 'Generate review'}
         </button>
       </header>
@@ -86,6 +135,7 @@ export default function PortfolioInsightsPage() {
         <section className="panel insights-empty-state">
           <h3>Review your portfolio</h3>
           <p>Generate a review to see holding concentration and open lots with estimated unrealized losses.</p>
+          <p>The AI receives all current holdings and open lots, your cash summary, and available company classifications without account identifiers.</p>
         </section>
       ) : null}
       {loading ? <section className="panel" aria-live="polite">Generating your portfolio review...</section> : null}
@@ -93,6 +143,18 @@ export default function PortfolioInsightsPage() {
       {report ? (
         <>
           <p className="insights-timestamp">Generated {new Date(report.generatedAt).toLocaleString()}</p>
+
+          <section className="panel">
+            <h3>Read-only snapshot available to AI</h3>
+            <p>
+              {report.snapshot.totals.holdingCount} holdings and {report.snapshot.totals.openLotCount} open lots,
+              including profitable and smaller positions.
+              {' '}Available cash: {formatCurrency2(report.snapshot.cash.availableCash)}.
+              {' '}Portfolio value: {report.snapshot.totals.portfolioValue == null
+                ? 'Unavailable (missing prices)' : formatCurrency2(report.snapshot.totals.portfolioValue)}.
+            </p>
+            <p className="muted-text">Ask about any holding, cost basis, unrealized gain/loss, cash, or available sector/industry classification. Prices use stored closes, not live quotes. Refresh after changes; the AI cannot edit your portfolio.</p>
+          </section>
 
           <section className="panel">
             <div className="row-between insights-section-heading">
@@ -194,6 +256,15 @@ export default function PortfolioInsightsPage() {
                 <article className={`insights-chat-message insights-chat-${message.role}`} key={`${index}-${message.role}`}>
                   <strong>{message.role === 'user' ? 'You' : 'Review'}</strong>
                   <p>{message.content}</p>
+                  {message.role === 'assistant' ? (
+                    <ChatResponseActions
+                      saved={savedResponses.has(index)}
+                      saving={savingResponse === index}
+                      disabled={loading || savingResponse !== null}
+                      error={saveErrors[index]}
+                      onSend={() => void sendResponseToMessages(index)}
+                    />
+                  ) : null}
                 </article>
               ))}
               {chatLoading ? <p className="muted-text" role="status">Preparing an answer...</p> : null}

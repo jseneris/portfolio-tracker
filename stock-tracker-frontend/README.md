@@ -32,7 +32,9 @@ Create `.env` or use Replit Secrets:
 
 ## Recent MVP Updates
 
+- Allocations grouped by Industry or Size list the included tickers alphabetically beneath each category in the slice list.
 - The Messages page supports selecting alerts to mark as read or delete.
+- Each AI chat answer has a Send to Messages button that saves its question and full response as an unread Portfolio Q&A message. Saved items persist after the review expires and support the existing read/delete actions.
 - The Insights menu item appears only on localhost when AI insights are enabled for the user.
 - Generated portfolio reviews support ephemeral follow-up chat grounded in that report; the conversation resets when the review is refreshed or the page is reloaded.
 - Partial source lots can be expanded on individual stock pages to show the sales that consumed them, including proceeds, cost basis, and gain/loss; expanded sell transactions show the same gain/loss breakdown by consumed lot and in total.

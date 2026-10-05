@@ -197,6 +197,10 @@ body {
   background: #b91c1c;
 }
 
+.message-type-ai {
+  background: #7c3aed;
+}
+
 .message-date {
   margin-left: auto;
   opacity: 0.75;
@@ -206,6 +210,8 @@ body {
 .message-body {
   margin: 0 0 0.75rem;
   padding: 0 0.25rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .app-main {
@@ -1347,6 +1353,13 @@ body {
 .allocation-legend {
   width: 100%;
   overflow-x: auto;
+}
+
+.allocation-slice-tickers {
+  display: block;
+  margin-top: 0.2rem;
+  color: #64748b;
+  white-space: normal;
 }
 
 .legend-swatch {

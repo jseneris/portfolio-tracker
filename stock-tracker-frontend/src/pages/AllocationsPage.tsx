@@ -25,6 +25,7 @@ export type AllocationSlice = {
   percent: number
   color: string
   isCash: boolean
+  tickers: string[]
 }
 
 export type AllocationChartData = {
@@ -162,7 +163,7 @@ export function buildAllocationSlices(args: {
   const { groupBy, holdings, profilesByTicker, availableCash } = args
 
   const excludedTickers: string[] = []
-  const valueByKey = new Map<string, { label: string; value: number }>()
+  const valueByKey = new Map<string, { label: string; value: number; tickers: Set<string> }>()
 
   for (const holding of holdings) {
     const marketValue = Number(holding.marketValue)
@@ -184,8 +185,9 @@ export function buildAllocationSlices(args: {
     const existing = valueByKey.get(key)
     if (existing) {
       existing.value += marketValue
+      existing.tickers.add(holding.ticker)
     } else {
-      valueByKey.set(key, { label: key, value: marketValue })
+      valueByKey.set(key, { label: key, value: marketValue, tickers: new Set([holding.ticker]) })
     }
   }
 
@@ -193,6 +195,7 @@ export function buildAllocationSlices(args: {
     key,
     label: group.label,
     value: group.value,
+    tickers: Array.from(group.tickers).sort((first, second) => first.localeCompare(second)),
   }))
 
   if (groupBy === 'size') {
@@ -216,6 +219,7 @@ export function buildAllocationSlices(args: {
       percent: total > 0 ? (cashValue / total) * 100 : 0,
       color: CASH_SLICE_COLOR,
       isCash: true,
+      tickers: [],
     })
   }
 
@@ -227,6 +231,7 @@ export function buildAllocationSlices(args: {
       percent: total > 0 ? (group.value / total) * 100 : 0,
       color: SLICE_COLORS[index % SLICE_COLORS.length],
       isCash: false,
+      tickers: group.tickers,
     })
   })
 
@@ -502,7 +507,12 @@ export default function AllocationsPage() {
                       <td>
                         <span className="legend-swatch" style={{ backgroundColor: slice.color }} />
                       </td>
-                      <td>{slice.label}</td>
+                      <td>
+                        {slice.label}
+                        {groupBy !== 'ticker' && !slice.isCash ? (
+                          <small className="allocation-slice-tickers">{slice.tickers.join(', ')}</small>
+                        ) : null}
+                      </td>
                       <td>{formatCurrency2(slice.value)}</td>
                       <td>{formatPercent2(slice.percent)}</td>
                     </tr>

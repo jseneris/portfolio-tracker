@@ -19,13 +19,48 @@ function mapMessage(row: any) {
     type: row.type,
     ticker: row.ticker,
     targetPrice: row.targetPrice == null ? null : Number(row.targetPrice),
-    triggerPrice: Number(row.triggerPrice),
+    triggerPrice: row.triggerPrice == null ? null : Number(row.triggerPrice),
     body: row.body,
     isRead: Boolean(row.isRead),
     readAt: row.readAt,
     createdAt: row.createdAt,
   };
 }
+
+router.post('/ai-chat', async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ error: 'Authentication required.' });
+
+  const question = typeof req.body?.question === 'string' ? req.body.question.trim() : '';
+  const answer = typeof req.body?.answer === 'string' ? req.body.answer.trim() : '';
+  if (!question || question.length > 1000 || !answer || answer.length > 4000) {
+    return res.status(400).json({ error: 'A question of up to 1000 characters and an answer of up to 4000 characters are required.' });
+  }
+
+  try {
+    const access = await getPool().request()
+      .input('userId', sql.NVarChar, userId)
+      .query('SELECT aiInsightsEnabled FROM Users WHERE id = @userId');
+    if (!access.recordset[0]?.aiInsightsEnabled) {
+      return res.status(403).json({ error: 'Portfolio insights are not enabled for this user.' });
+    }
+    const result = await getPool().request()
+      .input('userId', sql.NVarChar, userId)
+      .input('body', sql.NVarChar(sql.MAX), `Question:\n${question}\n\nAI response:\n${answer}`)
+      .query(`
+        INSERT INTO Messages (userId, type, ticker, targetPrice, triggerPrice, body)
+        OUTPUT inserted.id, inserted.type, inserted.ticker, inserted.targetPrice, inserted.triggerPrice,
+               inserted.body, inserted.isRead, inserted.readAt, inserted.createdAt
+        VALUES (@userId, 'ai-chat', NULL, NULL, NULL, @body)
+      `);
+    const row = result.recordset[0];
+    if (!row) throw new Error('Saved AI chat message was not returned.');
+    res.status(201).json(mapMessage(row));
+  } catch (error) {
+    console.error('Unable to save AI chat message:', error);
+    res.status(500).json({ error: 'Unable to save this response to Messages. Please try again.' });
+  }
+});
 
 router.get('/', async (req: Request, res: Response) => {
   try {
