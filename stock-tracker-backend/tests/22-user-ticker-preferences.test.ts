@@ -23,6 +23,7 @@ describe('22. User Ticker Preferences', () => {
     expect(response.body).toEqual({
       ticker: 'MSFT',
       buyOnDip: false,
+      buyOnDipPrice: null,
       buyRestricted: false,
       buyRestrictedUntil: null,
       isBuyRestricted: false,
@@ -33,12 +34,13 @@ describe('22. User Ticker Preferences', () => {
     await request(app)
       .put('/api/ticker-preferences/msft')
       .set('x-user-id', TEST_USER_ID)
-      .send({ buyOnDip: true, buyRestricted: true, buyRestrictedUntil: '2099-12-31' })
+      .send({ buyOnDip: true, buyOnDipPrice: 123.45678901, buyRestricted: true, buyRestrictedUntil: '2099-12-31' })
       .expect(200)
       .expect(({ body }) => {
         expect(body).toEqual({
           ticker: 'MSFT',
           buyOnDip: true,
+          buyOnDipPrice: 123.45678901,
           buyRestricted: true,
           buyRestrictedUntil: '2099-12-31',
           isBuyRestricted: true,
@@ -59,6 +61,7 @@ describe('22. User Ticker Preferences', () => {
     expect(listResponse.body).toEqual([{
       ticker: 'MSFT',
       buyOnDip: false,
+      buyOnDipPrice: null,
       buyRestricted: false,
       buyRestrictedUntil: null,
       isBuyRestricted: false,
@@ -68,6 +71,36 @@ describe('22. User Ticker Preferences', () => {
       .input('userId', sql.NVarChar, TEST_USER_ID)
       .query('SELECT COUNT(*) AS count FROM UserTickerPreferences WHERE userId = @userId AND ticker = \'MSFT\'');
     expect(Number(rowCount.recordset[0].count)).toBe(1);
+  });
+
+  it('keeps the captured price when only other preferences change', async () => {
+    await request(app)
+      .put('/api/ticker-preferences/MSFT')
+      .set('x-user-id', TEST_USER_ID)
+      .send({ buyOnDip: true, buyOnDipPrice: 100, buyRestricted: false, buyRestrictedUntil: null })
+      .expect(200);
+
+    const response = await request(app)
+      .put('/api/ticker-preferences/MSFT')
+      .set('x-user-id', TEST_USER_ID)
+      .send({ buyOnDip: true, buyRestricted: true, buyRestrictedUntil: '2099-12-31' })
+      .expect(200);
+
+    expect(response.body.buyOnDipPrice).toBe(100);
+
+    const saved = await request(app)
+      .get('/api/ticker-preferences/MSFT')
+      .set('x-user-id', TEST_USER_ID)
+      .expect(200);
+    expect(saved.body.buyOnDipPrice).toBe(100);
+  });
+
+  it.each([0, -1, '100', 10000000000])('rejects invalid captured price %s', async (buyOnDipPrice) => {
+    await request(app)
+      .put('/api/ticker-preferences/MSFT')
+      .set('x-user-id', TEST_USER_ID)
+      .send({ buyOnDip: true, buyOnDipPrice, buyRestricted: false, buyRestrictedUntil: null })
+      .expect(400);
   });
 
   it('reports an expired restriction as inactive', async () => {

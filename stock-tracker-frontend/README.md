@@ -36,7 +36,7 @@ Create `.env` or use Replit Secrets:
 - The Insights menu item appears only on localhost when AI insights are enabled for the user.
 - Generated portfolio reviews support ephemeral follow-up chat grounded in that report; the conversation resets when the review is refreshed or the page is reloaded.
 - Partial source lots can be expanded on individual stock pages to show the sales that consumed them, including proceeds, cost basis, and gain/loss; expanded sell transactions show the same gain/loss breakdown by consumed lot and in total.
-- Individual stock pages persist Buy on Dip and dated Buy Restricted preferences; dashboard Target % shows active restrictions or a 100% Buy on Dip signal.
+- Checking Buy on Dip on an individual stock page captures its current displayed ticker price (live quote when available, otherwise latest historical close). Save Preferences persists that price: the sell target is 10% above it and the buy target is 1% below it. Targets stay fixed as quotes change; unchecking restores normal target rules. Dashboard Target % and background alerts use these thresholds, with buying restrictions taking precedence for buy signals. Previously checked preferences without a captured price use normal rules until unchecked and checked again.
 - All frontend routes now use an iPhone-responsive layout with compact navigation, shrink-safe forms and summary grids, touch-sized controls, viewport-contained tables, charts, and modals.
 - Dashboard holdings use compact mobile rows showing ticker, price, and target percentage, with an expandable detail view for the remaining fields.
 - Dashboard now includes an Add Stock modal (ticker, shares, price, date) for quick buy-entry workflow.

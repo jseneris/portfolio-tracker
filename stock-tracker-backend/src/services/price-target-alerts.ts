@@ -125,7 +125,7 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
       FROM UserSettings
     `),
     pool.request().query(`
-      SELECT userId, ticker, buyOnDip, buyRestricted, buyRestrictedUntil
+      SELECT userId, ticker, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil
       FROM UserTickerPreferences
     `),
     pool.request().query(`
@@ -176,11 +176,12 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
     buyTargetPercentFor6OrMoreDisplayLots: DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS,
   };
 
-  const preferences = new Map<string, { buyOnDip: boolean; isBuyRestricted: boolean }>();
+  const preferences = new Map<string, { buyOnDip: boolean; buyOnDipPrice: number | null; isBuyRestricted: boolean }>();
   for (const row of preferencesResult.recordset as any[]) {
     const restrictedUntil = toDateOnly(row.buyRestrictedUntil);
     preferences.set(key(String(row.userId), String(row.ticker).toUpperCase()), {
       buyOnDip: Boolean(row.buyOnDip),
+      buyOnDipPrice: row.buyOnDipPrice == null ? null : Number(row.buyOnDipPrice),
       isBuyRestricted: Boolean(row.buyRestricted) && restrictedUntil !== '' && today <= restrictedUntil,
     });
   }
@@ -248,6 +249,11 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
       buyTarget = basePrice * (1 - getBuyTargetPercent(settings, displayLotCounts.get(k) ?? 0) / 100);
     }
 
+    if (preference?.buyOnDip && preference.buyOnDipPrice != null && Number.isFinite(preference.buyOnDipPrice) && preference.buyOnDipPrice > 0) {
+      sellTarget = Number((preference.buyOnDipPrice * 1.10).toFixed(8));
+      buyTarget = Number((preference.buyOnDipPrice * 0.99).toFixed(8));
+    }
+
     if (sellTarget != null && price >= sellTarget) {
       const inserted = await insertMessageIfNoUnread(pool, {
         userId,
@@ -267,10 +273,8 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
       continue;
     }
 
-    if (preference?.buyOnDip || (buyTarget != null && price <= buyTarget)) {
-      const body = preference?.buyOnDip && !(buyTarget != null && price <= buyTarget)
-        ? `${ticker} is marked Buy on Dip (current price ${formatPrice(price)}).`
-        : `${ticker} hit its buy target of ${formatPrice(buyTarget as number)} (current price ${formatPrice(price)}).`;
+    if (buyTarget != null && price <= buyTarget) {
+      const body = `${ticker} hit its buy target of ${formatPrice(buyTarget)} (current price ${formatPrice(price)}).`;
       const inserted = await insertMessageIfNoUnread(pool, {
         userId,
         ticker,

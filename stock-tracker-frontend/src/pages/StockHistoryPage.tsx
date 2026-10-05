@@ -432,6 +432,7 @@ export default function StockHistoryPage() {
   const [showDividends, setShowDividends] = useState(true)
   const [showSales, setShowSales] = useState(true)
   const [buyOnDip, setBuyOnDip] = useState(false)
+  const [buyOnDipPrice, setBuyOnDipPrice] = useState<number | null>(null)
   const [buyRestricted, setBuyRestricted] = useState(false)
   const [buyRestrictedUntil, setBuyRestrictedUntil] = useState('')
   const [savingTickerPreference, setSavingTickerPreference] = useState(false)
@@ -1065,6 +1066,7 @@ export default function StockHistoryPage() {
       setSummary(tickerSummaryData)
       setSaleAllocations({})
       setBuyOnDip(tickerPreference.buyOnDip)
+      setBuyOnDipPrice(tickerPreference.buyOnDipPrice)
       setBuyRestricted(tickerPreference.buyRestricted)
       setBuyRestrictedUntil(tickerPreference.buyRestrictedUntil ?? '')
 
@@ -1554,10 +1556,12 @@ export default function StockHistoryPage() {
     try {
       const preference = await updateTickerPreference(ticker, {
         buyOnDip,
+        buyOnDipPrice: buyOnDip ? buyOnDipPrice : null,
         buyRestricted,
         buyRestrictedUntil: buyRestricted ? buyRestrictedUntil : null,
       })
       setBuyOnDip(preference.buyOnDip)
+      setBuyOnDipPrice(preference.buyOnDipPrice)
       setBuyRestricted(preference.buyRestricted)
       setBuyRestrictedUntil(preference.buyRestrictedUntil ?? '')
       setSuccess(`${ticker} trading preferences saved.`)
@@ -1611,7 +1615,16 @@ export default function StockHistoryPage() {
                 <input
                   type="checkbox"
                   checked={buyOnDip}
-                  onChange={(event) => setBuyOnDip(event.target.checked)}
+                  onChange={(event) => {
+                    const checked = event.target.checked
+                    if (checked && (effectivePrice == null || !Number.isFinite(effectivePrice) || effectivePrice <= 0)) {
+                      setTickerPreferenceError('A valid ticker price is required to set Buy on Dip targets.')
+                      return
+                    }
+                    setTickerPreferenceError(null)
+                    setBuyOnDip(checked)
+                    setBuyOnDipPrice(checked ? effectivePrice : null)
+                  }}
                   disabled={savingTickerPreference}
                 />
                 Buy on Dip

@@ -152,7 +152,7 @@ describe('23. Price Target Messages', () => {
       await request(app)
         .put(`/api/ticker-preferences/${TICKER}`)
         .set('x-user-id', TEST_USER_ID)
-        .send({ buyOnDip: true, buyRestricted: true, buyRestrictedUntil: '2099-12-31' })
+        .send({ buyOnDip: true, buyOnDipPrice: 100, buyRestricted: true, buyRestrictedUntil: '2099-12-31' })
         .expect(200);
 
       await runCycle(90);
@@ -160,19 +160,40 @@ describe('23. Price Target Messages', () => {
       expect(await listMessages()).toHaveLength(0);
     });
 
-    it('treats Buy on Dip as a buy hit', async () => {
+    it('uses the captured Buy on Dip price and waits for the 1% dip', async () => {
       await buyStock(TICKER, 10, 100, new Date('2026-01-05T15:00:00Z'));
       await request(app)
         .put(`/api/ticker-preferences/${TICKER}`)
         .set('x-user-id', TEST_USER_ID)
-        .send({ buyOnDip: true, buyRestricted: false, buyRestrictedUntil: null })
+        .send({ buyOnDip: true, buyOnDipPrice: 80, buyRestricted: false, buyRestrictedUntil: null })
         .expect(200);
 
-      await runCycle(100);
+      await runCycle(80);
+      await runCycle(81);
+      expect(await listMessages()).toHaveLength(0);
+
+      await runCycle(79.2);
 
       const messages = await listMessages();
       expect(messages).toHaveLength(1);
       expect(messages[0].type).toBe('buy-target-hit');
+      expect(messages[0].targetPrice).toBeCloseTo(79.2, 6);
+    });
+
+    it('uses a sell target 10% above the captured Buy on Dip price', async () => {
+      await buyStock(TICKER, 10, 100, new Date('2026-01-05T15:00:00Z'));
+      await request(app)
+        .put(`/api/ticker-preferences/${TICKER}`)
+        .set('x-user-id', TEST_USER_ID)
+        .send({ buyOnDip: true, buyOnDipPrice: 80, buyRestricted: false, buyRestrictedUntil: null })
+        .expect(200);
+
+      await runCycle(88);
+
+      const messages = await listMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0].type).toBe('sell-target-hit');
+      expect(messages[0].targetPrice).toBeCloseTo(88, 6);
     });
 
     it('uses the split-adjusted base price for targets', async () => {

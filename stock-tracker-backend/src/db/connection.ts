@@ -241,6 +241,7 @@ async function createTablesIfNotExist() {
         userId NVARCHAR(255) NOT NULL,
         ticker NVARCHAR(10) NOT NULL,
         buyOnDip BIT NOT NULL DEFAULT 0,
+        buyOnDipPrice DECIMAL(18, 8) NULL,
         buyRestricted BIT NOT NULL DEFAULT 0,
         buyRestrictedUntil DATE NULL,
         createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
@@ -249,6 +250,9 @@ async function createTablesIfNotExist() {
           buyRestricted = 0 OR buyRestrictedUntil IS NOT NULL
         )
       );
+
+    IF COL_LENGTH('UserTickerPreferences', 'buyOnDipPrice') IS NULL
+      ALTER TABLE UserTickerPreferences ADD buyOnDipPrice DECIMAL(18, 8) NULL;
 
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StockExchanges')
       CREATE TABLE StockExchanges (

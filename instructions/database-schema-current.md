@@ -73,7 +73,8 @@ This document reflects the schema currently created by [stock-tracker-backend/sr
 ### UserTickerPreferences
 - Purpose: persistent per-user/per-ticker dashboard buying signals.
 - Key fields:
-- `buyOnDip` (forces the displayed dashboard Target % to 100%).
+- `buyOnDip` (enables captured-price target overrides).
+- `buyOnDipPrice` (`DECIMAL(18,8) NULL`): ticker price captured when checking Buy on Dip and persisted on Save Preferences. Sell target = price * 1.10; buy target = price * 0.99. Cleared when disabled; missing captured prices fall back to normal target rules. Startup adds the nullable column to existing databases.
 - `buyRestricted` and `buyRestrictedUntil` (restriction remains active through the stored date).
 - Unique index: `UX_UserTickerPreferences_UserId_Ticker`.
 

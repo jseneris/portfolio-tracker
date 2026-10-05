@@ -13,7 +13,7 @@ Backend behavior has shifted to:
 
 ### Schema
 - Cash, stock, source-lot, split, display-lot, historical-price, users/settings tables are present.
-- `UserTickerPreferences` persists Buy on Dip and dated Buy Restricted signals per `(userId, ticker)`.
+- `UserTickerPreferences` persists Buy on Dip, its nullable captured `buyOnDipPrice`, and dated Buy Restricted signals per `(userId, ticker)`.
 - `DisplayLots.lotsCsv` and `UserSplitActivations` are active parts of current workflows.
 - Legacy compatibility tables for display-lot composition/allocation and split-adjustment audit have been removed from the active schema.
 
@@ -31,7 +31,7 @@ Backend behavior has shifted to:
 ### Frontend
 - Partial lots expose their consuming sale allocations, and expanded partial/sold transaction details include per-allocation and aggregate gain/loss.
 - Individual stock pages edit persistent Buy on Dip and Buy Restricted-until preferences.
-- Dashboard Target % displays active restrictions with precedence; otherwise Buy on Dip displays as 100%.
+- Checking Buy on Dip captures the displayed ticker price; Save Preferences persists sell/buy target overrides at +10%/-1%. Dashboard Target % reflects actual proximity, and background alerts wait for the corresponding thresholds; buying restrictions retain precedence. Unchecking clears the override, and legacy checked preferences without a captured price use normal targets until rechecked.
 - Compare page year dropdown is dynamic from transaction years plus `All`.
 - Compare page `All` view uses the backend continuous series directly instead of stitching per-year results.
 - Dashboard holdings table includes a `Gain/Loss` column combining realized sales performance with open-position performance for the selected snapshot date.

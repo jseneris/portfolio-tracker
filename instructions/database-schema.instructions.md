@@ -96,4 +96,10 @@ Global record of each stock split for a ticker. A given ticker can have any numb
 	- `UX_StockSplits_Ticker_Ratio_Date` on `(ticker, ratioNumerator, ratioDenominator, splitDate)`
 	- `IX_StockSplits_Ticker`
 
+### UserTickerPreferences
+- **userId/ticker**: Unique per-user, normalized ticker preference.
+- **buyOnDip**: Enables captured-price target overrides.
+- **buyOnDipPrice**: Nullable `DECIMAL(18,8)` ticker price captured when the checkbox is checked, persisted on Save Preferences. Sell target is 10% above this price; buy target is 1% below it. Disabled preferences clear this value. Existing databases receive the nullable column during startup; legacy preferences without a captured price use normal target rules.
+- **buyRestricted/buyRestrictedUntil**: Dated restriction that suppresses buy signals through the selected date.
+
 

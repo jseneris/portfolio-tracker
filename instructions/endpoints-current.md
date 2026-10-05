@@ -247,7 +247,7 @@ Request body:
 
 ### GET /api/ticker-preferences
 - Returns all persistent ticker preferences for the current user.
-- Includes `buyOnDip`, `buyRestricted`, `buyRestrictedUntil`, and computed `isBuyRestricted`.
+- Includes `buyOnDip`, nullable `buyOnDipPrice`, `buyRestricted`, `buyRestrictedUntil`, and computed `isBuyRestricted`.
 
 ### GET /api/ticker-preferences/:ticker
 - Returns one normalized ticker preference for the current user.
@@ -255,7 +255,8 @@ Request body:
 
 ### PUT /api/ticker-preferences/:ticker
 - Upserts one row keyed by current user and normalized ticker.
-- Request fields: `buyOnDip`, `buyRestricted`, and `buyRestrictedUntil`.
+- Request fields: `buyOnDip`, optional `buyOnDipPrice`, `buyRestricted`, and `buyRestrictedUntil`.
+- The frontend captures `buyOnDipPrice` when checking Buy on Dip and submits it on Save Preferences. A supplied price must be a finite positive number within `DECIMAL(18,8)` precision/range. While enabled, targets are 110% (sell) and 99% (buy) of this price, rounded to eight decimal places; quotes do not move the targets. Omitting the price preserves the stored value when enabled, while disabling clears it. Legacy preferences without a price fall back to normal target rules.
 - A valid `YYYY-MM-DD` restriction date is required when `buyRestricted` is enabled.
 - Restrictions are active through the selected date and expire automatically afterward.
 

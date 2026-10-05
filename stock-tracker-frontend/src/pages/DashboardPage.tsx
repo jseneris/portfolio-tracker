@@ -417,12 +417,18 @@ export default function DashboardPage() {
     latestByTicker: Map<string, StockTransaction>,
     saleTargetPercent: number,
     splitEvents: StockSplitEvent[],
-    snapshotDate: string
+    snapshotDate: string,
+    preferencesByTicker: Record<string, TickerPreference>
   ): Record<string, number | null> {
     const targets: Record<string, number | null> = {}
     const multiplier = 1 + saleTargetPercent / 100
     for (const stock of summary.stocks) {
       const ticker = String(stock.ticker || '').toUpperCase()
+      const preference = preferencesByTicker[ticker]
+      if (preference?.buyOnDip && preference.buyOnDipPrice != null && Number.isFinite(preference.buyOnDipPrice) && preference.buyOnDipPrice > 0) {
+        targets[ticker] = Number((preference.buyOnDipPrice * 1.10).toFixed(8))
+        continue
+      }
       const baseTx = latestByTicker.get(ticker)
       const basePrice = getSplitAdjustedTargetBasePrice(baseTx, splitEvents, snapshotDate)
       targets[ticker] = basePrice != null
@@ -439,12 +445,18 @@ export default function DashboardPage() {
     displayLotCountsByTicker: Record<string, number>,
     settings: UserTargetSettings,
     splitEvents: StockSplitEvent[],
-    snapshotDate: string
+    snapshotDate: string,
+    preferencesByTicker: Record<string, TickerPreference>
   ): Record<string, number | null> {
     const targets: Record<string, number | null> = {}
 
     for (const stock of summary.stocks) {
       const ticker = String(stock.ticker || '').toUpperCase()
+      const preference = preferencesByTicker[ticker]
+      if (preference?.buyOnDip && preference.buyOnDipPrice != null && Number.isFinite(preference.buyOnDipPrice) && preference.buyOnDipPrice > 0) {
+        targets[ticker] = Number((preference.buyOnDipPrice * 0.99).toFixed(8))
+        continue
+      }
       const displayLotCount = Number(displayLotCountsByTicker[ticker] || 0)
       const buyTargetPercent = getBuyTargetPercentForDisplayLotCount(settings, displayLotCount)
 
@@ -698,8 +710,8 @@ export default function DashboardPage() {
         costBasis,
         gainLoss,
         yearlyGainLoss,
-        targetProximityPercent: tickerPreference?.buyOnDip ? 100 : targetProximity.percent,
-        targetDirection: tickerPreference?.buyOnDip ? 'buy' : targetProximity.direction,
+        targetProximityPercent: targetProximity.percent,
+        targetDirection: targetProximity.direction,
         buyOnDip: Boolean(tickerPreference?.buyOnDip),
         isBuyRestricted: Boolean(tickerPreference?.isBuyRestricted),
         buyRestrictedUntil: tickerPreference?.buyRestrictedUntil ?? null,
@@ -892,6 +904,9 @@ export default function DashboardPage() {
       setSaleAllocationsBySaleId(await getSaleAllocationsByTransactionIds(sellTransactions.map((tx) => tx.id)))
 
       const normalizedSettings = normalizeSettings(settingsResult)
+      const preferencesByTicker = Object.fromEntries(
+        tickerPreferencesResult.map((preference) => [preference.ticker, preference])
+      )
       const latestByTicker = buildLatestBuyOrSellByTicker(transactionsResult)
       const displayLotCountsByTicker: Record<string, number> = {}
       for (const lot of displayLotsResult) {
@@ -912,15 +927,14 @@ export default function DashboardPage() {
       setSplitEvents(splitEventsResult)
       setHistoricalLoadedEndDate(historicalEndDate)
       setDisplayLotCountsByTicker(displayLotCountsByTicker)
-      setTickerPreferencesByTicker(Object.fromEntries(
-        tickerPreferencesResult.map((preference) => [preference.ticker, preference])
-      ))
+      setTickerPreferencesByTicker(preferencesByTicker)
       setSaleTargetsByTicker(calculateSaleTargetsByTicker(
         summary,
         latestByTicker,
         normalizedSettings.saleTargetPercent,
         splitEventsResult,
-        snapshotDate
+        snapshotDate,
+        preferencesByTicker
       ))
       setBuyTargetsByTicker(calculateBuyTargetsByTicker(
         summary,
@@ -928,7 +942,8 @@ export default function DashboardPage() {
         displayLotCountsByTicker,
         normalizedSettings,
         splitEventsResult,
-        snapshotDate
+        snapshotDate,
+        preferencesByTicker
       ))
 
       setLastUpdatedAt(new Date())
@@ -1399,7 +1414,7 @@ export default function DashboardPage() {
                         formatPercent2(null)
                       ) : (
                         <div
-                          className={`target-proximity target-proximity-${row.targetDirection ?? 'neutral'}${row.targetProximityPercent >= 100 ? ' target-proximity-hit' : ''}${row.buyOnDip ? ' target-proximity-buy-on-dip' : ''}`}
+                          className={`target-proximity target-proximity-${row.targetDirection ?? 'neutral'}${row.targetProximityPercent >= 100 ? ' target-proximity-hit' : ''}`}
                           title={row.buyOnDip ? 'Buy on Dip' : row.targetDirection === 'sell' ? 'Approaching sale target' : row.targetDirection === 'buy' ? 'Approaching buy target' : undefined}
                         >
                           <span className="target-proximity-value">{formatPercent2(row.targetProximityPercent)}</span>
@@ -1408,9 +1423,7 @@ export default function DashboardPage() {
                               className="target-proximity-fill"
                               style={{
                                 width: `${
-                                  row.buyOnDip
-                                    ? 100
-                                    : row.targetDirection === 'buy'
+                                  row.targetDirection === 'buy'
                                     ? Math.min(100, Math.max(0, 100 - row.targetProximityPercent))
                                     : Math.min(100, Math.max(0, row.targetProximityPercent))
                                 }%`,
