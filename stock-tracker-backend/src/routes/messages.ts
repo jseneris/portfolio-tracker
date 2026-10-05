@@ -7,6 +7,12 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
+function parseSelectedIds(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_LIMIT) return null;
+  if (value.some((id) => typeof id !== 'string' || !UUID_PATTERN.test(id))) return null;
+  return Array.from(new Set(value as string[]));
+}
+
 function mapMessage(row: any) {
   return {
     id: String(row.id).toLowerCase(),
@@ -70,6 +76,53 @@ router.post('/read-all', async (req: Request, res: Response) => {
       `);
 
     res.json({ updated: result.rowsAffected[0] ?? 0 });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.post('/read-selected', async (req: Request, res: Response) => {
+  const ids = parseSelectedIds(req.body?.ids);
+  if (!ids) {
+    return res.status(400).json({ error: 'Select between 1 and 200 valid message IDs.' });
+  }
+
+  try {
+    const dbRequest = getPool().request().input('userId', sql.NVarChar, req.user?.id!);
+    const idParameters = ids.map((id, index) => {
+      dbRequest.input(`id${index}`, sql.UniqueIdentifier, id);
+      return `@id${index}`;
+    });
+    const result = await dbRequest.query(`
+      UPDATE Messages
+      SET isRead = 1, readAt = COALESCE(readAt, GETUTCDATE())
+      WHERE userId = @userId AND isRead = 0 AND id IN (${idParameters.join(', ')})
+    `);
+
+    res.json({ updated: result.rowsAffected[0] ?? 0 });
+  } catch (error) {
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.delete('/', async (req: Request, res: Response) => {
+  const ids = parseSelectedIds(req.body?.ids);
+  if (!ids) {
+    return res.status(400).json({ error: 'Select between 1 and 200 valid message IDs.' });
+  }
+
+  try {
+    const dbRequest = getPool().request().input('userId', sql.NVarChar, req.user?.id!);
+    const idParameters = ids.map((id, index) => {
+      dbRequest.input(`id${index}`, sql.UniqueIdentifier, id);
+      return `@id${index}`;
+    });
+    const result = await dbRequest.query(`
+      DELETE FROM Messages
+      WHERE userId = @userId AND id IN (${idParameters.join(', ')})
+    `);
+
+    res.json({ deleted: result.rowsAffected[0] ?? 0 });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }

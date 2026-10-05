@@ -338,10 +338,16 @@ export type PortfolioInsightFact = {
 }
 
 export type PortfolioInsightsReport = {
+  reportId: string
   generatedAt: string
   facts: PortfolioInsightFact[]
   explanations: Array<{ factId: string; explanation: string }>
   limitations: string[]
+}
+
+export type PortfolioInsightsChatTurn = {
+  role: 'user' | 'assistant'
+  content: string
 }
 
 export type AppMessage = {
@@ -444,8 +450,20 @@ export async function openMessage(id: string): Promise<AppMessage> {
   return requestApi<AppMessage>(`/api/messages/${encodeURIComponent(id)}`)
 }
 
-export async function markAllMessagesRead(): Promise<void> {
-  await requestApi<{ updated: number }>('/api/messages/read-all', { method: 'POST' })
+export async function markSelectedMessagesRead(ids: string[]): Promise<number> {
+  const result = await requestApi<{ updated: number }>('/api/messages/read-selected', {
+    method: 'POST',
+    body: { ids },
+  })
+  return result.updated
+}
+
+export async function deleteMessages(ids: string[]): Promise<number> {
+  const result = await requestApi<{ deleted: number }>('/api/messages', {
+    method: 'DELETE',
+    body: { ids },
+  })
+  return result.deleted
 }
 
 export async function getPushNotificationConfig(): Promise<PushNotificationConfig> {
@@ -643,6 +661,18 @@ export async function updateTickerPreference(
 
 export async function generatePortfolioInsights(): Promise<PortfolioInsightsReport> {
   return requestApi<PortfolioInsightsReport>('/api/portfolio-insights', { method: 'POST' })
+}
+
+export async function askPortfolioInsights(
+  reportId: string,
+  question: string,
+  history: PortfolioInsightsChatTurn[]
+): Promise<string> {
+  const response = await requestApi<{ answer: string }>('/api/portfolio-insights/chat', {
+    method: 'POST',
+    body: { reportId, question, history },
+  })
+  return response.answer
 }
 
 // ============================================================================

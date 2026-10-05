@@ -276,5 +276,48 @@ describe('23. Price Target Messages', () => {
       const messages = await listMessages();
       expect(messages.every((message) => message.isRead)).toBe(true);
     });
+
+    it('marks only selected messages read', async () => {
+      const selectedId = await seedMessage();
+      await seedMessage();
+
+      const response = await request(app)
+        .post('/api/messages/read-selected')
+        .set('x-user-id', TEST_USER_ID)
+        .send({ ids: [selectedId] })
+        .expect(200);
+      expect(response.body.updated).toBe(1);
+
+      const messages = await listMessages();
+      expect(messages.find((message) => message.id === selectedId)?.isRead).toBe(true);
+      expect(messages.find((message) => message.id !== selectedId)?.isRead).toBe(false);
+    });
+
+    it('deletes selected messages only for the authenticated user', async () => {
+      const ownId = await seedMessage();
+      const otherId = await seedMessage(OTHER_USER_ID);
+
+      const response = await request(app)
+        .delete('/api/messages')
+        .set('x-user-id', TEST_USER_ID)
+        .send({ ids: [ownId, otherId] })
+        .expect(200);
+      expect(response.body.deleted).toBe(1);
+      expect(await listMessages()).toHaveLength(0);
+      expect(await listMessages(OTHER_USER_ID)).toHaveLength(1);
+    });
+
+    it('rejects invalid selected message IDs', async () => {
+      await request(app)
+        .post('/api/messages/read-selected')
+        .set('x-user-id', TEST_USER_ID)
+        .send({ ids: ['not-a-guid'] })
+        .expect(400);
+      await request(app)
+        .delete('/api/messages')
+        .set('x-user-id', TEST_USER_ID)
+        .send({ ids: [] })
+        .expect(400);
+    });
   });
 });

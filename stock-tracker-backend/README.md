@@ -67,6 +67,8 @@ Keep the private key secret. The public key is returned to the authenticated fro
 
 The Messages page includes a **Send Test Notification** action. It sends a push to the signed-in user's registered devices without creating a fake portfolio message.
 
+Messages can be marked read or deleted in selected batches. Both operations apply only to message IDs owned by the authenticated user.
+
 
 
 ## Authentication
@@ -83,6 +85,8 @@ AUTH0_AUDIENCE=your-api-identifier
 ## Portfolio Insights
 
 The authenticated `POST /api/portfolio-insights` endpoint compares open-lot cost basis with the latest stored close, identifies concentrated equity positions and unrealized-loss lots, and asks GitHub Copilot for explanations tied to those facts. It does not create trade instructions or determine tax treatment. Requests are limited to one per user per minute.
+
+Each generated review can be used for follow-up questions through `POST /api/portfolio-insights/chat`. Review facts are retained in server memory for 30 minutes, scoped to the authenticated user, and are removed on expiry or process restart. Chat history is kept only in the page and sent as bounded context with each question; it is not stored in the database. Chat is limited to 10 questions per user per minute.
 
 For personal local use, install and sign in to the GitHub Copilot CLI with the same account as your Copilot subscription. The Node SDK uses that local sign-in; it does not use an OpenAI API key. Set `COPILOT_MODEL` in `.env.local` if you want a model other than `gpt-5.6-luna`. Model availability and credit costs depend on your Copilot plan.
 

@@ -26,6 +26,12 @@ describe('18. User Settings - Target Preferences', () => {
       .post('/api/portfolio-insights')
       .set('x-user-id', TEST_USER_ID)
       .expect(403);
+
+    await request(app)
+      .post('/api/portfolio-insights/chat')
+      .set('x-user-id', TEST_USER_ID)
+      .send({ reportId: 'not-a-report', question: 'What does this mean?', history: [] })
+      .expect(403);
   });
 
   it('preserves an enabled AI insights flag across authenticated requests', async () => {

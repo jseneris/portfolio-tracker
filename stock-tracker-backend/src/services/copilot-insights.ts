@@ -48,6 +48,16 @@ async function getCopilotClient(): Promise<CopilotClient> {
 }
 
 export async function generateCopilotInsights(prompt: string): Promise<string> {
+  return sendCopilotPrompt(
+    `${prompt}\n\nRespond with only a JSON object (no markdown, no code fences) matching this JSON Schema:\n${JSON.stringify(INSIGHTS_RESPONSE_SCHEMA)}`
+  );
+}
+
+export async function askCopilotAboutInsights(prompt: string): Promise<string> {
+  return sendCopilotPrompt(prompt);
+}
+
+async function sendCopilotPrompt(prompt: string): Promise<string> {
   const client = await getCopilotClient();
   const session = await client.createSession({
     model: process.env.COPILOT_MODEL?.trim() || 'gpt-5.6-luna',
@@ -59,10 +69,7 @@ export async function generateCopilotInsights(prompt: string): Promise<string> {
   });
 
   try {
-    const response = await session.sendAndWait(
-      `${prompt}\n\nRespond with only a JSON object (no markdown, no code fences) matching this JSON Schema:\n${JSON.stringify(INSIGHTS_RESPONSE_SCHEMA)}`,
-      30_000
-    );
+    const response = await session.sendAndWait(prompt, 30_000);
     const content = response?.data.content?.trim();
     if (!content) {
       throw new Error('Copilot returned an empty portfolio insights response.');

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { generatePortfolioInsights, PortfolioInsightsReport } from '../api'
+import { askPortfolioInsights, generatePortfolioInsights, PortfolioInsightsChatTurn, PortfolioInsightsReport } from '../api'
 import { formatCurrency2 } from '../formatters'
 
 function formatPercent(value: number | undefined) {
@@ -16,16 +16,46 @@ export default function PortfolioInsightsPage() {
   const [report, setReport] = useState<PortfolioInsightsReport | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [chatMessages, setChatMessages] = useState<PortfolioInsightsChatTurn[]>([])
+  const [chatQuestion, setChatQuestion] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
+  const [chatError, setChatError] = useState<string | null>(null)
 
   async function runReview() {
     setLoading(true)
     setError(null)
     try {
-      setReport(await generatePortfolioInsights())
+      const nextReport = await generatePortfolioInsights()
+      setReport(nextReport)
+      setChatMessages([])
+      setChatQuestion('')
+      setChatError(null)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to generate portfolio review.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function askQuestion(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const question = chatQuestion.trim()
+    if (!report || !question || chatLoading) return
+
+    setChatLoading(true)
+    setChatError(null)
+    try {
+      const answer = await askPortfolioInsights(report.reportId, question, chatMessages.slice(-12))
+      setChatMessages((messages) => [
+        ...messages,
+        { role: 'user', content: question },
+        { role: 'assistant', content: answer },
+      ])
+      setChatQuestion('')
+    } catch (err: unknown) {
+      setChatError(err instanceof Error ? err.message : 'Unable to answer this question.')
+    } finally {
+      setChatLoading(false)
     }
   }
 
@@ -46,7 +76,7 @@ export default function PortfolioInsightsPage() {
           <h2>Holdings & tax considerations</h2>
           <p className="muted-text">Fact-based portfolio observations for your review.</p>
         </div>
-        <button className="button button-primary" onClick={() => void runReview()} disabled={loading}>
+        <button className="button button-primary" onClick={() => void runReview()} disabled={loading || chatLoading}>
           {loading ? 'Reviewing...' : report ? 'Refresh review' : 'Generate review'}
         </button>
       </header>
@@ -150,6 +180,39 @@ export default function PortfolioInsightsPage() {
             <ul>
               {report.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}
             </ul>
+          </section>
+
+          <section className="panel insights-chat" aria-labelledby="insights-chat-title">
+            <div className="insights-section-heading">
+              <p className="eyebrow">Follow-up</p>
+              <h3 id="insights-chat-title">Ask about this review</h3>
+            </div>
+            <div className="insights-chat-transcript" aria-live="polite" aria-relevant="additions">
+              {chatMessages.length === 0 ? (
+                <p className="muted-text">Ask a question about the facts and explanations in this review.</p>
+              ) : chatMessages.map((message, index) => (
+                <article className={`insights-chat-message insights-chat-${message.role}`} key={`${index}-${message.role}`}>
+                  <strong>{message.role === 'user' ? 'You' : 'Review'}</strong>
+                  <p>{message.content}</p>
+                </article>
+              ))}
+              {chatLoading ? <p className="muted-text" role="status">Preparing an answer...</p> : null}
+            </div>
+            {chatError ? <div className="status status-error" role="alert">{chatError}</div> : null}
+            <form className="insights-chat-form" onSubmit={(event) => void askQuestion(event)}>
+              <label htmlFor="insights-chat-question">Your question</label>
+              <textarea
+                id="insights-chat-question"
+                value={chatQuestion}
+                maxLength={1000}
+                rows={3}
+                disabled={loading || chatLoading}
+                onChange={(event) => setChatQuestion(event.target.value)}
+              />
+              <button className="button button-primary" type="submit" disabled={loading || chatLoading || !chatQuestion.trim()}>
+                {chatLoading ? 'Asking...' : 'Ask'}
+              </button>
+            </form>
           </section>
         </>
       ) : null}
