@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import sql from 'mssql';
 import { getPool } from '../db/connection.js';
+import { loadAiPreferences, SEEDED_AI_ASSUMPTIONS } from '../services/ai-preferences.js';
 
 const router = Router();
 const DEFAULT_SALE_TARGET_PERCENT = 10;
@@ -9,6 +10,34 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25;
+
+router.get('/ai-assumptions', async (req: Request, res: Response) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    res.json({ assumptions: await loadAiPreferences(req.user.id) });
+  } catch (error) {
+    console.error('Unable to load AI assumptions:', error);
+    res.status(500).json({ error: 'Unable to load AI assumptions.' });
+  }
+});
+
+router.put('/ai-assumptions', async (req: Request, res: Response) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required.' });
+  if (typeof req.body?.enabled !== 'boolean') {
+    return res.status(400).json({ error: 'enabled must be a boolean.' });
+  }
+  try {
+    const result = await getPool().request()
+      .input('userId', sql.NVarChar, req.user.id)
+      .input('enabled', sql.Bit, req.body.enabled)
+      .query('UPDATE Users SET aiAssumptionsEnabled = @enabled WHERE id = @userId AND aiInsightsEnabled = 1');
+    if (!result.rowsAffected[0]) return res.status(403).json({ error: 'Portfolio insights are not enabled for this user.' });
+    res.json({ assumptions: req.body.enabled ? SEEDED_AI_ASSUMPTIONS : null });
+  } catch (error) {
+    console.error('Unable to save AI assumptions:', error);
+    res.status(500).json({ error: 'Unable to save AI assumptions.' });
+  }
+});
 
 router.get('/profile', async (req: Request, res: Response) => {
   try {

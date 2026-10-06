@@ -166,7 +166,9 @@ export default function MessagesPage() {
                     <span className={`message-type message-type-${message.type === 'ai-chat' ? 'ai' : message.type === 'sell-target-hit' ? 'sell' : 'buy'}`}>
                       {message.type === 'ai-chat' ? 'AI' : message.type === 'sell-target-hit' ? 'Sell' : 'Buy'}
                     </span>
-                    <strong>{message.type === 'ai-chat' ? 'Portfolio Q&A' : message.ticker}</strong>
+                    <strong>{message.type === 'ai-chat'
+                      ? message.body.startsWith('Review section: ') ? message.body.split('\n')[0].slice('Review section: '.length) : 'Portfolio Q&A'
+                      : message.ticker}</strong>
                     <span className="message-date">{new Date(message.createdAt).toLocaleString()}</span>
                   </button>
                 </div>

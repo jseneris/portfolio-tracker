@@ -4,6 +4,7 @@ import {
   calculateYearlyPerformance,
   findPriceOnOrBefore,
   getSharesAtDate,
+  getWashSaleWindowTransactions,
 } from './StockHistoryPage'
 
 function makeTransaction(overrides: Partial<StockTransaction> = {}): StockTransaction {
@@ -38,6 +39,34 @@ const PRICES = [
   { priceDate: '2025-12-31', closePrice: 200 },
   { priceDate: '2026-09-04', closePrice: 250 },
 ]
+
+describe('sell-lot wash-sale-window check', () => {
+  it('includes buys/dividends on the sale date and both 30-day boundaries but excludes outside dates and other types/tickers', () => {
+    const transactions = [
+      makeTransaction({ id: 'before', transactionDate: '2026-09-06T23:59:59Z' }),
+      makeTransaction({ id: 'same', type: 'div', transactionDate: '2026-10-06T12:00:00Z' }),
+      makeTransaction({ id: 'after', type: 'div', transactionDate: '2026-11-05T00:00:00Z' }),
+      makeTransaction({ id: 'old', transactionDate: '2026-09-05T00:00:00Z' }),
+      makeTransaction({ id: 'late', transactionDate: '2026-11-06T00:00:00Z' }),
+      makeTransaction({ id: 'sell', type: 'sell', transactionDate: '2026-10-06' }),
+      makeTransaction({ id: 'exchange', type: 'exchange', transactionDate: '2026-10-06' }),
+      makeTransaction({ id: 'other', ticker: 'OTHER', transactionDate: '2026-10-06' }),
+      makeTransaction({ id: 'invalid', transactionDate: 'invalid' }),
+    ]
+    expect(getWashSaleWindowTransactions(transactions, 'test', '2026-10-06')).toEqual([
+      { id: 'before', type: 'buy', date: '2026-09-06', daysFromSale: -30 },
+      { id: 'same', type: 'div', date: '2026-10-06', daysFromSale: 0 },
+      { id: 'after', type: 'div', date: '2026-11-05', daysFromSale: 30 },
+    ])
+  })
+
+  it('updates for backdated sales across year boundaries and handles missing dates', () => {
+    const transactions = [makeTransaction({ transactionDate: '2025-12-31' })]
+    expect(getWashSaleWindowTransactions(transactions, 'TEST', '2026-01-01')[0].daysFromSale).toBe(-1)
+    expect(getWashSaleWindowTransactions(transactions, 'TEST', '2026-02-01')).toEqual([])
+    expect(getWashSaleWindowTransactions(transactions, 'TEST', '')).toEqual([])
+  })
+})
 
 describe('findPriceOnOrBefore', () => {
   it('returns the latest price on or before the date', () => {

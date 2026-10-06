@@ -221,6 +221,9 @@ async function createTablesIfNotExist() {
       ALTER TABLE Users
       ADD aiInsightsEnabled BIT NOT NULL CONSTRAINT DF_Users_aiInsightsEnabled DEFAULT 0;
 
+    IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('Users') AND name = 'aiAssumptionsEnabled')
+      ALTER TABLE Users ADD aiAssumptionsEnabled BIT NOT NULL CONSTRAINT DF_Users_aiAssumptionsEnabled DEFAULT 0;
+
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'UserSettings')
       CREATE TABLE UserSettings (
         id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),

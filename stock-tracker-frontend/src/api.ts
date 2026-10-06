@@ -345,6 +345,24 @@ export type PortfolioInsightsReport = {
   snapshot: {
     generatedAt: string
     valuationBasis: string
+    assumptions?: {
+      investmentHorizonYears: number
+      riskTolerance: string
+      riskAssessmentScope: string
+    } | null
+    holdingReviewContext?: Array<{
+      ticker: string
+      displayLotCount: number
+      yearlyGainLoss: number | null
+      matchesLossReviewFilter: boolean | null
+      lastTrackedAcquisitionDate: string | null
+      priorAcquisitionWindowClearsOn: string | null
+      daysUntilPriorAcquisitionWindowClears: number | null
+      lastTrackedDividendDate: string | null
+      nextDeclaredDividendDate: string | null
+      daysUntilNextDividend: number | null
+      daysSinceLastDividend: number | null
+    }>
     holdings: Array<{
       ticker: string
       quantity: number
@@ -492,6 +510,12 @@ export async function saveAiChatMessage(question: string, answer: string): Promi
   return requestApi<AppMessage>('/api/messages/ai-chat', {
     method: 'POST',
     body: { question, answer },
+  })
+}
+
+export async function saveReviewSection(title: 'Largest concentrations' | 'Loss-review timing', content: string): Promise<AppMessage> {
+  return requestApi<AppMessage>('/api/messages/review-section', {
+    method: 'POST', body: { title, content },
   })
 }
 
@@ -715,6 +739,18 @@ export async function updateTickerPreference(
 
 export async function generatePortfolioInsights(): Promise<PortfolioInsightsReport> {
   return requestApi<PortfolioInsightsReport>('/api/portfolio-insights', { method: 'POST' })
+}
+
+export async function getAiAssumptions(): Promise<boolean> {
+  const result = await requestApi<{ assumptions: unknown | null }>('/api/user-settings/ai-assumptions')
+  return result.assumptions !== null
+}
+
+export async function setAiAssumptions(enabled: boolean): Promise<boolean> {
+  const result = await requestApi<{ assumptions: unknown | null }>('/api/user-settings/ai-assumptions', {
+    method: 'PUT', body: { enabled },
+  })
+  return result.assumptions !== null
 }
 
 export async function askPortfolioInsights(

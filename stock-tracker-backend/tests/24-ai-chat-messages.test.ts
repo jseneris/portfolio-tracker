@@ -32,9 +32,31 @@ describe('saving AI chat to Messages', () => {
     mocks.input.mockImplementation(() => ({ input: mocks.input, query: mocks.query }));
   });
 
+  it.each(['Largest concentrations', 'Loss-review timing'])('saves a complete %s section beyond chat-answer limits', async (title) => {
+    const content = 'x'.repeat(12000);
+    const body = `Review section: ${title}\n\n${content}`;
+    allowAccess();
+    mocks.query.mockResolvedValueOnce({ recordset: [{ ...message, body }] });
+    const response = await request(app).post('/messages/review-section').set('x-user-id', 'owner')
+      .send({ title, content }).expect(201);
+    expect(response.body.body).toBe(body);
+    expect(response.body.isRead).toBe(false);
+    expect(mocks.input).toHaveBeenCalledWith('body', sql.NVarChar(sql.MAX), body);
+    expect(mocks.input).toHaveBeenCalledWith('userId', sql.NVarChar, 'owner');
+  });
+
+  it.each([
+    { title: 'Unknown', content: 'text' },
+    { title: 'Largest concentrations', content: '' },
+    { title: 'Loss-review timing', content: 'x'.repeat(50001) },
+  ])('rejects invalid review sections', async (payload) => {
+    await request(app).post('/messages/review-section').set('x-user-id', 'owner').send(payload).expect(400);
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
   it('saves the full question and answer as an unread message owned by the authenticated user', async () => {
-    const question = 'q'.repeat(1000);
-    const answer = 'a'.repeat(4000);
+    const question = 'q'.repeat(2000);
+    const answer = 'a'.repeat(8000);
     const body = `Question:\n${question}\n\nAI response:\n${answer}`;
     allowAccess();
     mocks.query.mockResolvedValueOnce({ recordset: [{ ...message, body }] });
@@ -61,8 +83,8 @@ describe('saving AI chat to Messages', () => {
   it.each([
     {}, { question: '', answer: 'a' }, { question: 'q', answer: '   ' },
     { question: 123, answer: 'a' }, { question: 'q', answer: {} },
-    { question: 'q'.repeat(1001), answer: 'a' },
-    { question: 'q', answer: 'a'.repeat(4001) },
+    { question: 'q'.repeat(2001), answer: 'a' },
+    { question: 'q', answer: 'a'.repeat(8001) },
   ])('rejects invalid content before any database write: %j', async (payload) => {
     await request(app).post('/messages/ai-chat').set('x-user-id', 'owner').send(payload).expect(400);
     expect(mocks.query).not.toHaveBeenCalled();

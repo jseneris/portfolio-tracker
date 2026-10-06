@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { askPortfolioInsights, generatePortfolioInsights, PortfolioInsightsChatTurn, PortfolioInsightsReport, saveAiChatMessage } from '../api'
 import { formatCurrency2 } from '../formatters'
 import { MESSAGES_UPDATED_EVENT } from './MessagesPage'
+import { getAiAssumptions, setAiAssumptions, saveReviewSection } from '../api'
 
 function formatPercent(value: number | undefined) {
   return typeof value === 'number' ? `${value.toFixed(2)}%` : '--'
@@ -13,22 +14,86 @@ function formatDate(value: string | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString()
 }
 
-export function ChatResponseActions({ saved, saving, disabled, error, onSend }: {
+export function ChatResponseActions({ saved, saving, disabled, error, onSend, successText = 'Question and response saved.' }: {
   saved: boolean
   saving: boolean
   disabled: boolean
   error?: string
   onSend: () => void
+  successText?: string
 }) {
   return (
     <div>
       <button className="button" type="button" onClick={onSend} disabled={disabled || saved || saving}>
         {saved ? 'Sent to Messages' : saving ? 'Sending...' : 'Send to Messages'}
       </button>
-      {saved ? <span role="status"> Question and response saved.</span> : null}
+      {saved ? <span role="status"> {successText}</span> : null}
       {error ? <p className="status status-error" role="alert">{error}</p> : null}
     </div>
   )
+}
+
+export function formatDividendTiming(holding: { daysUntilNextDividend: number | null; daysSinceLastDividend: number | null }) {
+  if (holding.daysUntilNextDividend != null) return `${holding.daysUntilNextDividend} days until next dividend`
+  if (holding.daysSinceLastDividend != null) return `${holding.daysSinceLastDividend} days since last tracked dividend`
+  return 'No tracked dividend'
+}
+
+type ReviewSection = 'Largest concentrations' | 'Loss-review timing'
+
+export function buildReviewSectionContent(report: PortfolioInsightsReport, section: ReviewSection): string {
+  const lines = [`Review generated: ${new Date(report.generatedAt).toISOString()}`, '']
+  if (section === 'Largest concentrations') {
+    lines.push('Share of priced equities (20% review threshold).')
+    const facts = report.facts.filter((fact) => fact.type === 'concentration')
+    if (!facts.length) lines.push('No holding reached the 20% concentration review threshold.')
+    for (const fact of facts) {
+      lines.push(`${fact.ticker}: ${formatPercent(fact.percentOfEquities)}; ${formatCurrency2(fact.marketValue)}`,
+        report.explanations.find((item) => item.factId === fact.id)?.explanation
+          || 'No additional model explanation was returned for this item.', '')
+    }
+  } else {
+    lines.push('Negative holding Yearly Gain/Loss and more than three display lots.',
+      'Wait days reflect the latest tracked buy/dividend reinvestment; the prior window clears on day 31.',
+      'Zero is no remaining prior-window wait, not confirmed wash-sale eligibility. Future purchases, outside accounts, and substantially identical securities remain unknown.',
+      'Dividend elapsed days reflect tracked payments, not a prediction.', '')
+    const holdings = report.snapshot.holdingReviewContext?.filter((holding) => holding.matchesLossReviewFilter === true) ?? []
+    if (!holdings.length) lines.push('No holdings match the review filter with available data.')
+    for (const holding of holdings) {
+      lines.push(`${holding.ticker}: ${holding.daysUntilPriorAcquisitionWindowClears ?? 'Unknown'} days to wait; ${formatDividendTiming(holding)}`)
+    }
+  }
+  lines.push('', 'Important limitations:', ...report.limitations)
+  return lines.join('\n')
+}
+
+function ReviewSectionSaveButton({ report, section, disabled, onSavingChange }: {
+  report: PortfolioInsightsReport
+  section: ReviewSection
+  disabled: boolean
+  onSavingChange: (saving: boolean) => void
+}) {
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string>()
+  async function send() {
+    if (disabled || saved || saving) return
+    setSaving(true)
+    onSavingChange(true)
+    setError(undefined)
+    try {
+      await saveReviewSection(section, buildReviewSectionContent(report, section))
+      setSaved(true)
+      window.dispatchEvent(new Event(MESSAGES_UPDATED_EVENT))
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Unable to save this section to Messages.')
+    } finally {
+      setSaving(false)
+      onSavingChange(false)
+    }
+  }
+  return <ChatResponseActions saved={saved} saving={saving} disabled={disabled} error={error}
+    onSend={() => void send()} successText="Review section saved." />
 }
 
 export default function PortfolioInsightsPage() {
@@ -42,6 +107,38 @@ export default function PortfolioInsightsPage() {
   const [savingResponse, setSavingResponse] = useState<number | null>(null)
   const [savedResponses, setSavedResponses] = useState<Set<number>>(() => new Set())
   const [saveErrors, setSaveErrors] = useState<Record<number, string>>({})
+  const [assumptionsEnabled, setAssumptionsEnabled] = useState(false)
+  const [assumptionsLoading, setAssumptionsLoading] = useState(true)
+  const [assumptionsError, setAssumptionsError] = useState<string | null>(null)
+  const [assumptionsNotice, setAssumptionsNotice] = useState<string | null>(null)
+  const [savingSection, setSavingSection] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    getAiAssumptions().then((enabled) => {
+      if (!cancelled) setAssumptionsEnabled(enabled)
+    }).catch((err: unknown) => {
+      if (!cancelled) setAssumptionsError(err instanceof Error ? err.message : 'Unable to load AI assumptions.')
+    }).finally(() => {
+      if (!cancelled) setAssumptionsLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  async function toggleAssumptions() {
+    setAssumptionsLoading(true)
+    setAssumptionsError(null)
+    setAssumptionsNotice(null)
+    try {
+      const enabled = await setAiAssumptions(!assumptionsEnabled)
+      setAssumptionsEnabled(enabled)
+      setAssumptionsNotice('Preferences saved. Generate or refresh the review to apply them; existing chat uses the previous snapshot.')
+    } catch (err: unknown) {
+      setAssumptionsError(err instanceof Error ? err.message : 'Unable to save AI assumptions.')
+    } finally {
+      setAssumptionsLoading(false)
+    }
+  }
 
   async function runReview() {
     setLoading(true)
@@ -125,10 +222,28 @@ export default function PortfolioInsightsPage() {
           <h2>Holdings & tax considerations</h2>
           <p className="muted-text">Fact-based observations and questions about your complete read-only portfolio snapshot.</p>
         </div>
-        <button className="button button-primary" onClick={() => void runReview()} disabled={loading || chatLoading || savingResponse !== null}>
+        <button className="button button-primary" onClick={() => void runReview()} disabled={loading || chatLoading || savingResponse !== null || savingSection}>
           {loading ? 'Reviewing...' : report ? 'Refresh review' : 'Generate review'}
         </button>
       </header>
+
+      <section className="panel">
+        <h3>Your AI assumptions</h3>
+        <ul>
+          <li>Investment horizon: 10 years.</li>
+          <li>Comfortable with volatility; avoid excessive single-stock concentration.</li>
+          <li>Risk assessment covers tracked stocks only, not outside holdings or holistic finances.</li>
+          <li>Tax-loss review: only negative holding Yearly Gain/Loss and more than three display lots. Actual open-lot losses must still be verified.</li>
+          <li>Show ticker-level days remaining after the latest tracked buy or dividend reinvestment, not individual lots. This is not confirmed wash-sale eligibility. Future purchases and dividend reinvestments can change the outcome.</li>
+          <li>Show days until the next dividend when its date is verified; otherwise show days since the last tracked dividend.</li>
+        </ul>
+        <p>{assumptionsLoading ? 'Loading or saving assumptions...' : assumptionsEnabled ? 'Saved assumptions enabled for new reviews.' : 'These assumptions are not yet enabled for your account.'}</p>
+        <button className="button" type="button" onClick={() => void toggleAssumptions()} disabled={assumptionsLoading || loading || chatLoading || savingResponse !== null}>
+          {assumptionsEnabled ? 'Disable these assumptions' : 'Save and enable these assumptions'}
+        </button>
+        {assumptionsError ? <p role="alert" className="status status-error">{assumptionsError}</p> : null}
+        {assumptionsNotice ? <p role="status">{assumptionsNotice}</p> : null}
+      </section>
 
       {error ? <div className="status status-error" role="alert">{error}</div> : null}
       {!report && !loading ? (
@@ -143,6 +258,7 @@ export default function PortfolioInsightsPage() {
       {report ? (
         <>
           <p className="insights-timestamp">Generated {new Date(report.generatedAt).toLocaleString()}</p>
+          <p className="muted-text">{report.snapshot.assumptions ? 'This review uses your saved 10-year, tracked-stocks-only assumptions and loss-review filters.' : 'This review was generated without the saved assumptions.'}</p>
 
           <section className="panel">
             <h3>Read-only snapshot available to AI</h3>
@@ -180,9 +296,11 @@ export default function PortfolioInsightsPage() {
             ) : (
               <p className="muted-text">No holding reached the 20% concentration review threshold.</p>
             )}
+            <ReviewSectionSaveButton key={`${report.reportId}-concentrations`} report={report} section="Largest concentrations"
+              disabled={loading || savingSection} onSavingChange={setSavingSection} />
           </section>
 
-          <section className="panel">
+          {!report.snapshot.assumptions ? <section className="panel">
             <div className="insights-section-heading">
               <p className="eyebrow">Open lots</p>
               <h3>Unrealized loss items to review</h3>
@@ -217,14 +335,40 @@ export default function PortfolioInsightsPage() {
                 </table>
               </div>
             ) : (
-              <p className="muted-text">No open lots with an estimated loss were found at the latest stored closes.</p>
+              <p className="muted-text">{report.snapshot.assumptions
+                ? 'No open lots with an estimated loss matched the negative holding Yearly Gain/Loss and more-than-three-display-lots filters.'
+                : 'No open lots with an estimated loss were found at the latest stored closes.'}</p>
             )}
             {lossFacts.map((fact) => (
               <p className="insight-commentary" key={`${fact.id}-explanation`}>
                 <strong>{fact.ticker} lot:</strong> {explanation(fact.id)}
               </p>
             ))}
-          </section>
+          </section> : null}
+
+          {report.snapshot.assumptions ? (
+            <section className="panel">
+              <h3>Loss-review timing (tracked accounts only)</h3>
+              <p className="muted-text">Only holdings with negative Yearly Gain/Loss and more than three display lots appear below. Wait days are based on the latest tracked buy or dividend reinvestment: the prior 30-day window clears on day 31. Zero means no remaining prior-window wait, not confirmed wash-sale eligibility. Future purchases, outside accounts, and substantially identical securities remain unknown. Dividend elapsed days use tracked payments, not a prediction.</p>
+              <div className="table-scroll">
+                <table className="table">
+                  <thead><tr><th>Ticker</th><th>Days to wait (prior buy/div window)</th><th>Dividend timing</th></tr></thead>
+                  <tbody>
+                    {report.snapshot.holdingReviewContext?.filter((holding) => holding.matchesLossReviewFilter === true).map((holding) => (
+                      <tr key={holding.ticker}>
+                        <td>{holding.ticker}</td>
+                        <td>{holding.daysUntilPriorAcquisitionWindowClears ?? 'Unknown'}</td>
+                        <td>{formatDividendTiming(holding)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {!report.snapshot.holdingReviewContext?.some((holding) => holding.matchesLossReviewFilter === true) ? <p>No holdings match the review filter with available data.</p> : null}
+              <ReviewSectionSaveButton key={`${report.reportId}-timing`} report={report} section="Loss-review timing"
+                disabled={loading || savingSection} onSavingChange={setSavingSection} />
+            </section>
+          ) : null}
 
           {missingPriceFacts.length ? (
             <section className="panel">
@@ -272,10 +416,12 @@ export default function PortfolioInsightsPage() {
             {chatError ? <div className="status status-error" role="alert">{chatError}</div> : null}
             <form className="insights-chat-form" onSubmit={(event) => void askQuestion(event)}>
               <label htmlFor="insights-chat-question">Your question</label>
+              <small id="insights-chat-question-limit">Up to 2,000 characters. Older exchanges may be omitted from AI context in longer conversations.</small>
               <textarea
                 id="insights-chat-question"
+                aria-describedby="insights-chat-question-limit"
                 value={chatQuestion}
-                maxLength={1000}
+                maxLength={2000}
                 rows={3}
                 disabled={loading || chatLoading}
                 onChange={(event) => setChatQuestion(event.target.value)}

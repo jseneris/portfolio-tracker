@@ -1,6 +1,8 @@
 import sql from 'mssql';
 import { getPool } from '../db/connection.js';
 import { getCashSummary } from './cash-summary.js';
+import { loadAiPreferences } from './ai-preferences.js';
+import { loadHoldingReviewContext } from './holding-review-context.js';
 
 export type PortfolioLotRow = {
   ticker: string;
@@ -99,7 +101,10 @@ export function buildPortfolioSnapshot(rows: PortfolioLotRow[], cash: CashSummar
   };
 }
 
-export type PortfolioSnapshot = ReturnType<typeof buildPortfolioSnapshot>;
+export type PortfolioSnapshot = ReturnType<typeof buildPortfolioSnapshot> & {
+  assumptions?: Awaited<ReturnType<typeof loadAiPreferences>>;
+  holdingReviewContext?: Awaited<ReturnType<typeof loadHoldingReviewContext>>;
+};
 
 export async function loadPortfolioSnapshot(userId: string) {
   const result = await getPool().request()
@@ -127,8 +132,13 @@ export async function loadPortfolioSnapshot(userId: string) {
       ORDER BY pl.ticker, pl.purchaseDate
     `);
   const cash = await getCashSummary(userId);
+  const snapshot: PortfolioSnapshot = buildPortfolioSnapshot(result.recordset, cash, new Date().toISOString());
+  snapshot.assumptions = await loadAiPreferences(userId);
+  if (snapshot.assumptions) {
+    snapshot.holdingReviewContext = await loadHoldingReviewContext(userId, snapshot.holdings, snapshot.generatedAt.slice(0, 10));
+  }
   return {
     rows: result.recordset,
-    snapshot: buildPortfolioSnapshot(result.recordset, cash, new Date().toISOString()),
+    snapshot,
   };
 }

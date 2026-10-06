@@ -105,6 +105,54 @@ function toDateOnly(value: string): string {
   return typeof value === 'string' && value.length >= 10 ? value.slice(0, 10) : ''
 }
 
+export function getWashSaleWindowTransactions(transactions: StockTransaction[], ticker: string, saleDate: string) {
+  const saleDay = toUtcDayTimestamp(saleDate)
+  if (!Number.isFinite(saleDay)) return []
+  return transactions
+    .filter((transaction) => {
+      const day = toUtcDayTimestamp(transaction.transactionDate)
+      return transaction.ticker.toUpperCase() === ticker.toUpperCase()
+        && (transaction.type === 'buy' || transaction.type === 'div')
+        && Number.isFinite(day)
+        && Math.abs(day - saleDay) <= 30 * 86400000
+    })
+    .map((transaction) => ({
+      id: transaction.id,
+      type: transaction.type,
+      date: toDateOnly(transaction.transactionDate),
+      daysFromSale: Math.round((toUtcDayTimestamp(transaction.transactionDate) - saleDay) / 86400000),
+    }))
+    .sort((first, second) => first.date.localeCompare(second.date) || first.id.localeCompare(second.id))
+}
+
+export function WashSaleWindowNotice({ transactions, saleDate }: {
+  transactions: ReturnType<typeof getWashSaleWindowTransactions>
+  saleDate: string
+}) {
+  if (!Number.isFinite(toUtcDayTimestamp(saleDate))) {
+    return <p className="muted-text">Choose a valid sale date to check tracked buys and dividend reinvestments in the wash-sale window.</p>
+  }
+  return (
+    <div className={transactions.length ? 'status status-warning' : 'status'} role="status">
+      <strong>{transactions.length
+        ? `${transactions.length} tracked buy/dividend transaction${transactions.length === 1 ? '' : 's'} within the wash-sale window`
+        : 'No tracked buys or dividend reinvestments within 30 days before or after this sale date.'}</strong>
+      {transactions.length ? (
+        <ul>
+          {transactions.map((transaction) => (
+            <li key={transaction.id}>
+              {transaction.type === 'buy' ? 'Buy' : 'Dividend reinvestment'} — {formatDate(transaction.date)}
+              {' '}({transaction.daysFromSale === 0 ? 'sale date'
+                : `${Math.abs(transaction.daysFromSale)} days ${transaction.daysFromSale < 0 ? 'before' : 'after'} sale`})
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p>This check includes the sale date and both 30-day boundaries, including transactions whose shares were already sold. These transactions may affect a loss sale; this is not a determination of wash-sale status. Outside accounts, substantially identical securities, and future unrecorded purchases or reinvestments are not checked.</p>
+    </div>
+  )
+}
+
 function getPositiveTransactionState(lot: PurchaseLot): PositiveTransactionState {
   const original = Number(lot.originalQuantity)
   const remaining = Number(lot.remainingQuantity)
@@ -476,6 +524,10 @@ export default function StockHistoryPage() {
   }, [displayLots])
 
   const isSell = form.type === 'sell'
+  const washSaleTransactions = useMemo(
+    () => getWashSaleWindowTransactions(allTickerTransactions, ticker, form.transactionDate),
+    [allTickerTransactions, ticker, form.transactionDate]
+  )
   const isDividend = form.type === 'div'
   const isExchange = form.type === 'exchange'
 
@@ -2236,6 +2288,7 @@ export default function StockHistoryPage() {
                 </div>
 
                 {loadingLots ? <p>Loading lots for {ticker}...</p> : null}
+                <WashSaleWindowNotice transactions={washSaleTransactions} saleDate={form.transactionDate} />
 
                 {!loadingLots && availableLots.length === 0 ? (
                   <p>No open lots found for {ticker}. Create a buy/dividend lot first.</p>

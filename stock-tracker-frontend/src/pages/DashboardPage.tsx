@@ -999,7 +999,8 @@ export default function DashboardPage() {
     setError(null)
 
     try {
-      const result = await getCurrentPrices(tickers)
+      const [result, preferences] = await Promise.all([getCurrentPrices(tickers), getTickerPreferences()])
+      setTickerPreferencesByTicker(Object.fromEntries(preferences.map((preference) => [preference.ticker, preference])))
       applyCurrentPricePayload(result)
       setLastUpdatedAt(new Date())
     } catch (err: unknown) {

@@ -103,6 +103,32 @@ async function insertMessageIfNoUnread(
   return (result.rowsAffected[0] ?? 0) > 0;
 }
 
+async function enableBuyOnDipAtTrigger(
+  pool: sql.ConnectionPool, userId: string, ticker: string, price: number, today: string
+): Promise<boolean> {
+  if (!Number.isFinite(price) || price < 0.00000001 || price >= 10000000000) {
+    throw new Error(`[price-target-alerts] Cannot capture Buy on Dip price for ${ticker}: price is outside the supported range.`);
+  }
+  const result = await pool.request()
+    .input('userId', sql.NVarChar, userId)
+    .input('ticker', sql.NVarChar, ticker)
+    .input('price', sql.Decimal(18, 8), price)
+    .input('today', sql.Date, today)
+    .query(`
+      MERGE UserTickerPreferences WITH (HOLDLOCK) AS target
+      USING (SELECT @userId AS userId, @ticker AS ticker) AS source
+        ON target.userId = source.userId AND target.ticker = source.ticker
+      WHEN MATCHED AND target.buyOnDip = 0
+        AND NOT (target.buyRestricted = 1 AND target.buyRestrictedUntil >= @today) THEN
+        UPDATE SET buyOnDip = 1, buyOnDipPrice = @price, updatedAt = GETUTCDATE()
+      WHEN NOT MATCHED THEN
+        INSERT (id, userId, ticker, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil)
+        VALUES (NEWID(), @userId, @ticker, 1, @price, 0, NULL)
+      OUTPUT inserted.ticker;
+    `);
+  return result.recordset.length > 0;
+}
+
 export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions = {}): Promise<PriceTargetCycleSummary> {
   const now = options.now ?? new Date();
   const marketOpen = isUsMarketOpen(now);
@@ -274,7 +300,11 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
     }
 
     if (buyTarget != null && price <= buyTarget) {
-      const body = `${ticker} hit its buy target of ${formatPrice(buyTarget)} (current price ${formatPrice(price)}).`;
+      const enabledBuyOnDip = !preference?.buyOnDip && (displayLotCounts.get(k) ?? 0) <= 3
+        ? await enableBuyOnDipAtTrigger(pool, userId, ticker, price, today)
+        : false;
+      const body = `${ticker} hit its buy target of ${formatPrice(buyTarget)} (current price ${formatPrice(price)}).`
+        + (enabledBuyOnDip ? ` Buy on Dip was automatically enabled at ${formatPrice(price)} because this holding has three or fewer display lots.` : '');
       const inserted = await insertMessageIfNoUnread(pool, {
         userId,
         ticker,

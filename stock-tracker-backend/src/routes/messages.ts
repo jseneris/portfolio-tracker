@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import sql from 'mssql';
 import { getPool } from '../db/connection.js';
+import { MAX_CHAT_QUESTION_CHARACTERS, MAX_CHAT_ANSWER_CHARACTERS } from '../services/portfolio-chat-limits.js';
 
 const router = Router();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -27,14 +28,23 @@ function mapMessage(row: any) {
   };
 }
 
-router.post('/ai-chat', async (req: Request, res: Response) => {
+router.post(['/ai-chat', '/review-section'], async (req: Request, res: Response) => {
   const userId = req.user?.id;
   if (!userId) return res.status(401).json({ error: 'Authentication required.' });
 
   const question = typeof req.body?.question === 'string' ? req.body.question.trim() : '';
   const answer = typeof req.body?.answer === 'string' ? req.body.answer.trim() : '';
-  if (!question || question.length > 1000 || !answer || answer.length > 4000) {
-    return res.status(400).json({ error: 'A question of up to 1000 characters and an answer of up to 4000 characters are required.' });
+  const isSection = req.path === '/review-section';
+  const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+  const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
+  if (isSection && (
+    !['Largest concentrations', 'Loss-review timing'].includes(title) ||
+    !content || content.length > 50000
+  )) {
+    return res.status(400).json({ error: 'A supported review section title and content of up to 50000 characters are required.' });
+  }
+  if (!isSection && (!question || question.length > MAX_CHAT_QUESTION_CHARACTERS || !answer || answer.length > MAX_CHAT_ANSWER_CHARACTERS)) {
+    return res.status(400).json({ error: `A question of up to ${MAX_CHAT_QUESTION_CHARACTERS} characters and an answer of up to ${MAX_CHAT_ANSWER_CHARACTERS} characters are required.` });
   }
 
   try {
@@ -46,7 +56,9 @@ router.post('/ai-chat', async (req: Request, res: Response) => {
     }
     const result = await getPool().request()
       .input('userId', sql.NVarChar, userId)
-      .input('body', sql.NVarChar(sql.MAX), `Question:\n${question}\n\nAI response:\n${answer}`)
+      .input('body', sql.NVarChar(sql.MAX), isSection
+        ? `Review section: ${title}\n\n${content}`
+        : `Question:\n${question}\n\nAI response:\n${answer}`)
       .query(`
         INSERT INTO Messages (userId, type, ticker, targetPrice, triggerPrice, body)
         OUTPUT inserted.id, inserted.type, inserted.ticker, inserted.targetPrice, inserted.triggerPrice,

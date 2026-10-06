@@ -4,6 +4,7 @@ import { getPool } from '../db/connection.js';
 import sql from 'mssql';
 import YahooFinance from 'yahoo-finance2';
 import { fetchCurrentPrices } from '../services/current-prices.js';
+import { restrictBuyingAfterLossSale } from '../services/loss-sale-restriction.js';
 
 const router = Router();
 const yahooFinance = new YahooFinance();
@@ -1651,6 +1652,7 @@ router.post('/', async (req: Request, res: Response) => {
         }
       }
 
+      if (type === 'sell') await restrictBuyingAfterLossSale(tx, userId, id);
       await tx.commit();
       res.status(201).json({
         id,
@@ -1681,7 +1683,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     const { ticker, type, quantity, price, transactionDate } = req.body;
     const userId = req.user?.id!;
     
-    const request = getPool().request();
+    const tx = new sql.Transaction(getPool());
     
     let amount = null;
     if (type === 'buy' || type === 'sell') {
@@ -1690,20 +1692,28 @@ router.put('/:id', async (req: Request, res: Response) => {
       amount = quantity;
     }
     
-    await request
-      .input('id', sql.UniqueIdentifier, id)
-      .input('userId', sql.NVarChar, userId)
-      .input('type', sql.NVarChar, type)
-      .input('quantity', sql.Decimal(18, 8), quantity || null)
-      .input('price', sql.Decimal(18, 8), price || null)
-      .input('amount', sql.Decimal(18, 4), amount)
-      .input('transactionDate', sql.DateTime2, new Date(transactionDate))
-      .query(`
-        UPDATE StockTransactions 
-        SET type = @type, quantity = @quantity, price = @price, amount = @amount,
-            transactionDate = @transactionDate, updatedAt = GETUTCDATE()
-        WHERE id = @id AND userId = @userId
-      `);
+    await tx.begin();
+    try {
+      await new sql.Request(tx)
+        .input('id', sql.UniqueIdentifier, id)
+        .input('userId', sql.NVarChar, userId)
+        .input('type', sql.NVarChar, type)
+        .input('quantity', sql.Decimal(18, 8), quantity || null)
+        .input('price', sql.Decimal(18, 8), price || null)
+        .input('amount', sql.Decimal(18, 4), amount)
+        .input('transactionDate', sql.DateTime2, new Date(transactionDate))
+        .query(`
+          UPDATE StockTransactions
+          SET type = @type, quantity = @quantity, price = @price, amount = @amount,
+              transactionDate = @transactionDate, updatedAt = GETUTCDATE()
+          WHERE id = @id AND userId = @userId
+        `);
+      await restrictBuyingAfterLossSale(tx, userId, id);
+      await tx.commit();
+    } catch (error) {
+      await tx.rollback();
+      throw error;
+    }
     
     res.json({ id, ticker, type, quantity, price, transactionDate });
   } catch (error) {
