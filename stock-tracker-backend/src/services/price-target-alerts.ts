@@ -151,7 +151,7 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
       FROM UserSettings
     `),
     pool.request().query(`
-      SELECT userId, ticker, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil
+      SELECT userId, ticker, baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil
       FROM UserTickerPreferences
     `),
     pool.request().query(`
@@ -202,10 +202,11 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
     buyTargetPercentFor6OrMoreDisplayLots: DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS,
   };
 
-  const preferences = new Map<string, { buyOnDip: boolean; buyOnDipPrice: number | null; isBuyRestricted: boolean }>();
+  const preferences = new Map<string, { baseSize: number; buyOnDip: boolean; buyOnDipPrice: number | null; isBuyRestricted: boolean }>();
   for (const row of preferencesResult.recordset as any[]) {
     const restrictedUntil = toDateOnly(row.buyRestrictedUntil);
     preferences.set(key(String(row.userId), String(row.ticker).toUpperCase()), {
+      baseSize: Number(row.baseSize ?? 3),
       buyOnDip: Boolean(row.buyOnDip),
       buyOnDipPrice: row.buyOnDipPrice == null ? null : Number(row.buyOnDipPrice),
       isBuyRestricted: Boolean(row.buyRestricted) && restrictedUntil !== '' && today <= restrictedUntil,
@@ -281,17 +282,23 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
     }
 
     if (sellTarget != null && price >= sellTarget) {
+      const enabledBuyOnDip = !preference?.buyOnDip
+        && (displayLotCounts.get(k) ?? 0) === (preference?.baseSize ?? 3)
+        ? await enableBuyOnDipAtTrigger(pool, userId, ticker, price, today)
+        : false;
+      const body = `${ticker} hit its sell target of ${formatPrice(sellTarget)} (current price ${formatPrice(price)}).`
+        + (enabledBuyOnDip ? ` Buy on Dip was automatically enabled at ${formatPrice(price)} because this holding matches its base display-lot size.` : '');
       const inserted = await insertMessageIfNoUnread(pool, {
         userId,
         ticker,
         type: 'sell-target-hit',
         targetPrice: sellTarget,
         triggerPrice: price,
-        body: `${ticker} hit its sell target of ${formatPrice(sellTarget)} (current price ${formatPrice(price)}).`,
+        body,
       });
       if (inserted) {
         created += 1;
-        await sendMessageNotification(userId, `${ticker} sell target reached`, `${ticker} hit its sell target. Current price: ${formatPrice(price)}.`);
+        await sendMessageNotification(userId, `${ticker} sell target reached`, body);
       }
     }
 
@@ -300,11 +307,7 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
     }
 
     if (buyTarget != null && price <= buyTarget) {
-      const enabledBuyOnDip = !preference?.buyOnDip && (displayLotCounts.get(k) ?? 0) <= 3
-        ? await enableBuyOnDipAtTrigger(pool, userId, ticker, price, today)
-        : false;
-      const body = `${ticker} hit its buy target of ${formatPrice(buyTarget)} (current price ${formatPrice(price)}).`
-        + (enabledBuyOnDip ? ` Buy on Dip was automatically enabled at ${formatPrice(price)} because this holding has three or fewer display lots.` : '');
+      const body = `${ticker} hit its buy target of ${formatPrice(buyTarget)} (current price ${formatPrice(price)}).`;
       const inserted = await insertMessageIfNoUnread(pool, {
         userId,
         ticker,

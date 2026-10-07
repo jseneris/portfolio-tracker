@@ -513,6 +513,31 @@ body {
   font: inherit;
 }
 
+.ticker-base-size {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.ticker-base-size input {
+  width: 6rem;
+  min-height: 2.25rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+
+.lot-count-difference {
+  display: inline-block;
+  min-width: 2rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-weight: 700;
+  text-align: center;
+}
+
 .button {
   border: 1px solid #cbd5e1;
   border-radius: 0.45rem;

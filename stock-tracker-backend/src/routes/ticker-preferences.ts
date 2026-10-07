@@ -6,6 +6,7 @@ const router = Router();
 
 type TickerPreferenceRow = {
   ticker: string;
+  baseSize: number;
   buyOnDip: boolean;
   buyOnDipPrice: number | null;
   buyRestricted: boolean;
@@ -46,6 +47,7 @@ function mapPreference(row: TickerPreferenceRow, today: string) {
   const buyRestricted = Boolean(row.buyRestricted);
   return {
     ticker: String(row.ticker).toUpperCase(),
+    baseSize: Number(row.baseSize),
     buyOnDip: Boolean(row.buyOnDip),
     buyOnDipPrice: row.buyOnDipPrice == null ? null : Number(row.buyOnDipPrice),
     buyRestricted,
@@ -61,7 +63,7 @@ router.get('/', async (req: Request, res: Response) => {
     const result = await getPool().request()
       .input('userId', sql.NVarChar, userId)
       .query(`
-        SELECT ticker, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil
+        SELECT ticker, baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil
         FROM UserTickerPreferences
         WHERE userId = @userId
         ORDER BY ticker
@@ -85,7 +87,7 @@ router.get('/:ticker', async (req: Request, res: Response) => {
       .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, ticker)
       .query(`
-        SELECT TOP 1 ticker, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil
+        SELECT TOP 1 ticker, baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil
         FROM UserTickerPreferences
         WHERE userId = @userId AND ticker = @ticker
       `);
@@ -93,7 +95,7 @@ router.get('/:ticker', async (req: Request, res: Response) => {
     const row = result.recordset[0] as TickerPreferenceRow | undefined;
     res.json(row
       ? mapPreference(row, new Date().toISOString().slice(0, 10))
-      : { ticker, buyOnDip: false, buyOnDipPrice: null, buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false });
+      : { ticker, baseSize: 3, buyOnDip: false, buyOnDipPrice: null, buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
@@ -103,6 +105,7 @@ router.put('/:ticker', async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id!;
     const ticker = normalizeTicker(req.params.ticker);
+    const baseSize = req.body?.baseSize;
     const buyOnDip = req.body?.buyOnDip;
     const buyOnDipPrice = req.body?.buyOnDipPrice;
     const buyRestricted = req.body?.buyRestricted;
@@ -110,6 +113,9 @@ router.put('/:ticker', async (req: Request, res: Response) => {
 
     if (!ticker || ticker.length > 10) {
       return res.status(400).json({ error: 'ticker must be between 1 and 10 characters' });
+    }
+    if (baseSize != null && (!Number.isSafeInteger(baseSize) || baseSize < 0 || baseSize > 2147483647)) {
+      return res.status(400).json({ error: 'baseSize must be a non-negative integer' });
     }
     if (typeof buyOnDip !== 'boolean' || typeof buyRestricted !== 'boolean') {
       return res.status(400).json({ error: 'buyOnDip and buyRestricted must be boolean values' });
@@ -128,6 +134,7 @@ router.put('/:ticker', async (req: Request, res: Response) => {
     const result = await getPool().request()
       .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, ticker)
+      .input('baseSize', sql.Int, baseSize ?? null)
       .input('buyOnDip', sql.Bit, buyOnDip)
       .input('buyOnDipPrice', sql.Decimal(18, 8), buyOnDipPrice ?? null)
       .input('buyRestricted', sql.Bit, buyRestricted)
@@ -137,15 +144,16 @@ router.put('/:ticker', async (req: Request, res: Response) => {
         USING (SELECT @userId AS userId, @ticker AS ticker) AS source
           ON target.userId = source.userId AND target.ticker = source.ticker
         WHEN MATCHED THEN
-          UPDATE SET buyOnDip = @buyOnDip,
+          UPDATE SET baseSize = COALESCE(@baseSize, target.baseSize),
+                     buyOnDip = @buyOnDip,
                      buyOnDipPrice = CASE WHEN @buyOnDip = 0 THEN NULL ELSE COALESCE(@buyOnDipPrice, target.buyOnDipPrice) END,
                      buyRestricted = @buyRestricted,
                      buyRestrictedUntil = @buyRestrictedUntil,
                      updatedAt = GETUTCDATE()
         WHEN NOT MATCHED THEN
-          INSERT (id, userId, ticker, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil)
-          VALUES (NEWID(), @userId, @ticker, @buyOnDip, CASE WHEN @buyOnDip = 1 THEN @buyOnDipPrice ELSE NULL END, @buyRestricted, @buyRestrictedUntil)
-        OUTPUT inserted.ticker, inserted.buyOnDip, inserted.buyOnDipPrice, inserted.buyRestricted, inserted.buyRestrictedUntil;
+          INSERT (id, userId, ticker, baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil)
+          VALUES (NEWID(), @userId, @ticker, COALESCE(@baseSize, 3), @buyOnDip, CASE WHEN @buyOnDip = 1 THEN @buyOnDipPrice ELSE NULL END, @buyRestricted, @buyRestrictedUntil)
+        OUTPUT inserted.ticker, inserted.baseSize, inserted.buyOnDip, inserted.buyOnDipPrice, inserted.buyRestricted, inserted.buyRestrictedUntil;
       `);
 
     res.json(mapPreference(result.recordset[0] as TickerPreferenceRow, new Date().toISOString().slice(0, 10)));

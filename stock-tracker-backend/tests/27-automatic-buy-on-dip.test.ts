@@ -4,7 +4,7 @@ import sql from 'mssql';
 import { getPool, initializeDatabase } from '../src/db/connection.js';
 import { runPriceTargetAlertCycle } from '../src/services/price-target-alerts.js';
 
-describe('automatic Buy on Dip on buy-target hits', () => {
+describe('automatic Buy on Dip on sell-target hits', () => {
   let userId: string;
   let ticker: string;
   const now = new Date('2026-10-06T15:00:00Z');
@@ -49,7 +49,7 @@ describe('automatic Buy on Dip on buy-target hits', () => {
   }
   async function preference() {
     const result = await getPool().request().input('userId', sql.NVarChar, userId).input('ticker', sql.NVarChar, ticker)
-      .query('SELECT buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil FROM UserTickerPreferences WHERE userId = @userId AND ticker = @ticker');
+      .query('SELECT baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil FROM UserTickerPreferences WHERE userId = @userId AND ticker = @ticker');
     return result.recordset[0];
   }
   async function messages() {
@@ -57,38 +57,56 @@ describe('automatic Buy on Dip on buy-target hits', () => {
       .query('SELECT type, targetPrice, triggerPrice, body FROM Messages WHERE userId = @userId ORDER BY createdAt');
     return result.recordset;
   }
-  async function seedPreference(buyOnDip: boolean, price: number | null, restrictedUntil: string | null) {
+  async function seedPreference(buyOnDip: boolean, price: number | null, restrictedUntil: string | null, baseSize = 3) {
     await getPool().request().input('userId', sql.NVarChar, userId).input('ticker', sql.NVarChar, ticker)
       .input('buyOnDip', sql.Bit, buyOnDip).input('price', sql.Decimal(18, 8), price)
+      .input('baseSize', sql.Int, baseSize)
       .input('restricted', sql.Bit, restrictedUntil != null).input('until', sql.Date, restrictedUntil)
-      .query(`INSERT INTO UserTickerPreferences (userId, ticker, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil)
-        VALUES (@userId, @ticker, @buyOnDip, @price, @restricted, @until)`);
+      .query(`INSERT INTO UserTickerPreferences (userId, ticker, baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil)
+        VALUES (@userId, @ticker, @baseSize, @buyOnDip, @price, @restricted, @until)`);
   }
 
-  it.each([0, 1, 2, 3])('saves the trigger price at the buy target with %i display lots', async (count) => {
+  it.each([0, 1, 2, 3, 4])('does not enable Buy on Dip on a buy-target hit with %i display lots', async (count) => {
     if (count) await setLots(count);
-    const trigger = count === 3 ? 90 : 95;
+    const trigger = count < 3 ? 95 : count === 3 ? 90 : 85;
     await cycle(trigger);
-    expect(await preference()).toMatchObject({ buyOnDip: true, buyOnDipPrice: trigger, buyRestricted: false });
+    expect(await preference()).toBeUndefined();
     const alerts = await messages();
     expect(alerts).toHaveLength(1);
     expect(alerts[0]).toMatchObject({ type: 'buy-target-hit', targetPrice: trigger, triggerPrice: trigger });
-    expect(alerts[0].body).toContain('automatically enabled');
-    await cycle(trigger * 0.98);
-    expect((await preference()).buyOnDipPrice).toBe(trigger);
-    expect(await messages()).toHaveLength(1);
+    expect(alerts[0].body).not.toContain('automatically enabled');
   });
 
-  it('does not enable for four display lots even when the buy target is reached', async () => {
-    await setLots(4);
-    await cycle(85);
-    expect(await preference()).toBeUndefined();
-    expect((await messages())[0]).toMatchObject({ type: 'buy-target-hit', targetPrice: 85 });
-  });
-
-  it('does not enable above the target or without a usable price', async () => {
+  it('enables at the sell target when display lots equal the default base size', async () => {
     await setLots(3);
-    await cycle(90.01);
+    await cycle(111);
+    expect(await preference()).toMatchObject({ baseSize: 3, buyOnDip: true, buyOnDipPrice: 111, buyRestricted: false });
+    const alerts = await messages();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ type: 'sell-target-hit', targetPrice: 110, triggerPrice: 111 });
+    expect(alerts[0].body).toContain('automatically enabled');
+
+    await cycle(122.1);
+    expect((await preference()).buyOnDipPrice).toBe(111);
+  });
+
+  it('uses the ticker-specific base size and requires an exact lot-count match', async () => {
+    await seedPreference(false, null, null, 4);
+    await setLots(4);
+    await cycle(111);
+    expect(await preference()).toMatchObject({ baseSize: 4, buyOnDip: true, buyOnDipPrice: 111 });
+
+    await getPool().request().input('userId', sql.NVarChar, userId).query('DELETE FROM Messages WHERE userId = @userId');
+    await getPool().request().input('userId', sql.NVarChar, userId).query('DELETE FROM UserTickerPreferences WHERE userId = @userId');
+    await getPool().request().input('userId', sql.NVarChar, userId).query('DELETE FROM DisplayLots WHERE userId = @userId');
+    await setLots(2);
+    await cycle(111);
+    expect(await preference()).toBeUndefined();
+  });
+
+  it('does not enable unless the sell target is reached and a usable price is available', async () => {
+    await setLots(3);
+    await cycle(109.99);
     await cycle(null);
     expect(await preference()).toBeUndefined();
     expect(await messages()).toHaveLength(0);
@@ -96,16 +114,18 @@ describe('automatic Buy on Dip on buy-target hits', () => {
 
   it('preserves an active buying restriction and suppresses automatic activation', async () => {
     await seedPreference(false, null, '2026-10-06');
-    await cycle(90);
+    await setLots(3);
+    await cycle(111);
     expect(await preference()).toMatchObject({ buyOnDip: false, buyOnDipPrice: null, buyRestricted: true });
-    expect(await messages()).toHaveLength(0);
+    expect((await messages())[0]).toMatchObject({ type: 'sell-target-hit' });
   });
 
   it('allows activation after a restriction expires without overwriting restriction fields', async () => {
     await seedPreference(false, null, '2026-10-05');
-    await cycle(94);
+    await setLots(3);
+    await cycle(111);
     const result = await preference();
-    expect(result).toMatchObject({ buyOnDip: true, buyOnDipPrice: 94, buyRestricted: true });
+    expect(result).toMatchObject({ baseSize: 3, buyOnDip: true, buyOnDipPrice: 111, buyRestricted: true });
     expect(result.buyRestrictedUntil.toISOString().slice(0, 10)).toBe('2026-10-05');
   });
 
@@ -116,21 +136,23 @@ describe('automatic Buy on Dip on buy-target hits', () => {
     expect((await messages())[0].targetPrice).toBeCloseTo(79.2, 6);
   });
 
-  it('enables independently of unread buy-alert suppression, then uses the new buy and sell targets', async () => {
+  it('enables independently of unread sell-alert suppression, then uses the new buy and sell targets', async () => {
+    await setLots(3);
     await getPool().request().input('userId', sql.NVarChar, userId).input('ticker', sql.NVarChar, ticker)
       .query(`INSERT INTO Messages (userId, type, ticker, triggerPrice, body)
-        VALUES (@userId, 'buy-target-hit', @ticker, 95, 'Existing unread alert')`);
-    await cycle(94);
-    expect(await preference()).toMatchObject({ buyOnDip: true, buyOnDipPrice: 94 });
+        VALUES (@userId, 'sell-target-hit', @ticker, 111, 'Existing unread alert')`);
+    await cycle(111);
+    expect(await preference()).toMatchObject({ buyOnDip: true, buyOnDipPrice: 111 });
     expect(await messages()).toHaveLength(1);
     await getPool().request().input('userId', sql.NVarChar, userId)
       .query('UPDATE Messages SET isRead = 1 WHERE userId = @userId');
-    await cycle(93.06);
+    await cycle(109.89);
     const alerts = await messages();
     expect(alerts).toHaveLength(2);
-    expect(alerts[1].targetPrice).toBeCloseTo(93.06, 6);
-    await cycle(103.4);
-    expect((await messages()).find((alert) => alert.type === 'sell-target-hit')?.targetPrice).toBeCloseTo(103.4, 6);
+    expect(alerts[1].targetPrice).toBeCloseTo(109.89, 6);
+    await cycle(122.2);
+    const sellAlerts = (await messages()).filter((alert) => alert.type === 'sell-target-hit' && alert.targetPrice != null);
+    expect(sellAlerts[sellAlerts.length - 1].targetPrice).toBeCloseTo(122.1, 6);
   });
 
   it('does not mutate another user with the same ticker', async () => {

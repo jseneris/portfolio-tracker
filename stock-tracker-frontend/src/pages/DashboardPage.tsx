@@ -1,4 +1,4 @@
-import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { CSSProperties, FormEvent, Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAppAuth } from '../auth'
 import {
@@ -304,6 +304,26 @@ function getPerformanceClassName(value: number | null) {
 }
 
 type HoldingsSortColumn = 'ticker' | 'historicalChangePercent' | 'marketValue' | 'gainLoss' | 'yearlyGainLoss' | 'targetProximityPercent' | 'lotCount'
+
+export function getLotCountDifference(lotCount: number, baseSize: number) {
+  return lotCount - baseSize
+}
+
+export function formatLotCountDifference(difference: number) {
+  return difference > 0 ? `+${difference}` : String(difference)
+}
+
+export function getLotCountDifferenceStyle(difference: number): CSSProperties {
+  if (difference < 0) {
+    return { backgroundColor: '#fef08a', color: '#713f12' }
+  }
+
+  const lightness = Math.max(28, 86 - difference * 14)
+  return {
+    backgroundColor: `hsl(142, 70%, ${lightness}%)`,
+    color: lightness <= 55 ? '#ffffff' : '#14532d',
+  }
+}
 
 export default function DashboardPage() {
   const auth = useAppAuth()
@@ -715,6 +735,7 @@ export default function DashboardPage() {
         buyOnDip: Boolean(tickerPreference?.buyOnDip),
         isBuyRestricted: Boolean(tickerPreference?.isBuyRestricted),
         buyRestrictedUntil: tickerPreference?.buyRestrictedUntil ?? null,
+        baseSize: Number(tickerPreference?.baseSize ?? 3),
         lotCount: Number(displayLotCountsByTicker[row.ticker] ?? snapshot.lotCountByTicker[row.ticker] ?? row.lotCount),
       }
     })
@@ -1331,7 +1352,7 @@ export default function DashboardPage() {
                   <th className="holdings-secondary-column">Buy Target</th>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('targetProximityPercent')}>Target %{getHoldingsSortIndicator('targetProximityPercent')}</th>
                   <th className="holdings-secondary-column">Sale Target</th>
-                  <th className="holdings-secondary-column sortable-header" onClick={() => handleHoldingsSort('lotCount')}>Lots{getHoldingsSortIndicator('lotCount')}</th>
+                  <th className="holdings-secondary-column sortable-header" onClick={() => handleHoldingsSort('lotCount')}>Lots vs. Base{getHoldingsSortIndicator('lotCount')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1441,7 +1462,15 @@ export default function DashboardPage() {
                         formatStockPrice4(saleTargetsByTicker[row.ticker] ?? null)
                       )}
                     </td>
-                    <td className="holdings-secondary-column">{row.lotCount}</td>
+                    <td className="holdings-secondary-column">
+                      <span
+                        className="lot-count-difference"
+                        style={getLotCountDifferenceStyle(getLotCountDifference(row.lotCount, row.baseSize))}
+                        title={`${row.lotCount} display lots; base size ${row.baseSize}`}
+                      >
+                        {formatLotCountDifference(getLotCountDifference(row.lotCount, row.baseSize))}
+                      </span>
+                    </td>
                   </tr>
                   {isExpanded ? (
                     <tr className="holdings-detail-row">
@@ -1454,7 +1483,18 @@ export default function DashboardPage() {
                           <div><dt>Yearly Gain</dt><dd className={getPerformanceClassName(row.yearlyGainLoss)}>{formatCurrency2(row.yearlyGainLoss)}</dd></div>
                           <div><dt>Buy Target</dt><dd>{formatStockPrice4(buyTargetsByTicker[row.ticker] ?? null)}</dd></div>
                           <div><dt>Sale Target</dt><dd>{formatStockPrice4(saleTargetsByTicker[row.ticker] ?? null)}</dd></div>
-                          <div><dt>Lots</dt><dd>{row.lotCount}</dd></div>
+                          <div>
+                            <dt>Lots vs. Base</dt>
+                            <dd>
+                              <span
+                                className="lot-count-difference"
+                                style={getLotCountDifferenceStyle(getLotCountDifference(row.lotCount, row.baseSize))}
+                                title={`${row.lotCount} display lots; base size ${row.baseSize}`}
+                              >
+                                {formatLotCountDifference(getLotCountDifference(row.lotCount, row.baseSize))}
+                              </span>
+                            </dd>
+                          </div>
                         </dl>
                       </td>
                     </tr>

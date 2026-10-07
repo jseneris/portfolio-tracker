@@ -22,6 +22,7 @@ describe('22. User Ticker Preferences', () => {
 
     expect(response.body).toEqual({
       ticker: 'MSFT',
+      baseSize: 3,
       buyOnDip: false,
       buyOnDipPrice: null,
       buyRestricted: false,
@@ -34,11 +35,12 @@ describe('22. User Ticker Preferences', () => {
     await request(app)
       .put('/api/ticker-preferences/msft')
       .set('x-user-id', TEST_USER_ID)
-      .send({ buyOnDip: true, buyOnDipPrice: 123.45678901, buyRestricted: true, buyRestrictedUntil: '2099-12-31' })
+      .send({ baseSize: 5, buyOnDip: true, buyOnDipPrice: 123.45678901, buyRestricted: true, buyRestrictedUntil: '2099-12-31' })
       .expect(200)
       .expect(({ body }) => {
         expect(body).toEqual({
           ticker: 'MSFT',
+          baseSize: 5,
           buyOnDip: true,
           buyOnDipPrice: 123.45678901,
           buyRestricted: true,
@@ -60,6 +62,7 @@ describe('22. User Ticker Preferences', () => {
 
     expect(listResponse.body).toEqual([{
       ticker: 'MSFT',
+      baseSize: 5,
       buyOnDip: false,
       buyOnDipPrice: null,
       buyRestricted: false,
@@ -77,7 +80,7 @@ describe('22. User Ticker Preferences', () => {
     await request(app)
       .put('/api/ticker-preferences/MSFT')
       .set('x-user-id', TEST_USER_ID)
-      .send({ buyOnDip: true, buyOnDipPrice: 100, buyRestricted: false, buyRestrictedUntil: null })
+      .send({ baseSize: 7, buyOnDip: true, buyOnDipPrice: 100, buyRestricted: false, buyRestrictedUntil: null })
       .expect(200);
 
     const response = await request(app)
@@ -87,12 +90,14 @@ describe('22. User Ticker Preferences', () => {
       .expect(200);
 
     expect(response.body.buyOnDipPrice).toBe(100);
+    expect(response.body.baseSize).toBe(7);
 
     const saved = await request(app)
       .get('/api/ticker-preferences/MSFT')
       .set('x-user-id', TEST_USER_ID)
       .expect(200);
     expect(saved.body.buyOnDipPrice).toBe(100);
+    expect(saved.body.baseSize).toBe(7);
   });
 
   it.each([0, -1, '100', 10000000000])('rejects invalid captured price %s', async (buyOnDipPrice) => {
@@ -100,6 +105,14 @@ describe('22. User Ticker Preferences', () => {
       .put('/api/ticker-preferences/MSFT')
       .set('x-user-id', TEST_USER_ID)
       .send({ buyOnDip: true, buyOnDipPrice, buyRestricted: false, buyRestrictedUntil: null })
+      .expect(400);
+  });
+
+  it.each([-1, 1.5, '3', 2147483648])('rejects invalid base size %s', async (baseSize) => {
+    await request(app)
+      .put('/api/ticker-preferences/MSFT')
+      .set('x-user-id', TEST_USER_ID)
+      .send({ baseSize, buyOnDip: false, buyRestricted: false, buyRestrictedUntil: null })
       .expect(400);
   });
 

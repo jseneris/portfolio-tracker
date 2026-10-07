@@ -309,6 +309,7 @@ export type UserProfile = {
 
 export type TickerPreference = {
   ticker: string
+  baseSize: number
   buyOnDip: boolean
   buyOnDipPrice: number | null
   buyRestricted: boolean
@@ -317,6 +318,7 @@ export type TickerPreference = {
 }
 
 export type UpdateTickerPreferenceInput = {
+  baseSize?: number
   buyOnDip: boolean
   buyOnDipPrice?: number | null
   buyRestricted: boolean

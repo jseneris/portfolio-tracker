@@ -243,6 +243,7 @@ async function createTablesIfNotExist() {
         id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
         userId NVARCHAR(255) NOT NULL,
         ticker NVARCHAR(10) NOT NULL,
+        baseSize INT NOT NULL DEFAULT 3,
         buyOnDip BIT NOT NULL DEFAULT 0,
         buyOnDipPrice DECIMAL(18, 8) NULL,
         buyRestricted BIT NOT NULL DEFAULT 0,
@@ -253,6 +254,9 @@ async function createTablesIfNotExist() {
           buyRestricted = 0 OR buyRestrictedUntil IS NOT NULL
         )
       );
+
+    IF COL_LENGTH('UserTickerPreferences', 'baseSize') IS NULL
+      ALTER TABLE UserTickerPreferences ADD baseSize INT NOT NULL CONSTRAINT DF_UserTickerPreferences_BaseSize DEFAULT 3;
 
     IF COL_LENGTH('UserTickerPreferences', 'buyOnDipPrice') IS NULL
       ALTER TABLE UserTickerPreferences ADD buyOnDipPrice DECIMAL(18, 8) NULL;

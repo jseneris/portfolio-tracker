@@ -1,6 +1,31 @@
 import { describe, expect, it } from 'vitest'
 import { StockSplitEvent, StockTransaction } from '../api'
-import { getSplitAdjustedTargetBasePrice } from './DashboardPage'
+import {
+  formatLotCountDifference,
+  getLotCountDifference,
+  getLotCountDifferenceStyle,
+  getSplitAdjustedTargetBasePrice,
+} from './DashboardPage'
+
+describe('dashboard display lot count comparison', () => {
+  it('shows the difference from the configured base size with a plus sign for positive values', () => {
+    expect(getLotCountDifference(3, 3)).toBe(0)
+    expect(formatLotCountDifference(getLotCountDifference(3, 3))).toBe('0')
+    expect(formatLotCountDifference(getLotCountDifference(4, 3))).toBe('+1')
+    expect(formatLotCountDifference(getLotCountDifference(5, 3))).toBe('+2')
+    expect(formatLotCountDifference(getLotCountDifference(2, 3))).toBe('-1')
+  })
+
+  it('uses progressively darker green for higher counts and yellow below the base', () => {
+    const zero = String(getLotCountDifferenceStyle(0).backgroundColor)
+    const oneAbove = String(getLotCountDifferenceStyle(1).backgroundColor)
+    const twoAbove = String(getLotCountDifferenceStyle(2).backgroundColor)
+
+    expect(zero).toBe('hsl(142, 70%, 86%)')
+    expect(Number(oneAbove.match(/, (\d+)%\)$/)?.[1])).toBeGreaterThan(Number(twoAbove.match(/, (\d+)%\)$/)?.[1]))
+    expect(getLotCountDifferenceStyle(-1).backgroundColor).toBe('#fef08a')
+  })
+})
 
 describe('getSplitAdjustedTargetBasePrice', () => {
   const transaction: StockTransaction = {

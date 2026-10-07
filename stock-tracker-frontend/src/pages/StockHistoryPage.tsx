@@ -481,6 +481,7 @@ export default function StockHistoryPage() {
   const [showSales, setShowSales] = useState(true)
   const [buyOnDip, setBuyOnDip] = useState(false)
   const [buyOnDipPrice, setBuyOnDipPrice] = useState<number | null>(null)
+  const [baseSize, setBaseSize] = useState('3')
   const [buyRestricted, setBuyRestricted] = useState(false)
   const [buyRestrictedUntil, setBuyRestrictedUntil] = useState('')
   const [savingTickerPreference, setSavingTickerPreference] = useState(false)
@@ -1117,6 +1118,7 @@ export default function StockHistoryPage() {
       ])
       setSummary(tickerSummaryData)
       setSaleAllocations({})
+      setBaseSize(String(tickerPreference.baseSize ?? 3))
       setBuyOnDip(tickerPreference.buyOnDip)
       setBuyOnDipPrice(tickerPreference.buyOnDipPrice)
       setBuyRestricted(tickerPreference.buyRestricted)
@@ -1604,14 +1606,22 @@ export default function StockHistoryPage() {
       return
     }
 
+    const parsedBaseSize = Number(baseSize)
+    if (baseSize.trim() === '' || !Number.isSafeInteger(parsedBaseSize) || parsedBaseSize < 0 || parsedBaseSize > 2147483647) {
+      setTickerPreferenceError('Base size must be a non-negative whole number.')
+      return
+    }
+
     setSavingTickerPreference(true)
     try {
       const preference = await updateTickerPreference(ticker, {
+        baseSize: parsedBaseSize,
         buyOnDip,
         buyOnDipPrice: buyOnDip ? buyOnDipPrice : null,
         buyRestricted,
         buyRestrictedUntil: buyRestricted ? buyRestrictedUntil : null,
       })
+      setBaseSize(String(preference.baseSize))
       setBuyOnDip(preference.buyOnDip)
       setBuyOnDipPrice(preference.buyOnDipPrice)
       setBuyRestricted(preference.buyRestricted)
@@ -1660,9 +1670,21 @@ export default function StockHistoryPage() {
           <div className="ticker-preferences-content">
             <div>
               <h3>Trading Preferences</h3>
-              <p className="hint">Ticker-specific dashboard signals for {ticker}.</p>
+              <p className="hint">Set {ticker}&apos;s base display-lot size for the dashboard comparison; it defaults to 3.</p>
             </div>
             <form className="ticker-preferences-form" onSubmit={onSaveTickerPreference}>
+              <label className="ticker-base-size">
+                Base size
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={baseSize}
+                  onChange={(event) => setBaseSize(event.target.value)}
+                  disabled={savingTickerPreference}
+                  required
+                />
+              </label>
               <label className="checkbox-label">
                 <input
                   type="checkbox"
