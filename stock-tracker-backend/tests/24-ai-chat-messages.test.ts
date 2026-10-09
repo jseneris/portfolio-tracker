@@ -32,7 +32,7 @@ describe('saving AI chat to Messages', () => {
     mocks.input.mockImplementation(() => ({ input: mocks.input, query: mocks.query }));
   });
 
-  it.each(['Largest concentrations', 'Loss-review timing'])('saves a complete %s section beyond chat-answer limits', async (title) => {
+  it.each(['Largest concentrations', 'Loss-review timing', 'Recommended lot amount'])('saves a complete %s section beyond chat-answer limits', async (title) => {
     const content = 'x'.repeat(12000);
     const body = `Review section: ${title}\n\n${content}`;
     allowAccess();
@@ -52,6 +52,30 @@ describe('saving AI chat to Messages', () => {
   ])('rejects invalid review sections', async (payload) => {
     await request(app).post('/messages/review-section').set('x-user-id', 'owner').send(payload).expect(400);
     expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it('preserves structured review formatting when saving, listing and opening messages', async () => {
+    const title = 'Loss-review timing';
+    const content = 'Formatted review v1:\n' + JSON.stringify({
+      version: 1, title, generatedAt: '2026-10-08T20:00:00Z',
+      description: 'Tracked timing only.',
+      headers: ['Ticker', 'Yearly Gain/Loss'],
+      rows: [[{ text: 'TEST', tone: 'positive' }, { text: '-$250.00', tone: 'negative' }]],
+      commentary: [], emptyText: 'No matches.', limitations: ['Not confirmed eligibility.'],
+    });
+    const body = `Review section: ${title}\n\n${content}`;
+    const saved = { ...message, body };
+    allowAccess();
+    mocks.query.mockResolvedValueOnce({ recordset: [saved] });
+    await request(app).post('/messages/review-section').set('x-user-id', 'owner')
+      .send({ title, content }).expect(201).expect((response) => expect(response.body.body).toBe(body));
+    expect(mocks.input).toHaveBeenCalledWith('body', sql.NVarChar(sql.MAX), body);
+    mocks.query.mockResolvedValueOnce({ recordset: [saved] });
+    const list = await request(app).get('/messages').set('x-user-id', 'owner').expect(200);
+    expect(list.body[0].body).toBe(body);
+    mocks.query.mockResolvedValueOnce({ recordset: [{ ...saved, isRead: true }] });
+    const opened = await request(app).get(`/messages/${message.id}`).set('x-user-id', 'owner').expect(200);
+    expect(opened.body.body).toBe(body);
   });
 
   it('saves the full question and answer as an unread message owned by the authenticated user', async () => {

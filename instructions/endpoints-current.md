@@ -52,6 +52,7 @@ Authentication and scoping notes:
 - Requires the authenticated current user to have `Users.aiInsightsEnabled = 1` and a locally authenticated Copilot CLI session.
 - Returns `403` when AI insights are disabled for the current user.
 - Returns concentration facts, open-lot unrealized-loss estimates, missing-price tickers, model explanations linked to fact IDs, and limitations.
+- `snapshot.recommendedLotAmount` is calculated without AI: the largest lot amount X (in $50 steps) that available cash can cover when buying every holding up to +1 weight (weight = display lots − `UserTickerPreferences.baseSize`, default 3; weight 0 needs one lot, −1 needs two, etc.). Each lot costs one share when the price is above X, otherwise the fewest whole shares reaching X. `nextSteps` always lists the five $50 steps above X (starting at $50 when no X is affordable), each with total cost and shortfall versus available cash.
 - Uses the latest stored `HistoricalPrices` close and current user's open `PurchaseLots`. Recent acquisitions are checked only against lots tracked in this application.
 - Limited to one request per user per minute. Copilot receives portfolio facts and tickers, not user or transaction identifiers; agent tools are disabled and the inspection session is deleted afterward.
 

@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { askPortfolioInsights, generatePortfolioInsights, PortfolioInsightsChatTurn, PortfolioInsightsReport, saveAiChatMessage } from '../api'
 import { formatCurrency2 } from '../formatters'
 import { MESSAGES_UPDATED_EVENT } from './MessagesPage'
 import { getAiAssumptions, setAiAssumptions, saveReviewSection } from '../api'
+import { buildFormattedReviewContent, formatDividendTiming, formatWeight, getWaitDayClass, type ReviewSectionTitle } from '../reviewMessages'
+export { formatDividendTiming } from '../reviewMessages'
 
 function formatPercent(value: number | undefined) {
   return typeof value === 'number' ? `${value.toFixed(2)}%` : '--'
@@ -33,10 +35,99 @@ export function ChatResponseActions({ saved, saving, disabled, error, onSend, su
   )
 }
 
-export function formatDividendTiming(holding: { daysUntilNextDividend: number | null; daysSinceLastDividend: number | null }) {
-  if (holding.daysUntilNextDividend != null) return `${holding.daysUntilNextDividend} days until next dividend`
-  if (holding.daysSinceLastDividend != null) return `${holding.daysSinceLastDividend} days since last tracked dividend`
-  return 'No tracked dividend'
+type ReviewHolding = NonNullable<PortfolioInsightsReport['snapshot']['holdingReviewContext']>[number]
+type RecommendedLotAmount = NonNullable<PortfolioInsightsReport['snapshot']['recommendedLotAmount']>
+
+export function RecommendedLotAmountSection({ recommendation, action }: { recommendation: RecommendedLotAmount; action?: ReactNode }) {
+  const needed = recommendation.holdings.filter((holding) => holding.lotsNeeded > 0)
+  return (
+    <section className="panel">
+      <div className="row-between insights-section-heading">
+        <div>
+          <p className="eyebrow">Cash deployment</p>
+          <h3>Recommended lot amount</h3>
+        </div>
+        <span className="muted-text">${recommendation.increment} increments</span>
+      </div>
+      {!needed.length ? (
+        <p>Every holding is already at {formatWeight(recommendation.targetWeight)} weight or above; no cash is needed.</p>
+      ) : recommendation.lotAmount == null ? (
+        <p>Available cash ({formatCurrency2(recommendation.availableCash)}) cannot cover a {formatCurrency2(recommendation.increment)} lot
+          for every holding below {formatWeight(recommendation.targetWeight)} weight.</p>
+      ) : (
+        <>
+          <p className="insight-values">
+            <strong>{formatCurrency2(recommendation.lotAmount)}</strong>
+            <span>Cash needed: {formatCurrency2(recommendation.totalCost)} of {formatCurrency2(recommendation.availableCash)}</span>
+          </p>
+          <div className="table-scroll">
+            <table className="table">
+              <thead><tr><th>Ticker</th><th>Weight</th><th>Lots needed</th><th>Price</th><th>Shares per lot</th><th>Cost per lot</th><th>Total</th></tr></thead>
+              <tbody>
+                {needed.map((holding) => (
+                  <tr key={holding.ticker}>
+                    <td><strong>{holding.ticker}</strong></td>
+                    <td>{formatWeight(holding.weight)}</td>
+                    <td>{holding.lotsNeeded}</td>
+                    <td>{formatCurrency2(holding.closePrice)}</td>
+                    <td>{holding.sharesPerLot ?? '--'}</td>
+                    <td>{formatCurrency2(holding.costPerLot)}</td>
+                    <td>{formatCurrency2(holding.totalCost)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {recommendation.nextSteps.length ? (
+        <>
+          <h4>Next steps</h4>
+          <div className="table-scroll">
+            <table className="table">
+              <thead><tr><th>Lot amount</th><th>Cash needed</th><th>Additional cash needed</th></tr></thead>
+              <tbody>
+                {recommendation.nextSteps.map((step) => (
+                  <tr key={step.lotAmount}>
+                    <td><strong>{formatCurrency2(step.lotAmount)}</strong></td>
+                    <td>{formatCurrency2(step.totalCost)}</td>
+                    <td className={step.shortfall > 0 ? 'value-negative' : undefined}>{formatCurrency2(step.shortfall)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : null}
+      {recommendation.unpricedTickers.length ? (
+        <p className="status status-warning">Excluded (no stored price): {recommendation.unpricedTickers.join(', ')}.</p>
+      ) : null}
+      <p className="muted-text">Weight is display lots minus base size. Holdings at {formatWeight(recommendation.targetWeight)} or above need no cash; 0 needs one lot, -1 needs two, and so on. A lot is one share when the price is above the lot amount, otherwise the fewest whole shares reaching it. Uses latest stored closes.</p>
+            {action}
+          </section>
+  )
+}
+
+export function LossTimingTable({ holdings }: { holdings: ReviewHolding[] }) {
+  return (
+    <div className="table-scroll">
+      <table className="table">
+        <thead><tr><th>Ticker</th><th>Yearly Gain/Loss</th><th>Days to wait (prior buy/div window)</th><th>Dividend timing</th></tr></thead>
+        <tbody>
+          {holdings.filter((holding) => holding.matchesLossReviewFilter === true).map((holding) => (
+            <tr key={holding.ticker}>
+              <td className={getWaitDayClass(holding.daysUntilPriorAcquisitionWindowClears)}>
+                <strong>{holding.ticker}</strong>
+              </td>
+              <td className="value-negative">{formatCurrency2(holding.yearlyGainLoss)}</td>
+              <td>{holding.daysUntilPriorAcquisitionWindowClears ?? 'Unknown'}</td>
+              <td>{formatDividendTiming(holding)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 type ReviewSection = 'Largest concentrations' | 'Loss-review timing'
@@ -60,7 +151,7 @@ export function buildReviewSectionContent(report: PortfolioInsightsReport, secti
     const holdings = report.snapshot.holdingReviewContext?.filter((holding) => holding.matchesLossReviewFilter === true) ?? []
     if (!holdings.length) lines.push('No holdings match the review filter with available data.')
     for (const holding of holdings) {
-      lines.push(`${holding.ticker}: ${holding.daysUntilPriorAcquisitionWindowClears ?? 'Unknown'} days to wait; ${formatDividendTiming(holding)}`)
+      lines.push(`${holding.ticker}: ${holding.daysUntilPriorAcquisitionWindowClears ?? 'Unknown'} days to wait; ${formatDividendTiming(holding)}; Yearly Gain/Loss: ${formatCurrency2(holding.yearlyGainLoss)}`)
     }
   }
   lines.push('', 'Important limitations:', ...report.limitations)
@@ -69,7 +160,7 @@ export function buildReviewSectionContent(report: PortfolioInsightsReport, secti
 
 function ReviewSectionSaveButton({ report, section, disabled, onSavingChange }: {
   report: PortfolioInsightsReport
-  section: ReviewSection
+  section: ReviewSectionTitle
   disabled: boolean
   onSavingChange: (saving: boolean) => void
 }) {
@@ -82,7 +173,7 @@ function ReviewSectionSaveButton({ report, section, disabled, onSavingChange }: 
     onSavingChange(true)
     setError(undefined)
     try {
-      await saveReviewSection(section, buildReviewSectionContent(report, section))
+      await saveReviewSection(section, buildFormattedReviewContent(report, section))
       setSaved(true)
       window.dispatchEvent(new Event(MESSAGES_UPDATED_EVENT))
     } catch (err: unknown) {
@@ -272,6 +363,12 @@ export default function PortfolioInsightsPage() {
             <p className="muted-text">Ask about any holding, cost basis, unrealized gain/loss, cash, or available sector/industry classification. Prices use stored closes, not live quotes. Refresh after changes; the AI cannot edit your portfolio.</p>
           </section>
 
+          {report.snapshot.recommendedLotAmount ? (
+            <RecommendedLotAmountSection recommendation={report.snapshot.recommendedLotAmount}
+              action={<ReviewSectionSaveButton key={`${report.reportId}-lot-amount`} report={report} section="Recommended lot amount"
+                disabled={loading || savingSection} onSavingChange={setSavingSection} />} />
+          ) : null}
+
           <section className="panel">
             <div className="row-between insights-section-heading">
               <div>
@@ -348,22 +445,9 @@ export default function PortfolioInsightsPage() {
 
           {report.snapshot.assumptions ? (
             <section className="panel">
-              <h3>Loss-review timing (tracked accounts only)</h3>
+              <h3>Loss Timing Review (tracked accounts only)</h3>
               <p className="muted-text">Only holdings with negative Yearly Gain/Loss and more than three display lots appear below. Wait days are based on the latest tracked buy or dividend reinvestment: the prior 30-day window clears on day 31. Zero means no remaining prior-window wait, not confirmed wash-sale eligibility. Future purchases, outside accounts, and substantially identical securities remain unknown. Dividend elapsed days use tracked payments, not a prediction.</p>
-              <div className="table-scroll">
-                <table className="table">
-                  <thead><tr><th>Ticker</th><th>Days to wait (prior buy/div window)</th><th>Dividend timing</th></tr></thead>
-                  <tbody>
-                    {report.snapshot.holdingReviewContext?.filter((holding) => holding.matchesLossReviewFilter === true).map((holding) => (
-                      <tr key={holding.ticker}>
-                        <td>{holding.ticker}</td>
-                        <td>{holding.daysUntilPriorAcquisitionWindowClears ?? 'Unknown'}</td>
-                        <td>{formatDividendTiming(holding)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <LossTimingTable holdings={report.snapshot.holdingReviewContext ?? []} />
               {!report.snapshot.holdingReviewContext?.some((holding) => holding.matchesLossReviewFilter === true) ? <p>No holdings match the review filter with available data.</p> : null}
               <ReviewSectionSaveButton key={`${report.reportId}-timing`} report={report} section="Loss-review timing"
                 disabled={loading || savingSection} onSavingChange={setSavingSection} />

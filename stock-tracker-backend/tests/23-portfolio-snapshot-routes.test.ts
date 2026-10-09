@@ -57,6 +57,7 @@ function queueReview(rows = lots, assumptionsEnabled = false) {
   mocks.query.mockResolvedValueOnce({ recordset: rows });
   queueCash();
   mocks.query.mockResolvedValueOnce({ recordset: [{ aiAssumptionsEnabled: assumptionsEnabled }] });
+  mocks.query.mockResolvedValueOnce({ recordsets: [[{ ticker: 'BIG', lotsCsv: '1,2,3' }], [{ ticker: 'BIG', baseSize: 3 }]] });
 }
 
 describe('read-only portfolio snapshot routing', () => {
@@ -73,6 +74,8 @@ describe('read-only portfolio snapshot routing', () => {
     const response = await request(app).post('/insights').set('x-user-id', id).expect(200);
     expect(response.body.snapshot.holdings.map((holding: { ticker: string }) => holding.ticker)).toEqual(['BIG', 'SMALL']);
     expect(response.body.snapshot.cash.availableCash).toBe(1465);
+    expect(response.body.snapshot.recommendedLotAmount.holdings.map((holding: { ticker: string; weight: number }) => [holding.ticker, holding.weight]))
+      .toEqual([['SMALL', -3], ['BIG', 0]]);
     const reviewPrompt = mocks.generate.mock.calls[0][0];
     expect(reviewPrompt).toContain('"ticker":"SMALL"');
     expect(reviewPrompt).toContain('"availableCash":1465');
@@ -90,7 +93,7 @@ describe('read-only portfolio snapshot routing', () => {
       .send({ reportId: response.body.reportId, question: 'Tell me about SMALL and my cash', history: [] }).expect(200);
     expect(mocks.chat.mock.calls[0][0]).toContain(JSON.stringify(response.body.snapshot));
     // Chat checks access but does not reload or mutate the cached snapshot.
-    expect(mocks.query).toHaveBeenCalledTimes(6);
+    expect(mocks.query).toHaveBeenCalledTimes(7);
 
     mocks.query.mockResolvedValueOnce({ recordset: [{ aiInsightsEnabled: true }] });
     await request(app).post('/insights/chat').set('x-user-id', user())

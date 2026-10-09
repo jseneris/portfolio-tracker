@@ -124,7 +124,7 @@ export default function App() {
             <NavLink to="/holdings">Holdings</NavLink>
             <NavLink to="/allocations">Allocations</NavLink>
             <NavLink to="/splits">Splits</NavLink>
-            <NavLink to="/comparison">Compare</NavLink>
+            <NavLink to="/comparison">Performance</NavLink>
             {aiInsightsEnabled && window.location.hostname === 'localhost' ? <NavLink to="/insights">Insights</NavLink> : null}
             <NavLink to="/messages">
               Messages

@@ -10,7 +10,7 @@ import {
 describe('dashboard display lot count comparison', () => {
   it('shows the difference from the configured base size with a plus sign for positive values', () => {
     expect(getLotCountDifference(3, 3)).toBe(0)
-    expect(formatLotCountDifference(getLotCountDifference(3, 3))).toBe('0')
+    expect(formatLotCountDifference(getLotCountDifference(3, 3))).toBe('--')
     expect(formatLotCountDifference(getLotCountDifference(4, 3))).toBe('+1')
     expect(formatLotCountDifference(getLotCountDifference(5, 3))).toBe('+2')
     expect(formatLotCountDifference(getLotCountDifference(2, 3))).toBe('-1')

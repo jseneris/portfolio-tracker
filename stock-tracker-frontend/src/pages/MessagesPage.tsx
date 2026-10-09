@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { AppMessage, deleteMessages, getMessages, markSelectedMessagesRead, openMessage, sendTestPushNotification } from '../api'
+import { AppMessage, deleteMessages, getMessages, markSelectedMessagesRead, openMessage } from '../api'
+import { SavedReviewMessage } from '../reviewMessages'
 
 export const MESSAGES_UPDATED_EVENT = 'messages-updated'
 
@@ -12,10 +13,8 @@ export default function MessagesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [sendingTest, setSendingTest] = useState(false)
   const [selectionAction, setSelectionAction] = useState<'read' | 'delete' | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [testNotice, setTestNotice] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -104,20 +103,6 @@ export default function MessagesPage() {
     }
   }
 
-  async function onSendTestNotification() {
-    setSendingTest(true)
-    setError(null)
-    setTestNotice(null)
-    try {
-      const sent = await sendTestPushNotification()
-      setTestNotice(`Test notification accepted for ${sent} device${sent === 1 ? '' : 's'}.`)
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Unable to send a test notification')
-    } finally {
-      setSendingTest(false)
-    }
-  }
-
   const unreadCount = messages.filter((message) => !message.isRead).length
 
   return (
@@ -128,9 +113,6 @@ export default function MessagesPage() {
           <p>Saved AI questions and responses appear here alongside price target alerts, which are checked every five minutes while the US market is open.</p>
         </div>
         <div className="messages-actions">
-          <button className="button" onClick={() => void onSendTestNotification()} disabled={sendingTest}>
-            {sendingTest ? 'Sending...' : 'Send Test Notification'}
-          </button>
           <button className="button" onClick={() => void onMarkSelectedRead()} disabled={selectedIds.size === 0 || selectionAction !== null}>
             {selectionAction === 'read' ? 'Marking...' : 'Mark selected read'}
           </button>
@@ -141,7 +123,6 @@ export default function MessagesPage() {
       </div>
 
       {error ? <div className="panel status status-error">{error}</div> : null}
-      {testNotice ? <div className="panel status status-success">{testNotice}</div> : null}
 
       <div className="panel">
         {loading ? (
@@ -172,7 +153,9 @@ export default function MessagesPage() {
                     <span className="message-date">{new Date(message.createdAt).toLocaleString()}</span>
                   </button>
                 </div>
-                {expandedId === message.id ? <p className="message-body">{message.body}</p> : null}
+                {expandedId === message.id ? message.type === 'ai-chat'
+                  ? <SavedReviewMessage body={message.body} />
+                  : <p className="message-body">{message.body}</p> : null}
               </li>
             ))}
           </ul>

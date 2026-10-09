@@ -10,7 +10,7 @@ import {
   getCashSummary,
   getCashTransactions,
 } from '../api'
-import { formatCurrency2 } from '../formatters'
+import { formatCurrency2, getLocalDateString } from '../formatters'
 
 type CashFormState = {
   type: CashTransactionType
@@ -18,11 +18,11 @@ type CashFormState = {
   transactionDate: string
 }
 
-const EMPTY_FORM: CashFormState = {
+const createEmptyForm = (): CashFormState => ({
   type: 'deposit',
   amount: '',
-  transactionDate: new Date().toISOString().slice(0, 10),
-}
+  transactionDate: getLocalDateString(),
+})
 
 function formatDate(value: string) {
   const date = new Date(value)
@@ -51,10 +51,7 @@ function validateCashForm(form: CashFormState): string | null {
     return 'Transaction date is invalid.'
   }
 
-  const now = new Date()
-  const selectedUtc = Date.UTC(selectedDate.getUTCFullYear(), selectedDate.getUTCMonth(), selectedDate.getUTCDate())
-  const nowUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-  if (selectedUtc > nowUtc) {
+  if (selectedDate.toISOString().slice(0, 10) > getLocalDateString()) {
     return 'Transaction date cannot be in the future.'
   }
 
@@ -64,7 +61,7 @@ function validateCashForm(form: CashFormState): string | null {
 export default function CashPage() {
   const [transactions, setTransactions] = useState<CashTransaction[]>([])
   const [summary, setSummary] = useState<CashSummary | null>(null)
-  const [form, setForm] = useState<CashFormState>(EMPTY_FORM)
+  const [form, setForm] = useState<CashFormState>(createEmptyForm)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -92,7 +89,7 @@ export default function CashPage() {
   }, [])
 
   function clearForm() {
-    setForm(EMPTY_FORM)
+    setForm(createEmptyForm())
   }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {

@@ -701,12 +701,17 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
           .map((ticker) => ticker.trim().toUpperCase())
           .filter((ticker) => ticker.length > 0)
       ));
+      const includePriorClose = req.query.includePriorClose === 'true';
+      if (includePriorClose && tickers.length === 0) {
+        return res.status(400).json({ error: 'tickers are required when includePriorClose is enabled.' });
+      }
 
       const pool = getPool();
       const rows = await pool.request()
         .input('startDate', sql.Date, parseDateOnly(startDateQuery))
         .input('endDate', sql.Date, parseDateOnly(endDateQuery))
         .input('tickersJson', sql.NVarChar(sql.MAX), tickers.length > 0 ? JSON.stringify(tickers) : null)
+        .input('includePriorClose', sql.Bit, includePriorClose)
         .query(`
           SELECT
             ticker,
@@ -724,6 +729,19 @@ router.get('/historical-prices', async (req: Request, res: Response) => {
                 FROM OPENJSON(@tickersJson) WITH (ticker NVARCHAR(32) '$')
               )
             )
+          UNION ALL
+          SELECT prior.ticker,
+                 CONVERT(VARCHAR(10), prior.priceDate, 23),
+                 CONVERT(VARCHAR(10), prior.marketDate, 23),
+                 prior.closePrice, prior.source
+          FROM OPENJSON(@tickersJson) WITH (ticker NVARCHAR(32) '$') requested
+          CROSS APPLY (
+            SELECT TOP 1 hp.ticker, hp.priceDate, hp.marketDate, hp.closePrice, hp.source
+            FROM HistoricalPrices hp
+            WHERE hp.ticker = requested.ticker AND hp.priceDate < @startDate
+            ORDER BY hp.priceDate DESC, hp.source ASC
+          ) prior
+          WHERE @includePriorClose = 1
           ORDER BY priceDate ASC, ticker ASC
         `);
 

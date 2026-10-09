@@ -67,7 +67,7 @@ VAPID_SUBJECT=mailto:you@example.com
 
 Keep the private key secret. The public key is returned to the authenticated frontend by `/api/push/config`. The frontend must be served over HTTPS. On iPhone or iPad, users must add Stock Tracker to the Home Screen before enabling notifications.
 
-The Messages page includes a **Send Test Notification** action. It sends a push to the signed-in user's registered devices without creating a fake portfolio message.
+The backend test-push endpoint sends a push to the signed-in user's registered devices without creating a fake portfolio message. The frontend no longer exposes a button for it.
 
 Messages can be marked read or deleted in selected batches. Both operations apply only to message IDs owned by the authenticated user.
 
@@ -88,7 +88,7 @@ AUTH0_AUDIENCE=your-api-identifier
 
 Creating or editing an allocated stock sale automatically enables Buy Restricted when **any sold source lot** has a unit cost above the sale price, even if other sold lots make the overall sale profitable. The restriction end date is the UTC sale calendar date plus 31 days; existing longer active restrictions and Buy on Dip settings are preserved. The change commits atomically with the sale. Backdated sales use their sale date, not today's date. Existing restriction semantics remain inclusive of the stored end date. Editing/deleting a sale does not automatically shorten or remove an existing restriction; users can adjust it in ticker preferences. This is a guardrail, not a determination of tax treatment.
 
-`POST /api/messages/review-section` accepts `{ title, content }` for `Largest concentrations` or `Loss-review timing`, with up to 50,000 characters of section content. Like saved chat, it requires insights access and stores an unread, user-owned message. Section saves include the generated timestamp, displayed results/commentary and limitations, are independent of chat limits, and never truncate content.
+`POST /api/messages/review-section` accepts `{ title, content }` for `Largest concentrations`, `Loss-review timing` or `Recommended lot amount`, with up to 50,000 characters of section content. Like saved chat, it requires insights access and stores an unread, user-owned message. Section saves include the generated timestamp, displayed results/commentary and limitations, are independent of chat limits, and never truncate content.
 
 The Insights page offers an explicit **Save and enable these assumptions** control for the signed-in user: a 10-year horizon, comfort with volatility while avoiding excessive single-stock concentration, tracked-stocks-only risk scope, and loss-review filters of negative holding Yearly Gain/Loss and more than three **display** lots. `GET /api/user-settings/ai-assumptions` returns the current seed or null; `PUT` with `{ enabled: boolean }` persists opt-in on the authenticated insights-enabled user. Disabling restores the unfiltered review. Existing snapshots do not change; refresh to apply preferences.
 

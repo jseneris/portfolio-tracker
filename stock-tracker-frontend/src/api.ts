@@ -1,4 +1,5 @@
 import { getRequestHeaders } from './auth'
+import type { ReviewSectionTitle } from './reviewMessages'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 export const PORTFOLIO_UPDATED_EVENT = 'portfolio:updated'
@@ -352,6 +353,26 @@ export type PortfolioInsightsReport = {
       riskTolerance: string
       riskAssessmentScope: string
     } | null
+    recommendedLotAmount?: {
+      lotAmount: number | null
+      increment: number
+      targetWeight: number
+      availableCash: number
+      totalCost: number
+      nextSteps: Array<{ lotAmount: number; totalCost: number; shortfall: number }>
+      unpricedTickers: string[]
+      holdings: Array<{
+        ticker: string
+        closePrice: number | null
+        displayLotCount: number
+        baseSize: number
+        weight: number
+        lotsNeeded: number
+        sharesPerLot: number | null
+        costPerLot: number | null
+        totalCost: number | null
+      }>
+    }
     holdingReviewContext?: Array<{
       ticker: string
       displayLotCount: number
@@ -452,6 +473,7 @@ type RequestMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
 type RequestOptions = {
   method?: RequestMethod
   body?: unknown
+  signal?: AbortSignal
 }
 
 function getDefaultHeaders() {
@@ -461,7 +483,7 @@ function getDefaultHeaders() {
 }
 
 async function requestApi<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body } = options
+  const { method = 'GET', body, signal } = options
   const authHeaders = await getRequestHeaders()
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -471,6 +493,7 @@ async function requestApi<T>(path: string, options: RequestOptions = {}): Promis
       ...authHeaders,
     },
     body: body == null ? undefined : JSON.stringify(body),
+    signal,
   })
 
   if (!response.ok) {
@@ -515,7 +538,7 @@ export async function saveAiChatMessage(question: string, answer: string): Promi
   })
 }
 
-export async function saveReviewSection(title: 'Largest concentrations' | 'Loss-review timing', content: string): Promise<AppMessage> {
+export async function saveReviewSection(title: ReviewSectionTitle, content: string): Promise<AppMessage> {
   return requestApi<AppMessage>('/api/messages/review-section', {
     method: 'POST', body: { title, content },
   })
@@ -687,23 +710,26 @@ export async function syncHistoricalPricesByYear(year: number): Promise<SyncHist
 export async function getHistoricalPrices(
   startDate = '2021-01-01',
   endDate = '2021-12-31',
-  tickers: string[] = []
+  tickers: string[] = [],
+  includePriorClose = false,
+  signal?: AbortSignal
 ): Promise<HistoricalPrice[]> {
   const tickerQuery = tickers.length > 0
     ? `&tickers=${encodeURIComponent(tickers.join(','))}`
     : ''
 
   return requestApi<HistoricalPrice[]>(
-    `/api/stocks/historical-prices?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}${tickerQuery}`
+    `/api/stocks/historical-prices?startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}${tickerQuery}${includePriorClose ? '&includePriorClose=true' : ''}`,
+    { signal }
   )
 }
 
-export async function getPortfolioComparisonAll(): Promise<PortfolioComparisonAllResponse> {
-  return requestApi<PortfolioComparisonAllResponse>('/api/stocks/portfolio/comparison-all')
+export async function getPortfolioComparisonAll(signal?: AbortSignal): Promise<PortfolioComparisonAllResponse> {
+  return requestApi<PortfolioComparisonAllResponse>('/api/stocks/portfolio/comparison-all', { signal })
 }
 
-export async function getPortfolioComparisonByYear(year: number): Promise<PortfolioComparisonResponse> {
-  return requestApi<PortfolioComparisonResponse>(`/api/stocks/historical-prices?year=${encodeURIComponent(String(year))}`)
+export async function getPortfolioComparisonByYear(year: number, signal?: AbortSignal): Promise<PortfolioComparisonResponse> {
+  return requestApi<PortfolioComparisonResponse>(`/api/stocks/historical-prices?year=${encodeURIComponent(String(year))}`, { signal })
 }
 
 export async function getUserTargetSettings(): Promise<UserTargetSettings> {

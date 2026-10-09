@@ -3,6 +3,7 @@ import { getPool } from '../db/connection.js';
 import { getCashSummary } from './cash-summary.js';
 import { loadAiPreferences } from './ai-preferences.js';
 import { loadHoldingReviewContext } from './holding-review-context.js';
+import { loadRecommendedLotAmount, RecommendedLotAmount } from './recommended-lot-amount.js';
 
 export type PortfolioLotRow = {
   ticker: string;
@@ -104,6 +105,7 @@ export function buildPortfolioSnapshot(rows: PortfolioLotRow[], cash: CashSummar
 export type PortfolioSnapshot = ReturnType<typeof buildPortfolioSnapshot> & {
   assumptions?: Awaited<ReturnType<typeof loadAiPreferences>>;
   holdingReviewContext?: Awaited<ReturnType<typeof loadHoldingReviewContext>>;
+  recommendedLotAmount?: RecommendedLotAmount;
 };
 
 export async function loadPortfolioSnapshot(userId: string) {
@@ -134,6 +136,7 @@ export async function loadPortfolioSnapshot(userId: string) {
   const cash = await getCashSummary(userId);
   const snapshot: PortfolioSnapshot = buildPortfolioSnapshot(result.recordset, cash, new Date().toISOString());
   snapshot.assumptions = await loadAiPreferences(userId);
+  snapshot.recommendedLotAmount = await loadRecommendedLotAmount(userId, snapshot.holdings, cash.availableCash);
   if (snapshot.assumptions) {
     snapshot.holdingReviewContext = await loadHoldingReviewContext(userId, snapshot.holdings, snapshot.generatedAt.slice(0, 10));
   }

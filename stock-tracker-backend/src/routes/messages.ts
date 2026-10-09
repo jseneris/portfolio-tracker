@@ -38,7 +38,7 @@ router.post(['/ai-chat', '/review-section'], async (req: Request, res: Response)
   const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
   const content = typeof req.body?.content === 'string' ? req.body.content.trim() : '';
   if (isSection && (
-    !['Largest concentrations', 'Loss-review timing'].includes(title) ||
+    !['Largest concentrations', 'Loss-review timing', 'Recommended lot amount'].includes(title) ||
     !content || content.length > 50000
   )) {
     return res.status(400).json({ error: 'A supported review section title and content of up to 50000 characters are required.' });

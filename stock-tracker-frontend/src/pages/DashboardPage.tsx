@@ -27,7 +27,7 @@ import {
   getAllStockSplits,
   StockSplitEvent,
 } from '../api'
-import { formatCurrency2, formatStockPrice4 } from '../formatters'
+import { formatCurrency2, formatStockPrice4, getLocalDateString } from '../formatters'
 import { calculatePortfolioSnapshot, calculateTickerYearlyGainLoss, calculateYearlyGainLoss, createSplitMultiplierResolver } from '../portfolioSnapshot'
 
 const DEFAULT_SALE_TARGET_PERCENT = 10
@@ -62,12 +62,12 @@ type AddStockFormState = {
   transactionDate: string
 }
 
-const EMPTY_ADD_STOCK_FORM: AddStockFormState = {
+const createEmptyAddStockForm = (): AddStockFormState => ({
   ticker: '',
   shares: '',
   price: '',
-  transactionDate: new Date().toISOString().slice(0, 10),
-}
+  transactionDate: getLocalDateString(),
+})
 
 function normalizeTicker(value: string) {
   return value.trim().toUpperCase()
@@ -310,7 +310,7 @@ export function getLotCountDifference(lotCount: number, baseSize: number) {
 }
 
 export function formatLotCountDifference(difference: number) {
-  return difference > 0 ? `+${difference}` : String(difference)
+  return difference === 0 ? '--' : difference > 0 ? `+${difference}` : String(difference)
 }
 
 export function getLotCountDifferenceStyle(difference: number): CSSProperties {
@@ -332,7 +332,7 @@ export default function DashboardPage() {
   const [addStockError, setAddStockError] = useState<string | null>(null)
   const [addStockSaving, setAddStockSaving] = useState(false)
   const [showAddStockModal, setShowAddStockModal] = useState(false)
-  const [addStockForm, setAddStockForm] = useState<AddStockFormState>(EMPTY_ADD_STOCK_FORM)
+  const [addStockForm, setAddStockForm] = useState<AddStockFormState>(createEmptyAddStockForm)
   const [summaryLoading, setSummaryLoading] = useState(true)
   const [holdingsLoading, setHoldingsLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -796,17 +796,19 @@ export default function DashboardPage() {
   const sortedHoldingsRows = useMemo(() => {
     const directionMultiplier = holdingsSortDirection === 'asc' ? 1 : -1
 
+    const getSortValue = (row: typeof holdingsRows[number]) => {
+      if (holdingsSortColumn === 'historicalChangePercent') return changePercentByTicker[row.ticker] ?? row.historicalChangePercent
+      if (holdingsSortColumn === 'lotCount') return getLotCountDifference(row.lotCount, row.baseSize)
+      return row[holdingsSortColumn as Exclude<HoldingsSortColumn, 'ticker' | 'historicalChangePercent' | 'lotCount'>]
+    }
+
     return [...holdingsRows].sort((a, b) => {
       if (holdingsSortColumn === 'ticker') {
         return a.ticker.localeCompare(b.ticker) * directionMultiplier
       }
 
-      const aValue = holdingsSortColumn === 'historicalChangePercent'
-        ? changePercentByTicker[a.ticker] ?? a.historicalChangePercent
-        : a[holdingsSortColumn]
-      const bValue = holdingsSortColumn === 'historicalChangePercent'
-        ? changePercentByTicker[b.ticker] ?? b.historicalChangePercent
-        : b[holdingsSortColumn]
+      const aValue = getSortValue(a)
+      const bValue = getSortValue(b)
       const aIsNil = aValue == null || !Number.isFinite(aValue)
       const bIsNil = bValue == null || !Number.isFinite(bValue)
 
@@ -1168,7 +1170,7 @@ export default function DashboardPage() {
 
   function openAddStockModal() {
     setAddStockError(null)
-    setAddStockForm(EMPTY_ADD_STOCK_FORM)
+    setAddStockForm(createEmptyAddStockForm())
     setShowAddStockModal(true)
   }
 
@@ -1176,7 +1178,7 @@ export default function DashboardPage() {
     setShowAddStockModal(false)
     setAddStockSaving(false)
     setAddStockError(null)
-    setAddStockForm(EMPTY_ADD_STOCK_FORM)
+    setAddStockForm(createEmptyAddStockForm())
   }
 
   function validateAddStockForm(form: AddStockFormState): string | null {
@@ -1204,10 +1206,7 @@ export default function DashboardPage() {
       return 'Date is invalid.'
     }
 
-    const now = new Date()
-    const selectedUtc = Date.UTC(selectedDate.getUTCFullYear(), selectedDate.getUTCMonth(), selectedDate.getUTCDate())
-    const nowUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-    if (selectedUtc > nowUtc) {
+    if (selectedDate.toISOString().slice(0, 10) > getLocalDateString()) {
       return 'Date cannot be in the future.'
     }
 
@@ -1352,7 +1351,7 @@ export default function DashboardPage() {
                   <th className="holdings-secondary-column">Buy Target</th>
                   <th className="sortable-header" onClick={() => handleHoldingsSort('targetProximityPercent')}>Target %{getHoldingsSortIndicator('targetProximityPercent')}</th>
                   <th className="holdings-secondary-column">Sale Target</th>
-                  <th className="holdings-secondary-column sortable-header" onClick={() => handleHoldingsSort('lotCount')}>Lots vs. Base{getHoldingsSortIndicator('lotCount')}</th>
+                  <th className="holdings-secondary-column sortable-header" onClick={() => handleHoldingsSort('lotCount')}>Weight{getHoldingsSortIndicator('lotCount')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1484,7 +1483,7 @@ export default function DashboardPage() {
                           <div><dt>Buy Target</dt><dd>{formatStockPrice4(buyTargetsByTicker[row.ticker] ?? null)}</dd></div>
                           <div><dt>Sale Target</dt><dd>{formatStockPrice4(saleTargetsByTicker[row.ticker] ?? null)}</dd></div>
                           <div>
-                            <dt>Lots vs. Base</dt>
+                            <dt>Weight</dt>
                             <dd>
                               <span
                                 className="lot-count-difference"
@@ -1520,7 +1519,7 @@ export default function DashboardPage() {
                 <input
                   type="date"
                   min="1980-01-01"
-                  max={new Date().toISOString().slice(0, 10)}
+                  max={getLocalDateString()}
                   value={addStockForm.transactionDate}
                   onChange={(event) => setAddStockForm((prev) => ({ ...prev, transactionDate: event.target.value }))}
                   disabled={addStockSaving}

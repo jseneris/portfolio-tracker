@@ -31,7 +31,7 @@ import {
   updateTickerPreference,
   HistoricalPrice,
 } from '../api'
-import { formatCurrency2, formatStockPrice4 } from '../formatters'
+import { formatCurrency2, formatStockPrice4, getLocalDateString } from '../formatters'
 import { createSplitMultiplierResolver } from '../portfolioSnapshot'
 
 const ALLOCATION_TOLERANCE = 1e-6
@@ -49,15 +49,15 @@ type StockFormState = {
   transactionDate: string
 }
 
-const EMPTY_STOCK_FORM: StockFormState = {
+const createEmptyStockForm = (): StockFormState => ({
   type: 'buy',
   quantity: '',
   price: '',
   totalAmount: '',
   newTicker: '',
   exchangeRate: '',
-  transactionDate: new Date().toISOString().slice(0, 10),
-}
+  transactionDate: getLocalDateString(),
+})
 
 function formatNumber(value: number | null, digits = 6) {
   if (value == null || Number.isNaN(Number(value))) {
@@ -458,7 +458,7 @@ export default function StockHistoryPage() {
   const [transactions, setTransactions] = useState<StockTransaction[]>([])
   const [allTickerTransactions, setAllTickerTransactions] = useState<StockTransaction[]>([])
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null)
-  const [form, setForm] = useState<StockFormState>(EMPTY_STOCK_FORM)
+  const [form, setForm] = useState<StockFormState>(createEmptyStockForm)
   const [showAddTransactionModal, setShowAddTransactionModal] = useState(false)
   const [showLotsModal, setShowLotsModal] = useState(false)
   const [showInitialPurchaseModal, setShowInitialPurchaseModal] = useState(false)
@@ -489,6 +489,7 @@ export default function StockHistoryPage() {
   const [availableCash, setAvailableCash] = useState<number | null>(null)
   const [latestHistoricalPrice, setLatestHistoricalPrice] = useState<number | null>(null)
   const [livePrice, setLivePrice] = useState<number | null>(null)
+  const [livePriceChangePercent, setLivePriceChangePercent] = useState<number | null>(null)
   const [historicalPrices, setHistoricalPrices] = useState<HistoricalPrice[]>([])
   const [sellLotsSource, setSellLotsSource] = useState<PurchaseLot[]>([])
   const [loadingAllocations, setLoadingAllocations] = useState(false)
@@ -581,16 +582,14 @@ export default function StockHistoryPage() {
     && buyCost > Number(availableCash)
 
   const displayLotSummary = useMemo(() => {
-    if (displayLotEntries.length === 0) {
-      return '--'
-    }
     return displayLotEntries
       .map((lot) => Number(lot.totalQuantity))
       .filter((value) => Number.isFinite(value))
       .sort((a, b) => a - b)
-      .map((q) => Number(q.toFixed(6)).toString())
-      .join(', ')
   }, [displayLotEntries])
+  const highlightedDisplayLotCount = Number.isSafeInteger(Number(baseSize))
+    ? Math.max(0, Number(baseSize))
+    : 0
 
   const savedDisplayLotTotal = useMemo(
     () => displayLotEntries.reduce((sum, lot) => sum + lot.totalQuantity, 0),
@@ -672,59 +671,6 @@ export default function StockHistoryPage() {
 
     return currentValue - costBasis
   }, [currentValue, costBasis])
-
-  const salesSummary = useMemo(() => {
-    const activeShares = Number(summary?.totalShares)
-    const latestPrice = Number(effectivePrice)
-
-    const salesCostBasis = transactions
-      .filter((transaction) => transaction.type === 'sell')
-      .reduce((sum, transaction) => {
-        const amount = Number(transaction.amount)
-        return Number.isFinite(amount) ? sum + amount : sum
-      }, 0)
-
-    const totalConsumedPurchaseCostBasis = Object.values(saleAllocations)
-      .flat()
-      .filter((allocation) => allocation.sourceType === 'purchase')
-      .reduce((sum, allocation) => {
-        const unitCost = Number(allocation.unitCost)
-        const quantity = Number(allocation.quantity)
-        if (!Number.isFinite(unitCost) || !Number.isFinite(quantity)) {
-          return sum
-        }
-        return sum + (unitCost * quantity)
-      }, 0)
-
-    const consumedFromPartialOpenPurchaseLots = openLots.reduce((sum, lot) => {
-      const original = Number(lot.originalQuantity)
-      const remaining = Number(lot.remainingQuantity)
-      const unitCost = Number(lot.unitCost)
-      if (!Number.isFinite(original) || !Number.isFinite(remaining) || !Number.isFinite(unitCost)) {
-        return sum
-      }
-
-      const consumedQuantity = Math.max(0, original - remaining)
-      return sum + (consumedQuantity * unitCost)
-    }, 0)
-
-    const exhaustedPurchaseLotsCostBasis = Math.max(
-      0,
-      totalConsumedPurchaseCostBasis - consumedFromPartialOpenPurchaseLots
-    )
-
-    const hasValidPerformanceInputs = Number.isFinite(activeShares) && Number.isFinite(latestPrice)
-    const performance = hasValidPerformanceInputs
-      ? (activeShares * latestPrice) + salesCostBasis - exhaustedPurchaseLotsCostBasis
-      : null
-
-    return {
-      saleCount: transactions.filter((transaction) => transaction.type === 'sell').length,
-      salesCostBasis,
-      exhaustedPurchaseLotsCostBasis,
-      performance,
-    }
-  }, [summary, effectivePrice, transactions, saleAllocations, openLots])
 
   const performanceBreakdown = useMemo(() => {
     const overall = buildEmptyBreakdown()
@@ -1048,10 +994,7 @@ export default function StockHistoryPage() {
       return 'Date is invalid.'
     }
 
-    const now = new Date()
-    const selectedUtc = Date.UTC(selectedDate.getUTCFullYear(), selectedDate.getUTCMonth(), selectedDate.getUTCDate())
-    const nowUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-    if (selectedUtc > nowUtc) {
+    if (selectedDate.toISOString().slice(0, 10) > getLocalDateString()) {
       return 'Date cannot be in the future.'
     }
 
@@ -1059,7 +1002,7 @@ export default function StockHistoryPage() {
   }
 
   function resetForm() {
-    setForm(EMPTY_STOCK_FORM)
+    setForm(createEmptyStockForm())
     setAvailableLots([])
     setAllocations({})
   }
@@ -1252,10 +1195,12 @@ export default function StockHistoryPage() {
   useEffect(() => {
     if (!ticker) {
       setLivePrice(null)
+      setLivePriceChangePercent(null)
       return
     }
 
     let cancelled = false
+    setLivePriceChangePercent(null)
 
     getCurrentPrices([ticker])
       .then((result) => {
@@ -1265,10 +1210,15 @@ export default function StockHistoryPage() {
         const match = result.prices.find((row) => String(row.ticker || '').toUpperCase() === ticker)
         const price = Number(match?.price)
         setLivePrice(Number.isFinite(price) && price > 0 ? price : null)
+        const changePercent = match?.changePercent
+        setLivePriceChangePercent(
+          changePercent != null && Number.isFinite(Number(changePercent)) ? Number(changePercent) : null
+        )
       })
       .catch(() => {
         if (!cancelled) {
           setLivePrice(null)
+          setLivePriceChangePercent(null)
         }
       })
 
@@ -1754,88 +1704,41 @@ export default function StockHistoryPage() {
       ) : null}
 
       {!loading && !error && summary ? (
-        <details className="panel collapsible-panel" open={false}>
-          <summary>Summary &amp; Performance</summary>
+        <div className="panel">
+          <h3 className="ticker-summary-heading">Summary &amp; Performance</h3>
           <div className="stat-grid">
             <div className="stat"><div className="label">Total Shares</div><div className="value">{formatNumber(summary.totalShares, 6)}</div></div>
+            <div className="stat"><div className="label">Current Price</div><div className="value">{formatCurrency2(effectivePrice)}</div></div>
+            <div className="stat">
+              <div className="label">Change %</div>
+              <div className={`value ${getPerformanceClassName(livePriceChangePercent)}`}>{formatPercent2(livePriceChangePercent)}</div>
+            </div>
+            <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatCurrency2(costBasis)}</div></div>
+            <div className="stat"><div className="label">Current Value</div><div className="value">{formatCurrency2(currentValue)}</div></div>
             <button
               className="stat stat-clickable"
               type="button"
               onClick={openDisplayLotsModal}
             >
               <div className="label">Display Lots ({displayLotEntries.length})</div>
-              <div className="value">{displayLotSummary}</div>
+              <div className="value ticker-display-lot-summary">
+                {displayLotSummary.length === 0
+                  ? '--'
+                  : displayLotSummary.map((quantity, index) => {
+                    const isBaseSizeLot = index >= displayLotSummary.length - highlightedDisplayLotCount
+                    return (
+                      <span key={`${quantity}-${index}`}>
+                        {index > 0 ? ', ' : ''}
+                        <span className={isBaseSizeLot ? 'ticker-display-lot-base' : 'ticker-display-lot-other'}>
+                          {Number(quantity.toFixed(6)).toString()}
+                        </span>
+                      </span>
+                    )
+                  })}
+              </div>
               <div className="hint">click to manage</div>
             </button>
-            <div className="stat"><div className="label">Cost Basis</div><div className="value">{formatCurrency2(costBasis)}</div></div>
-            <div className="stat"><div className="label">Current Value</div><div className="value">{formatCurrency2(currentValue)}</div></div>
             <div className="stat"><div className="label">Performance</div><div className={getPerformanceClassName(summaryPerformance)}>{formatCurrency2(summaryPerformance)}</div></div>
-            {summaryReturnPercent != null ? (
-              <div className="stat"><div className="label">Return %</div><div className={getPerformanceClassName(summaryPerformance)}>{formatPercent2(summaryReturnPercent)}</div></div>
-            ) : null}
-          </div>
-
-          {salesSummary.saleCount > 0 ? (
-            <div className="stat-grid" style={{ marginTop: '0.75rem' }}>
-              <div className="stat"><div className="label">Sales Cost Basis</div><div className="value">{formatCurrency2(salesSummary.salesCostBasis)}</div></div>
-              <div className="stat"><div className="label">Exhausted Purchase Lots Cost Basis (No Div)</div><div className="value">{formatCurrency2(salesSummary.exhaustedPurchaseLotsCostBasis)}</div></div>
-              <div className="stat"><div className="label">Sales Performance</div><div className={getPerformanceClassName(salesSummary.performance)}>{formatCurrency2(salesSummary.performance)}</div></div>
-            </div>
-          ) : null}
-
-          {initialPurchasePerformance ? (
-            <div className="stat-grid" style={{ marginTop: '0.75rem' }}>
-              <div className="stat"><div className="label">Initial Buy Shares ({initialPurchasePerformance.count})</div><div className="value">{formatNumber(initialPurchasePerformance.totalShares, 6)}</div></div>
-              <div className="stat"><div className="label">Initial Buy Cost Basis</div><div className="value">{formatCurrency2(initialPurchasePerformance.totalCost)}</div></div>
-              <div className="stat"><div className="label">Initial Buy Current Value</div><div className="value">{formatCurrency2(initialPurchasePerformance.currentValue)}</div></div>
-              <div className="stat"><div className="label">Initial Buy Performance</div><div className={getPerformanceClassName(initialPurchasePerformance.performance)}>{formatCurrency2(initialPurchasePerformance.performance)}</div></div>
-              <div className="stat"><div className="label">Initial Buy Return %</div><div className={getPerformanceClassName(initialPurchasePerformance.performance)}>{formatPercent2(initialPurchasePerformance.returnPercent)}</div></div>
-            </div>
-          ) : null}
-
-          <div style={{ marginTop: '0.75rem' }}>
-            <h3 style={{ marginTop: 0 }}>Performance Breakdown</h3>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Period</th>
-                  <th>Buys</th>
-                  <th>Buy Amount</th>
-                  <th>Sales</th>
-                  <th>Sale Amount</th>
-                  <th>Dividends</th>
-                  <th>Dividend Amount</th>
-                  <th>Performance</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>All Time</td>
-                  <td>{performanceBreakdown.overall.buyCount}</td>
-                  <td>{formatCurrency2(performanceBreakdown.overall.buyAmount)}</td>
-                  <td>{performanceBreakdown.overall.sellCount}</td>
-                  <td>{formatCurrency2(performanceBreakdown.overall.sellAmount)}</td>
-                  <td>{performanceBreakdown.overall.divCount}</td>
-                  <td>{formatCurrency2(performanceBreakdown.overall.divAmount)}</td>
-                  <td className={getBreakdownPerformanceClassName(yearlyPerformance.overall)}>{formatBreakdownPerformance(yearlyPerformance.overall)}</td>
-                </tr>
-                {performanceBreakdown.years.map((row) => (
-                  <tr key={row.year}>
-                    <td>{row.year}</td>
-                    <td>{row.buyCount}</td>
-                    <td>{formatCurrency2(row.buyAmount)}</td>
-                    <td>{row.sellCount}</td>
-                    <td>{formatCurrency2(row.sellAmount)}</td>
-                    <td>{row.divCount}</td>
-                    <td>{formatCurrency2(row.divAmount)}</td>
-                    <td className={getBreakdownPerformanceClassName(yearlyPerformance.performanceByYear.get(row.year)?.performance ?? null)}>
-                      {formatBreakdownPerformance(yearlyPerformance.performanceByYear.get(row.year)?.performance ?? null)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="hint">Performance is the total return for the period, including unrealized gains: period-end market value minus net amount invested (buys plus dividend reinvestments minus sales). All Time matches the summary performance above.</p>
           </div>
 
           {splitEvents.length > 0 ? (
@@ -1872,50 +1775,119 @@ export default function StockHistoryPage() {
               Display lots total {formatNumber(totalDisplayLotShares, 6)} while open purchase lots total {formatNumber(totalOpenPurchaseShares, 6)}.
             </div>
           ) : null}
-        </details>
+        </div>
       ) : null}
 
       {!loading && !error ? (
-        <div className="panel panel-tight">
-          <div className="inline-actions" style={{ marginBottom: '0.75rem' }}>
-            <label>
-              <input
-                type="checkbox"
-                checked={showDividends}
-                onChange={(event) => setShowDividends(event.target.checked)}
-              />
-              Show dividends
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={showSales}
-                onChange={(event) => setShowSales(event.target.checked)}
-              />
-              Show sales
-            </label>
-          </div>
-
-          {splitEvents.length > 0 ? (
-            <div className="row-between" style={{ marginBottom: '0.75rem' }}>
-              <p style={{ margin: 0, color: '#5b6472' }}>
-                Toggle between split-adjusted values and original pre-split values for quantity and price.
-              </p>
-              <button
-                className="button"
-                type="button"
-                onClick={() => setShowOriginalPreSplit((prev) => !prev)}
-              >
-                {showOriginalPreSplit ? 'Showing: Original Pre-Split' : 'Showing: Current Split-Adjusted'}
-              </button>
-            </div>
+        <div className="ticker-history-layout">
+          {summary ? (
+            <aside className="panel panel-tight ticker-performance-sidebar">
+              {initialPurchasePerformance ? (
+                <section className="ticker-performance-period">
+                  <h3>Initial Buy</h3>
+                  <dl>
+                    <dt>Shares ({initialPurchasePerformance.count})</dt>
+                    <dd>{formatNumber(initialPurchasePerformance.totalShares, 6)}</dd>
+                    <dt>Cost Basis</dt>
+                    <dd>{formatCurrency2(initialPurchasePerformance.totalCost)}</dd>
+                    <dt>Current Value</dt>
+                    <dd>{formatCurrency2(initialPurchasePerformance.currentValue)}</dd>
+                    <dt>Performance</dt>
+                    <dd className={getPerformanceClassName(initialPurchasePerformance.performance)}>
+                      {formatCurrency2(initialPurchasePerformance.performance)}
+                    </dd>
+                    <dt>Return %</dt>
+                    <dd className={getPerformanceClassName(initialPurchasePerformance.performance)}>
+                      {formatPercent2(initialPurchasePerformance.returnPercent)}
+                    </dd>
+                  </dl>
+                </section>
+              ) : null}
+              <h3>Performance Breakdown</h3>
+              <div className="ticker-performance-periods">
+                <section className="ticker-performance-period">
+                  <h4>All Time</h4>
+                  <dl>
+                    <dt>Buys</dt><dd>{performanceBreakdown.overall.buyCount}</dd>
+                    <dt>Buy Amount</dt><dd>{formatCurrency2(performanceBreakdown.overall.buyAmount)}</dd>
+                    <dt>Sales</dt><dd>{performanceBreakdown.overall.sellCount}</dd>
+                    <dt>Sale Amount</dt><dd>{formatCurrency2(performanceBreakdown.overall.sellAmount)}</dd>
+                    <dt>Dividends</dt><dd>{performanceBreakdown.overall.divCount}</dd>
+                    <dt>Dividend Amount</dt><dd>{formatCurrency2(performanceBreakdown.overall.divAmount)}</dd>
+                    <dt>Performance</dt>
+                    <dd className={getBreakdownPerformanceClassName(yearlyPerformance.overall)}>
+                      {formatBreakdownPerformance(yearlyPerformance.overall)}
+                    </dd>
+                    {summaryReturnPercent != null ? (
+                      <>
+                        <dt>Return %</dt>
+                        <dd className={getPerformanceClassName(summaryPerformance)}>{formatPercent2(summaryReturnPercent)}</dd>
+                      </>
+                    ) : null}
+                  </dl>
+                </section>
+                {performanceBreakdown.years.map((row) => (
+                  <section className="ticker-performance-period" key={row.year}>
+                    <h4>{row.year}</h4>
+                    <dl>
+                      <dt>Buys</dt><dd>{row.buyCount}</dd>
+                      <dt>Buy Amount</dt><dd>{formatCurrency2(row.buyAmount)}</dd>
+                      <dt>Sales</dt><dd>{row.sellCount}</dd>
+                      <dt>Sale Amount</dt><dd>{formatCurrency2(row.sellAmount)}</dd>
+                      <dt>Dividends</dt><dd>{row.divCount}</dd>
+                      <dt>Dividend Amount</dt><dd>{formatCurrency2(row.divAmount)}</dd>
+                      <dt>Performance</dt>
+                      <dd className={getBreakdownPerformanceClassName(yearlyPerformance.performanceByYear.get(row.year)?.performance ?? null)}>
+                        {formatBreakdownPerformance(yearlyPerformance.performanceByYear.get(row.year)?.performance ?? null)}
+                      </dd>
+                    </dl>
+                  </section>
+                ))}
+              </div>
+              <p className="hint">Performance is the total return for the period, including unrealized gains: period-end market value minus net amount invested (buys plus dividend reinvestments minus sales). All Time matches the summary performance above.</p>
+            </aside>
           ) : null}
 
-          {transactionTimeline.length === 0 ? (
-            <p>No transactions found for {ticker}.</p>
-          ) : (
-            <div className="table-scroll">
-            <table className="table">
+          <div className="panel panel-tight">
+            <div className="inline-actions" style={{ marginBottom: '0.75rem' }}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={showDividends}
+                  onChange={(event) => setShowDividends(event.target.checked)}
+                />
+                Show dividends
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={showSales}
+                  onChange={(event) => setShowSales(event.target.checked)}
+                />
+                Show sales
+              </label>
+            </div>
+
+            {splitEvents.length > 0 ? (
+              <div className="row-between" style={{ marginBottom: '0.75rem' }}>
+                <p style={{ margin: 0, color: '#5b6472' }}>
+                  Toggle between split-adjusted values and original pre-split values for quantity and price.
+                </p>
+                <button
+                  className="button"
+                  type="button"
+                  onClick={() => setShowOriginalPreSplit((prev) => !prev)}
+                >
+                  {showOriginalPreSplit ? 'Showing: Original Pre-Split' : 'Showing: Current Split-Adjusted'}
+                </button>
+              </div>
+            ) : null}
+
+            {transactionTimeline.length === 0 ? (
+              <p>No transactions found for {ticker}.</p>
+            ) : (
+              <div className="table-scroll ticker-transaction-table-scroll">
+              <table className="table">
               <thead>
                 <tr>
                   <th>Date</th>
@@ -2175,8 +2147,9 @@ export default function StockHistoryPage() {
                 })}
               </tbody>
             </table>
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
       ) : null}
 
@@ -2192,7 +2165,7 @@ export default function StockHistoryPage() {
                 <input
                   type="date"
                   min="1980-01-01"
-                  max={new Date().toISOString().slice(0, 10)}
+                  max={getLocalDateString()}
                   value={form.transactionDate}
                   onChange={(event) => setForm((prev) => ({ ...prev, transactionDate: event.target.value }))}
                   disabled={saving}
