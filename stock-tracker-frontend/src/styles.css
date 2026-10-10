@@ -82,6 +82,7 @@ body {
 
 .app-header nav {
   display: flex;
+  align-items: flex-start;
   gap: 0.75rem;
   min-width: 0;
 }
@@ -91,6 +92,47 @@ body {
   text-decoration: none;
   padding: 0.35rem 0.6rem;
   border-radius: 0.4rem;
+}
+
+.nav-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.nav-menu summary {
+  cursor: pointer;
+  list-style: none;
+  color: #dbeafe;
+  padding: 0.35rem 0.6rem;
+  border-radius: 0.4rem;
+}
+
+.nav-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.nav-menu summary::after {
+  content: " v";
+  font-size: 0.75rem;
+}
+
+.nav-submenu {
+  position: absolute;
+  z-index: 10;
+  top: 100%;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: max-content;
+  padding: 0.35rem;
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  background: var(--header-bg);
+  box-shadow: 0 0.5rem 1rem rgb(0 0 0 / 20%);
+}
+
+.nav-submenu a {
+  display: block;
 }
 
 .app-header a.active {
@@ -1018,6 +1060,41 @@ body {
   display: inline-block;
 }
 
+.ticker-list-toolbar {
+  margin-block: 1rem;
+}
+
+.ticker-list-toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ticker-groups {
+  display: grid;
+  gap: 1rem;
+}
+
+.ticker-group {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+}
+
+.ticker-group h3 {
+  margin: 0 0 0.65rem;
+  font-size: 0.95rem;
+}
+
+.ticker-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: #334155;
+}
+
 .legend-dot-portfolio {
   background: #16a34a;
 }
@@ -1525,6 +1602,7 @@ body {
 
   .app-header nav {
     width: 100%;
+    align-items: flex-start;
     gap: 0.25rem;
     overflow-x: auto;
     overscroll-behavior-inline: contain;
@@ -1532,12 +1610,26 @@ body {
     padding-bottom: 0.25rem;
   }
 
-  .app-header a {
+  .app-header nav > a,
+  .nav-menu summary {
     flex: 0 0 auto;
     min-height: 44px;
     display: inline-flex;
     align-items: center;
     padding-inline: 0.7rem;
+  }
+
+  .nav-submenu {
+    position: fixed;
+    top: auto;
+    left: auto;
+    margin-top: 0.25rem;
+  }
+
+  .nav-submenu a {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
   }
 
   .header-actions > .button {

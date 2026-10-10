@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Navigate, NavLink, Route, Routes } from 'react-router-dom'
+import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { useAppAuth } from './auth'
 import { getUnreadMessageCount, getUserProfile } from './api'
 import DashboardPage from './pages/DashboardPage'
@@ -18,8 +18,14 @@ const UNREAD_MESSAGES_POLL_MS = 5 * 60 * 1000
 
 export default function App() {
   const auth = useAppAuth()
+  const location = useLocation()
   const [aiInsightsEnabled, setAiInsightsEnabled] = useState(false)
   const [unreadMessageCount, setUnreadMessageCount] = useState(0)
+  const [openMenu, setOpenMenu] = useState<'transactions' | 'charts' | null>(null)
+
+  useEffect(() => {
+    setOpenMenu(null)
+  }, [location])
 
   useEffect(() => {
     if (auth.isLoading || !auth.isAuthenticated) {
@@ -117,20 +123,40 @@ export default function App() {
           </p>
         </div>
         <div className="header-actions">
-          <nav>
+          <nav onClick={(event) => {
+            if (event.target instanceof Element && event.target.closest('a')) {
+              setOpenMenu(null)
+            }
+          }}>
             <NavLink to="/" end>Dashboard</NavLink>
-            <NavLink to="/cash">Cash</NavLink>
-            <NavLink to="/stocks">Stocks</NavLink>
             <NavLink to="/holdings">Holdings</NavLink>
-            <NavLink to="/allocations">Allocations</NavLink>
-            <NavLink to="/splits">Splits</NavLink>
-            <NavLink to="/comparison">Performance</NavLink>
-            {aiInsightsEnabled && window.location.hostname === 'localhost' ? <NavLink to="/insights">Insights</NavLink> : null}
+            <details className="nav-menu" open={openMenu === 'transactions'}>
+              <summary onClick={(event) => {
+                event.preventDefault()
+                setOpenMenu((current) => current === 'transactions' ? null : 'transactions')
+              }}>Transactions</summary>
+              <div className="nav-submenu">
+                <NavLink to="/cash">Cash</NavLink>
+                <NavLink to="/stocks">Stocks</NavLink>
+                <NavLink to="/splits">Splits</NavLink>
+              </div>
+            </details>
+            <details className="nav-menu" open={openMenu === 'charts'}>
+              <summary onClick={(event) => {
+                event.preventDefault()
+                setOpenMenu((current) => current === 'charts' ? null : 'charts')
+              }}>Charts</summary>
+              <div className="nav-submenu">
+                <NavLink to="/comparison">vs Indexes</NavLink>
+                <NavLink to="/stock-performance">Stocks</NavLink>
+                <NavLink to="/allocations">Allocations</NavLink>
+              </div>
+            </details>
             <NavLink to="/messages">
               Messages
               {unreadMessageCount > 0 ? <span className="nav-badge">{unreadMessageCount}</span> : null}
             </NavLink>
-            <NavLink to="/user-settings">User</NavLink>
+            <NavLink to="/user-settings">Account</NavLink>
           </nav>
           {auth.isConfigured ? (
             <button className="button" onClick={() => auth.logout()}>
@@ -151,6 +177,7 @@ export default function App() {
           <Route path="/splits" element={<StockSplitsPage />} />
           <Route path="/comparison" element={<ComparisonPage />} />
           <Route path="/comparison-all" element={<ComparisonPage />} />
+          <Route path="/stock-performance" element={<ComparisonPage graph="stocks" />} />
           <Route
             path="/insights"
             element={aiInsightsEnabled ? <PortfolioInsightsPage /> : <Navigate to="/" replace />}

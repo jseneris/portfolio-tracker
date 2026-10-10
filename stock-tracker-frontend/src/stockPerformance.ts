@@ -3,6 +3,7 @@ import { HistoricalPrice, StockSplitEvent, StockTransaction } from './api'
 export type StockPerformancePoint = {
   date: string
   gains: Record<string, number | null>
+  priceReturns: Record<string, number | null>
   initialBuysGain: number | null
   // Percentage denominators: value at period start plus buys made during the period.
   bases: Record<string, number | null>
@@ -58,6 +59,7 @@ export function buildStockPerformance(args: {
 
   const sortedPrices = [...historicalPrices].sort((first, second) => first.priceDate.localeCompare(second.priceDate))
   const latestPrices = new Map<string, HistoricalPrice>()
+  const heldTickers = new Set<string>()
   let priceIndex = 0
   const activeSplits = splitEvents.filter((split) => split.isActive !== false
     && Number.isFinite(split.multiplier) && split.multiplier > 0)
@@ -70,10 +72,10 @@ export function buildStockPerformance(args: {
     || (first.kind === second.kind ? 0 : first.kind === 'transaction' ? -1 : 1))
   const balances = new Map<string, {
     shares: number; invested: number; initialShares: number; initialInvested: number
-    buyTotal: number; initialBuyTotal: number; lastSplitDate: string
+    buyTotal: number; initialBuyTotal: number; lastSplitDate: string; splitMultiplier: number
   }>()
   for (const ticker of tickers) {
-    balances.set(ticker, { shares: 0, invested: 0, initialShares: 0, initialInvested: 0, buyTotal: 0, initialBuyTotal: 0, lastSplitDate: '' })
+    balances.set(ticker, { shares: 0, invested: 0, initialShares: 0, initialInvested: 0, buyTotal: 0, initialBuyTotal: 0, lastSplitDate: '', splitMultiplier: 1 })
   }
   let eventIndex = 0
   for (const split of activeSplits) {
@@ -91,9 +93,11 @@ export function buildStockPerformance(args: {
       const ticker = (event.kind === 'split' ? event.split.ticker : event.transaction.ticker).toUpperCase()
       const balance = balances.get(ticker)
       if (!balance) continue
+      if (event.date >= startDate && balance.shares > 1e-6) heldTickers.add(ticker)
       if (event.kind === 'split') {
         balance.shares *= event.split.multiplier
         balance.initialShares *= event.split.multiplier
+        balance.splitMultiplier *= event.split.multiplier
         balance.lastSplitDate = event.date
         continue
       }
@@ -113,6 +117,7 @@ export function buildStockPerformance(args: {
         balance.shares += isAcquisition ? quantity : -quantity
         if (isInitialBuy) balance.initialShares += quantity
       }
+      if (event.date >= startDate && balance.shares > 1e-6) heldTickers.add(ticker)
     }
     const gains: Record<string, number | null> = {}
     const initialGains: Record<string, number | null> = {}
@@ -120,10 +125,12 @@ export function buildStockPerformance(args: {
     const initialValues: Record<string, number | null> = {}
     const buyTotals: Record<string, number> = {}
     const initialBuyTotals: Record<string, number> = {}
+    const prices: Record<string, number | null> = {}
     for (const [ticker, balance] of balances) {
       const quote = latestPrices.get(ticker)
       const quoteDate = (quote?.marketDate ?? quote?.priceDate ?? '').slice(0, 10)
       const usableQuote = quote != null && Number.isFinite(quote.closePrice) && quote.closePrice > 0 && balance.lastSplitDate <= quoteDate
+      prices[ticker] = usableQuote ? quote.closePrice * balance.splitMultiplier : null
       function marketValue(shares: number): number | null {
         if (shares <= 1e-6) return 0
         return usableQuote && quote ? shares * quote.closePrice : null
@@ -139,20 +146,33 @@ export function buildStockPerformance(args: {
       buyTotals[ticker] = balance.buyTotal
       initialBuyTotals[ticker] = balance.initialBuyTotal
     }
-    return { gains, initialGains, values, initialValues, buyTotals, initialBuyTotals }
+    return { gains, initialGains, values, initialValues, buyTotals, initialBuyTotals, prices }
   }
 
   const {
     gains: baselineGains, initialGains: baselineInitialGains,
     values: baselineValues, initialValues: baselineInitialValues,
     buyTotals: baselineBuyTotals, initialBuyTotals: baselineInitialBuyTotals,
+    prices: baselinePrices,
   } = totalGains(baselineDate)
+  for (const [ticker, balance] of balances) {
+    if (balance.shares > 1e-6) heldTickers.add(ticker)
+  }
   const missingTickers = new Set<string>()
   const points = [...dates].sort().map((date) => {
-    const { gains, initialGains, buyTotals, initialBuyTotals } = totalGains(date)
+    const { gains, initialGains, buyTotals, initialBuyTotals, prices } = totalGains(date)
     const bases: Record<string, number | null> = {}
     const initialBases: Record<string, number | null> = {}
+    const priceReturns: Record<string, number | null> = {}
     for (const ticker of tickers) {
+      // Use the prior close, or the opening day's close if no prior quote exists.
+      if (date === startDate && baselinePrices[ticker] == null) baselinePrices[ticker] = prices[ticker]
+      const openingPrice = baselinePrices[ticker]
+      const currentPrice = prices[ticker]
+      priceReturns[ticker] = openingPrice == null || currentPrice == null
+        ? null
+        : toGainPercent(currentPrice - openingPrice, openingPrice)
+      if (date >= startDate && priceReturns[ticker] == null) missingTickers.add(ticker)
       const baselineValue = baselineValues[ticker]
       bases[ticker] = baselineValue == null ? null : baselineValue + (buyTotals[ticker] - baselineBuyTotals[ticker])
       const baselineInitialValue = baselineInitialValues[ticker]
@@ -179,10 +199,21 @@ export function buildStockPerformance(args: {
     return {
       date,
       gains,
-      initialBuysGain: getCombinedStockGain({ gains: initialGains }, tickers),
+      priceReturns,
+      initialGains,
       bases,
-      initialBuysBasis: getCombinedStockBasis({ bases: initialBases }, tickers),
+      initialBases,
     }
   })
-  return { tickers, points, missingTickers: [...missingTickers].sort(), hasInitialBuys: initialBuys.length > 0 }
+  const visibleTickers = tickers.filter((ticker) => heldTickers.has(ticker))
+  return {
+    tickers: visibleTickers,
+    points: points.map(({ initialGains, initialBases, ...point }) => ({
+      ...point,
+      initialBuysGain: getCombinedStockGain({ gains: initialGains }, visibleTickers),
+      initialBuysBasis: getCombinedStockBasis({ bases: initialBases }, visibleTickers),
+    })),
+    missingTickers: visibleTickers.filter((ticker) => missingTickers.has(ticker)),
+    hasInitialBuys: initialBuys.some((transaction) => heldTickers.has(transaction.ticker.toUpperCase())),
+  }
 }

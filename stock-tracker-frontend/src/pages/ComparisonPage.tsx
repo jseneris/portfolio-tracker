@@ -80,8 +80,7 @@ function alignPortfolioValues(points: PortfolioComparisonPoint[]): PortfolioComp
   }))
 }
 
-export default function ComparisonPage() {
-  const [graph, setGraph] = useState<'indexes' | 'stocks'>('indexes')
+export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes' | 'stocks' }) {
   const [stocksRefreshKey, setStocksRefreshKey] = useState(0)
   const [selectedYear, setSelectedYear] = useState<YearSelection | null>(null)
   const [points, setPoints] = useState<PortfolioComparisonPoint[]>([])
@@ -618,19 +617,12 @@ export default function ComparisonPage() {
     <section>
       <div className="panel row-between">
         <div>
-          <h2>Performance ({selectedYearLabel})</h2>
+          <h2>{graph === 'indexes' ? 'vs Indexes' : 'Stocks'} Performance ({selectedYearLabel})</h2>
           <p>{graph === 'indexes'
             ? 'Portfolio vs Indexes: uses Yahoo closes on cash deposit/withdrawal dates plus the year-end date for each selected year.'
             : `Stocks: combined cumulative gain/loss including realized gains, unrealized gains, and reinvested dividends. ${selectedYear === 'all' ? 'Initial buys shows buy-and-hold gain/loss for marked Initial Purchases, ignoring later sales and excluding subsequent purchases and dividends. ' : ''}Select individual stocks below to add their lines. Each selected period starts at zero, using the prior close for existing holdings.`}</p>
         </div>
         <div className="inline-actions">
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-            Graph
-            <select value={graph} onChange={(event) => setGraph(event.target.value === 'stocks' ? 'stocks' : 'indexes')}>
-              <option value="indexes">vs Indexes</option>
-              <option value="stocks">Stocks</option>
-            </select>
-          </label>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
             Year
             <select

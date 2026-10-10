@@ -37,7 +37,7 @@ describe('stock performance', () => {
     expect(result.points.map((point) => point.initialBuysGain)).toEqual([0, 100])
   })
 
-  it('reports unavailable initial-buy valuations even after the actual position has been sold', () => {
+  it('excludes initial-buy positions closed before the selected period', () => {
     const result = buildStockPerformance({
       transactions: [
         { ...transaction('initial', '2025-01-01', 'buy', 10, 1000), isInitialPurchase: true },
@@ -45,9 +45,11 @@ describe('stock performance', () => {
       ],
       historicalPrices: [], splitEvents: [], startDate: '2026-01-01', endDate: '2026-01-02',
     })
-    expect(result.points.map((point) => point.initialBuysGain)).toEqual([null, null])
+    expect(result.tickers).toEqual([])
+    expect(result.hasInitialBuys).toBe(false)
+    expect(result.points.map((point) => point.initialBuysGain)).toEqual([0, 0])
     expect(result.points.map((point) => point.gains.TEST)).toEqual([0, 0])
-    expect(result.missingTickers).toEqual(['TEST'])
+    expect(result.missingTickers).toEqual([])
   })
 
   it('does not treat exchange-generated or unmarked purchases as initial buys', () => {
@@ -61,7 +63,7 @@ describe('stock performance', () => {
     expect(result.hasInitialBuys).toBe(false)
   })
 
-  it('skips hypothetical initial holdings in yearly views without warning about their missing prices', () => {
+  it('does not warn about missing prices for stocks closed before the selected year', () => {
     const result = buildStockPerformance({
       transactions: [
         { ...transaction('initial', '2025-01-01', 'buy', 10, 1000), isInitialPurchase: true },
@@ -70,7 +72,9 @@ describe('stock performance', () => {
       historicalPrices: [], splitEvents: [], startDate: '2026-01-01', endDate: '2026-01-02', includeInitialBuys: false,
     })
     expect(result.hasInitialBuys).toBe(false)
+    expect(result.tickers).toEqual([])
     expect(result.missingTickers).toEqual([])
+    expect(result.points.map((point) => point.priceReturns.TEST)).toEqual([null, null])
     expect(result.points.map((point) => point.gains.TEST)).toEqual([0, 0])
   })
 
@@ -79,6 +83,80 @@ describe('stock performance', () => {
     expect(getCombinedStockGain(point, ['AAA', 'BBB'])).toBe(70)
     expect(getCombinedStockGain({ ...point, gains: { AAA: 120, BBB: null } }, ['AAA', 'BBB'])).toBeNull()
     expect(getCombinedStockGain(point, ['AAA', 'MISSING'])).toBeNull()
+  })
+
+  it('includes opening holdings, same-day trades, sales and exchanges in the period but excludes earlier closures and future buys', () => {
+    const result = buildStockPerformance({
+      transactions: [
+        transaction('closed-buy', '2025-01-01', 'buy', 10, 1000, 'CLOSED'),
+        transaction('closed-sell', '2025-12-31', 'sell', 10, 1000, 'CLOSED'),
+        transaction('opening', '2025-01-01', 'buy', 10, 1000, 'OPEN'),
+        transaction('sold', '2026-01-01', 'sell', 10, 1000, 'OPEN'),
+        transaction('day-buy', '2026-02-01', 'buy', 10, 1000, 'DAY'),
+        transaction('day-sell', '2026-02-01', 'sell', 10, 1000, 'DAY'),
+        transaction('exchange-buy', '2025-01-01', 'buy', 10, 1000, 'SOURCE'),
+        { ...transaction('exchange', '2026-03-01', 'exchange', 10, 1000, 'SOURCE'), exchangeSourceQuantity: 10 },
+        { ...transaction('target', '2026-03-01', 'buy', 20, 1000, 'TARGET'), isExchangeGenerated: true },
+        transaction('future', '2027-01-01', 'buy', 10, 1000, 'FUTURE'),
+      ],
+      historicalPrices: [], splitEvents: [], startDate: '2026-01-01', endDate: '2026-12-31',
+    })
+    expect(result.tickers).toEqual(['DAY', 'OPEN', 'SOURCE', 'TARGET'])
+    expect(result.missingTickers).not.toContain('CLOSED')
+    expect(result.missingTickers).not.toContain('FUTURE')
+  })
+
+  it('includes carried holdings without in-period transactions even after a split', () => {
+    const result = buildStockPerformance({
+      transactions: [transaction('old', '2025-01-01', 'buy', 10, 1000)],
+      historicalPrices: [],
+      splitEvents: [{ id: 'split', ticker: 'TEST', ratioNumerator: 2, ratioDenominator: 1, multiplier: 2, splitDate: '2025-06-01', isActive: true }],
+      startDate: '2026-01-01', endDate: '2026-12-31',
+    })
+    expect(result.tickers).toEqual(['TEST'])
+  })
+
+  it('calculates ticker price returns independently of buys, sales and reinvested dividends', () => {
+    const result = buildStockPerformance({
+      transactions: [
+        transaction('old', '2025-01-01', 'buy', 10, 1000),
+        transaction('new', '2026-01-02', 'buy', 10, 1100),
+        transaction('div', '2026-01-02', 'div', 1, 110),
+        transaction('sold', '2026-01-03', 'sell', 21, 2520),
+      ],
+      historicalPrices: [price('2025-12-31', 100), price('2026-01-02', 110), price('2026-01-03', 120), price('2026-01-04', 130)],
+      splitEvents: [], startDate: '2026-01-01', endDate: '2026-01-04',
+    })
+    expect(result.points.map((point) => point.priceReturns.TEST)).toEqual([0, 10, 20, 30])
+    const last = result.points[result.points.length - 1]
+    expect(toGainPercent(last.gains.TEST, last.bases.TEST)).toBeCloseTo(20)
+  })
+
+  it('uses the opening day close when no prior close exists without using future quotes', () => {
+    const args = {
+      transactions: [transaction('buy', '2026-01-01', 'buy', 10, 1000)],
+      splitEvents: [], startDate: '2026-01-01', endDate: '2026-01-02',
+    }
+    const opening = buildStockPerformance({ ...args, historicalPrices: [price('2026-01-01', 100), price('2026-01-02', 120)] })
+    expect(opening.points.map((point) => point.priceReturns.TEST)).toEqual([null, 0, 20])
+    const missing = buildStockPerformance({ ...args, historicalPrices: [price('2026-01-02', 120)] })
+    expect(missing.points.map((point) => point.priceReturns.TEST)).toEqual([null, null, null])
+    expect(missing.missingTickers).toEqual(['TEST'])
+  })
+
+  it('adjusts ticker prices for splits and leaves stale pre-split prices unavailable', () => {
+    const result = buildStockPerformance({
+      transactions: [transaction('buy', '2025-01-01', 'buy', 10, 1000)],
+      historicalPrices: [price('2025-12-31', 100), price('2026-01-03', 55), price('2026-01-04', 110)],
+      splitEvents: [
+        { id: 'split', ticker: 'TEST', ratioNumerator: 2, ratioDenominator: 1, multiplier: 2, splitDate: '2026-01-02', isActive: true },
+        { id: 'reverse', ticker: 'TEST', ratioNumerator: 1, ratioDenominator: 2, multiplier: 0.5, splitDate: '2026-01-04', isActive: true },
+        { id: 'inactive', ticker: 'TEST', ratioNumerator: 3, ratioDenominator: 1, multiplier: 3, splitDate: '2026-01-03', isActive: false },
+      ],
+      startDate: '2026-01-01', endDate: '2026-01-04',
+    })
+    expect(result.points.map((point) => point.priceReturns.TEST)).toEqual([0, null, 10, 10])
+    expect(result.missingTickers).toEqual(['TEST'])
   })
 
   it('resets the opening combined and initial-buy gains to zero independently each year', () => {
