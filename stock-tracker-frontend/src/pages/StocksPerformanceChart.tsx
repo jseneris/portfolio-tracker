@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CompanyProfile, getAllStockSplits, getHistoricalPrices, getStockProfileByTicker, StockTransaction } from '../api'
+import { CompanyProfile, getAllStockSplits, getHistoricalPrices, getStockProfileByTicker, StockTransaction, WatchlistItem } from '../api'
 import { buildStockPerformance, getCombinedStockBasis, getCombinedStockGain, StockPerformancePoint, toGainPercent } from '../stockPerformance'
+import type { WatchlistLine } from '../watchlistPerformance'
+import WatchlistSection from './WatchlistSection'
 
 function formatPercent(value: number | null): string {
   return value == null || !Number.isFinite(value) ? '--' : `${value.toFixed(2)}%`
@@ -52,12 +54,13 @@ export function groupPerformanceTickers(
   })
 }
 
-export function StocksGainLossChart({ tickers, points, hasInitialBuys = false, showInitialBuys = true, profilesByTicker = {} }: {
+export function StocksGainLossChart({ tickers, points, hasInitialBuys = false, showInitialBuys = true, profilesByTicker = {}, watchlistLines = [] }: {
   tickers: string[]
   points: StockPerformancePoint[]
   hasInitialBuys?: boolean
   showInitialBuys?: boolean
   profilesByTicker?: Record<string, CompanyProfile | null>
+  watchlistLines?: WatchlistLine[]
 }) {
   const [selectedTickers, setSelectedTickers] = useState<Set<string>>(new Set())
   const [grouping, setGrouping] = useState<TickerGrouping>('none')
@@ -66,7 +69,7 @@ export function StocksGainLossChart({ tickers, points, hasInitialBuys = false, s
   const lastPoint = points[points.length - 1]
   const tickerGroups = lastPoint ? groupPerformanceTickers(tickers, lastPoint, grouping, profilesByTicker) : []
   const visibleTickers = tickers.filter((ticker) => selectedTickers.has(ticker))
-  const series: { label: string; color: string; width: number; dash?: string; value: (point: StockPerformancePoint) => number | null }[] = [
+  const holdingSeries: { label: string; color: string; width: number; dash?: string; value: (point: StockPerformancePoint) => number | null }[] = [
     { label: 'Combined holdings', color: '#0f172a', width: 1.5, value: (point: StockPerformancePoint) => toGainPercent(getCombinedStockGain(point, tickers), getCombinedStockBasis(point, tickers)) },
     ...(showInitialBuys && hasInitialBuys ? [{
       label: 'Initial buys (buy and hold)', color: '#9333ea', width: 1.5,
@@ -89,12 +92,22 @@ export function StocksGainLossChart({ tickers, points, hasInitialBuys = false, s
       },
     ]),
   ]
+  const series = [
+    ...(tickers.length ? holdingSeries.map((line) => ({
+      label: line.label, color: line.color, width: line.width, dash: line.dash,
+      points: points.map((point) => ({ date: point.date, value: line.value(point) })),
+    })) : []),
+    ...watchlistLines.filter((line) => line.points.length).map((line) => ({
+      label: line.label, color: line.color, width: 1.5, dash: '2 3', points: line.points,
+    })),
+  ]
+  const axisDates = [...new Set([...points.map((point) => point.date), ...series.flatMap((line) => line.points.map((point) => point.date))])].sort()
   const chart = useMemo(() => {
     let min = 0
     let max = 0
-    for (const point of points) {
-      for (const line of series) {
-        const gain = line.value(point)
+    for (const line of series) {
+      for (const point of line.points) {
+        const gain = point.value
         if (gain != null) {
           min = Math.min(min, gain)
           max = Math.max(max, gain)
@@ -102,16 +115,17 @@ export function StocksGainLossChart({ tickers, points, hasInitialBuys = false, s
       }
     }
     if (min === max) { min -= 1; max += 1 }
-    const firstDate = Date.parse(`${points[0]?.date}T00:00:00Z`)
-    const lastDate = Date.parse(`${points[points.length - 1]?.date}T00:00:00Z`)
+    const firstDate = Date.parse(`${axisDates[0]}T00:00:00Z`)
+    const lastDate = Date.parse(`${axisDates[axisDates.length - 1]}T00:00:00Z`)
     const x = (date: string) => LEFT + ((Date.parse(`${date}T00:00:00Z`) - firstDate) / Math.max(lastDate - firstDate, 1)) * PLOT_WIDTH
     const y = (gain: number) => TOP + PLOT_HEIGHT - ((gain - min) / (max - min)) * PLOT_HEIGHT
     return { min, max, x, y }
   }, [points, series])
 
-  if (!points.length || !tickers.length) return <p>No stock transactions available for this period.</p>
+  if (!points.length && !series.length) return <p>Select a watchlist ticker to show its performance.</p>
+  if (!tickers.length && !series.length) return <p>No holdings in this period. Select a watchlist ticker to show its performance.</p>
   const hovered = hoveredIndex == null ? null : points[hoveredIndex]
-  const tickStep = Math.max(1, Math.ceil(points.length / 7))
+  const tickStep = Math.max(1, Math.ceil(axisDates.length / 7))
 
   return (
     <div className="comparison-chart-wrap">
@@ -136,13 +150,13 @@ export function StocksGainLossChart({ tickers, points, hasInitialBuys = false, s
           </g>
         })}
         <line x1={LEFT} x2={LEFT + PLOT_WIDTH} y1={chart.y(0)} y2={chart.y(0)} stroke="#64748b" strokeDasharray="4 3" />
-        {points.filter((_, index) => index % tickStep === 0 || index === points.length - 1).map((point) => (
-          <text key={point.date} x={chart.x(point.date)} y={TOP + PLOT_HEIGHT + 22} textAnchor="middle" fontSize="11" fill="#475569">{point.date}</text>
+        {axisDates.filter((_, index) => index % tickStep === 0 || index === axisDates.length - 1).map((date) => (
+          <text key={date} x={chart.x(date)} y={TOP + PLOT_HEIGHT + 22} textAnchor="middle" fontSize="11" fill="#475569">{date}</text>
         ))}
         {series.map((line) => {
           let connected = false
-          const path = points.map((point) => {
-            const gain = line.value(point)
+          const path = line.points.map((point) => {
+            const gain = point.value
             if (gain == null) { connected = false; return '' }
             const command = `${connected ? 'L' : 'M'} ${chart.x(point.date).toFixed(2)} ${chart.y(gain).toFixed(2)}`
             connected = true
@@ -154,16 +168,18 @@ export function StocksGainLossChart({ tickers, points, hasInitialBuys = false, s
         })}
         {hovered ? <line x1={chart.x(hovered.date)} x2={chart.x(hovered.date)} y1={TOP} y2={TOP + PLOT_HEIGHT} className="comparison-hover-crosshair" /> : null}
       </svg>
+      {watchlistLines.some((line) => line.points.length) ? <p className="hint">Dotted lines show selected watchlist price returns since their saved watch dates. They are not included in holding or group returns.</p> : null}
+      {tickers.length ? <>
       <p className="hint">Percentages below show gain/loss over the full selected period, relative to value at start of period (plus buys during the period). Select tickers to show or hide their lines.</p>
       <p className="hint">Each selected ticker has a solid holding-performance line and a same-color dashed price-performance line. Price performance uses the prior close (or the opening day's close if unavailable), adjusts for splits, and excludes dividends and your transactions.</p>
       <p className="hint">Only tickers held during the selected period are listed, including positions sold during that period.</p>
       <p className="hint">Performance groups use full-period holding returns. Industry and size use current company classifications; unavailable data is listed separately.</p>
       <p className="hint">Group returns combine all members' holding gains and performance bases, not an average of their percentages. Select a group to plot its cumulative holding return as a thicker solid line. Group membership stays fixed across the selected period, regardless of individual ticker selections.</p>
       <div className="comparison-legend">
-        <span>
+        {tickers.length ? <span>
           <i className="legend-dot" style={{ backgroundColor: '#0f172a' }} />
-          <strong>Combined holdings: {formatPercent(series[0].value(lastPoint))}</strong>
-        </span>
+          <strong>Combined holdings: {formatPercent(holdingSeries[0].value(lastPoint))}</strong>
+        </span> : null}
         {showInitialBuys && hasInitialBuys ? (
           <span>
             <i className="legend-dot" style={{ backgroundColor: '#9333ea' }} />
@@ -224,20 +240,23 @@ export function StocksGainLossChart({ tickers, points, hasInitialBuys = false, s
           </section>
         ))}
       </div>
+      </> : null}
     </div>
   )
 }
 
-export default function StocksPerformanceChart({ transactions, selectedYear, refreshKey }: {
+export default function StocksPerformanceChart({ transactions, selectedYear, refreshKey, onWatchlistChange }: {
   transactions: StockTransaction[]
   selectedYear: number | 'all' | null
   refreshKey: number
+  onWatchlistChange: (items: WatchlistItem[]) => void
 }) {
   const [data, setData] = useState<ReturnType<typeof buildStockPerformance> | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [profilesByTicker, setProfilesByTicker] = useState<Record<string, CompanyProfile | null>>({})
   const [profileStatus, setProfileStatus] = useState<string | null>(null)
+  const [watchlistLines, setWatchlistLines] = useState<WatchlistLine[]>([])
   useEffect(() => {
     let cancelled = false
     setProfilesByTicker({})
@@ -268,7 +287,7 @@ export default function StocksPerformanceChart({ transactions, selectedYear, ref
     const controller = new AbortController()
     setData(null)
     setError(null)
-    if (selectedYear == null || transactions.length === 0) {
+    if (selectedYear == null) {
       setLoading(false)
       return
     }
@@ -276,12 +295,12 @@ export default function StocksPerformanceChart({ transactions, selectedYear, ref
     const firstDate = transactions.reduce((first, transaction) => {
       const date = transaction.transactionDate.slice(0, 10)
       return date < first ? date : first
-    }, transactions[0].transactionDate.slice(0, 10))
+    }, transactions[0]?.transactionDate.slice(0, 10) ?? new Date().toISOString().slice(0, 10))
     const startDate = selectedYear === 'all' ? firstDate : `${selectedYear}-01-01`
     const today = new Date().toISOString().slice(0, 10)
     const endDate = selectedYear === 'all' ? today : `${selectedYear}-12-31` < today ? `${selectedYear}-12-31` : today
     const tickers = [...new Set(transactions.map((transaction) => transaction.ticker.toUpperCase()))]
-    Promise.all([getHistoricalPrices(startDate, endDate, tickers, true, controller.signal), getAllStockSplits()])
+    Promise.all([tickers.length ? getHistoricalPrices(startDate, endDate, tickers, true, controller.signal) : Promise.resolve([]), getAllStockSplits()])
       .then(([historicalPrices, splitEvents]) => {
         if (!cancelled) setData(buildStockPerformance({
           transactions, historicalPrices, splitEvents, startDate, endDate, includeInitialBuys: selectedYear === 'all',
@@ -294,12 +313,12 @@ export default function StocksPerformanceChart({ transactions, selectedYear, ref
     return () => { cancelled = true; controller.abort() }
   }, [transactions, selectedYear, refreshKey])
 
-  if (loading) return <p role="status">Loading stock performance...</p>
-  if (error) return <p className="status status-error" role="alert">{error}</p>
-  if (!data) return <p>No stock performance data available.</p>
   return <>
-    {data.missingTickers.length > 0 ? <p className="status status-warning">Missing historical prices for {data.missingTickers.join(', ')}. Unavailable holding or price performance is shown as gaps; use Recalculate to backfill prices.</p> : null}
+    {loading ? <p role="status">Loading stock performance...</p> : null}
+    {error ? <p className="status status-error" role="alert">{error}</p> : null}
+    {data && data.missingTickers.length > 0 ? <p className="status status-warning">Missing historical prices for {data.missingTickers.join(', ')}. Unavailable holding or price performance is shown as gaps; use Recalculate to backfill prices.</p> : null}
     {profileStatus ? <p className="status status-warning" role="status">{profileStatus}</p> : null}
-    <StocksGainLossChart tickers={data.tickers} points={data.points} hasInitialBuys={data.hasInitialBuys} showInitialBuys={selectedYear === 'all'} profilesByTicker={profilesByTicker} />
+    {data || watchlistLines.length ? <StocksGainLossChart tickers={data?.tickers ?? []} points={data?.points ?? []} hasInitialBuys={data?.hasInitialBuys ?? false} showInitialBuys={selectedYear === 'all'} profilesByTicker={profilesByTicker} watchlistLines={watchlistLines} /> : null}
+    <WatchlistSection selectedYear={selectedYear} refreshKey={refreshKey} onItemsChange={onWatchlistChange} onLinesChange={setWatchlistLines} />
   </>
 }

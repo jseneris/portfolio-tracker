@@ -5,6 +5,7 @@ import sql from 'mssql';
 import YahooFinance from 'yahoo-finance2';
 import { fetchCurrentPrices } from '../services/current-prices.js';
 import { restrictBuyingAfterLossSale } from '../services/loss-sale-restriction.js';
+import { changeStockTransactionDate, parseTransactionDate, TransactionDateError } from '../services/stock-transaction-date.js';
 
 const router = Router();
 const yahooFinance = new YahooFinance();
@@ -1690,6 +1691,23 @@ router.post('/', async (req: Request, res: Response) => {
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('VALIDATION:')) {
       return res.status(400).json({ error: error.message.replace('VALIDATION:', '') });
+    }
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+router.patch('/:id/date', async (req: Request, res: Response) => {
+  const date = parseTransactionDate(req.body?.transactionDate);
+  const expectedDate = parseTransactionDate(req.body?.expectedTransactionDate);
+  if (!UUID_PATTERN.test(req.params.id) || !date || !expectedDate
+    || Object.keys(req.body ?? {}).some((key) => key !== 'transactionDate' && key !== 'expectedTransactionDate')) {
+    return res.status(400).json({ error: 'Provide only valid YYYY-MM-DD transactionDate and expectedTransactionDate values and a valid transaction ID.' });
+  }
+  try {
+    res.json(await changeStockTransactionDate(req.user!.id, req.params.id, date, expectedDate));
+  } catch (error) {
+    if (error instanceof TransactionDateError) {
+      return res.status(error.status).json({ error: error.message });
     }
     res.status(500).json({ error: String(error) });
   }

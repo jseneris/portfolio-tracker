@@ -7,6 +7,7 @@ import {
   getStockTransactions,
 } from '../api'
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
+import TransactionDateEditor from './TransactionDateEditor'
 
 const SHARE_TOLERANCE = 1e-6
 
@@ -265,6 +266,10 @@ export default function StocksPage() {
                   <td>{formatStockPrice4(transaction.price)}</td>
                   <td>{formatCurrency2(transaction.amount)}</td>
                   <td>
+                    <TransactionDateEditor transaction={transaction} onSaved={async () => {
+                      setSuccess('Transaction date updated.')
+                      await loadTransactions()
+                    }} />
                     {!transaction.isDeletionLocked ? (
                       <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
                         Delete

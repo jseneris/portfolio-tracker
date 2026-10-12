@@ -2,6 +2,20 @@
 
 Node.js/Express backend for the Stock Tracker application with SQL Server database connectivity.
 
+## Stocks chart watchlist
+
+Authenticated `/api/watchlist` routes provide per-user list, add, and remove operations, plus `GET /api/watchlist/:id/prices` for on-demand daily price history. Items require a ticker and valid non-future start date; one entry per ticker per user is supported.
+
+Database initialization adds `WatchlistItems` and `WatchlistPrices` automatically. Restart the API to apply these additive tables. Prices are retrieved from Yahoo Finance only when selected in the frontend, refreshed after a UTC calendar-day change, and cached separately from portfolio historical prices. Closing prices are split-adjusted and exclude reinvested distributions. Removing an item cascades its cached prices. Provider failures and empty histories are explicit errors; saved symbols do not imply market-data availability.
+
+## Date-only stock transaction corrections
+
+`PATCH /api/stocks/:id/date` accepts only `transactionDate` and `expectedTransactionDate`, both valid `YYYY-MM-DD` values. It supports ordinary buys, sells, and reinvested dividends, with ownership and stale-date checks. Related purchase-lot dates are synchronized atomically without changing financial values or allocations.
+
+Changes are rejected when they break allocated purchase/sale chronology, cross a registered stock split, involve exchange-linked transactions, or encounter missing/inconsistent lots or allocations. Loss-sale restrictions are recalculated when the stored restriction matches the previous automatic maximum; separately configured restriction dates are preserved and can be extended by the existing loss-sale rule.
+
+The frontend provides Edit date in both stock transaction histories. Exchange-locked transactions cannot be edited. Refresh/recalculate historical prices if a correction moves activity to a date lacking price data. This feature requires no schema migration.
+
 ## Setup
 
 ### 1. Install Dependencies
@@ -38,7 +52,7 @@ Run this in a separate VS Code terminal when you want the local scheduler active
 npm run scheduler
 ```
 
-The scheduler process connects to the configured SQL Server, checks price targets every five minutes during market hours, and runs the daily EOD sync at its configured time. Stop the process to stop future scheduled runs.
+The scheduler process connects to the configured SQL Server, checks price targets every three minutes during market hours, and runs the daily EOD sync at its configured time. Stop the process to stop future scheduled runs.
 
 ### 5. Run Daily EOD Sync Once
 

@@ -5,7 +5,7 @@ excludeAgent: "code-review"
 
 # API Endpoints (Current Implementation)
 
-Last updated: 2026-09-24
+Last updated: 2026-10-12
 
 Authentication and scoping notes:
 - `authenticateRequest` middleware is applied globally before route handlers.
@@ -31,7 +31,41 @@ Authentication and scoping notes:
 ### DELETE /api/cash/:id
 - Deletes one cash transaction owned by the current user.
 
+## Watchlist
+
+### GET /api/watchlist
+- Returns the current user's saved items as `{ id, ticker, startDate }[]`, ordered by ticker. Dates are `YYYY-MM-DD`.
+
+### POST /api/watchlist
+- Body: `{ ticker, startDate }`. Normalizes ticker casing/whitespace, validates a 1-10-character symbol and real calendar date no later than today.
+- Returns `201` with the saved item. `400` for invalid input; `409` if that user already watches the ticker.
+- Saves the watchlist item only; market data is requested when selected. Invalid/unavailable market symbols produce visible errors during price loading.
+- To change a watch start date, remove the ticker and add it again.
+
+### DELETE /api/watchlist/:id
+- Deletes only the current user's item and its cached prices. Returns `204`, or `404` for a missing/other-user item.
+
+### GET /api/watchlist/:id/prices
+- Returns `{ date, close }[]` from the saved watch date through today, ordered by date.
+- Fetches Yahoo Finance daily closes on demand and caches them in `WatchlistPrices`. Refreshes at most once per UTC calendar day after a successful download.
+- Ownership is checked before requesting market data. Returns `404` for missing/other-user items, `502` for provider errors, `422` for no usable closes.
+- Uses split-adjusted closing prices, not dividend/capital-gain-adjusted total returns. Does not create stock transactions or apply portfolio splits.
+
 ## Stocks
+
+### PATCH /api/stocks/:id/date
+- Date-only correction for an authenticated user's ordinary `buy`, `sell`, or reinvested `div` transaction.
+- Body: `{ "transactionDate": "YYYY-MM-DD", "expectedTransactionDate": "YYYY-MM-DD" }`. Extra fields and invalid calendar dates return `400`.
+- Returns `{ id, transactionDate }`, with the saved date as a UTC ISO timestamp.
+- Returns `404` for a missing transaction or a transaction owned by another user; `409` for stale dates or unsafe changes.
+- Updates the transaction date and its purchase-lot date together in a serializable SQL transaction. Financial values, quantities, allocation identities, and initial-purchase flags remain unchanged.
+- Rejects exchange transactions, source/target transactions in exchange mappings, and transactions preceding an exchange of their ticker. Exchange-generated lots retain their inherited acquisition dates.
+- Rejects crossing any registered stock-split boundary; does not automatically reverse or reapply splits.
+- Rejects missing/inconsistent purchase lots, purchases moved after allocated sales, sales moved before allocated purchases, and sales with incomplete allocations. Same-calendar-day purchase/sale dates are allowed.
+- On sale corrections, recalculates the maximum loss-sale restriction across that ticker. A stored enabled restriction matching the old calculated maximum is updated, including shortened dates. Differently configured restrictions are preserved, and the edited loss sale may extend them under the existing restriction rule.
+- The stock transaction history and ticker-detail history expose an Edit date action for eligible rows. Exchange-locked rows do not expose it.
+- Reloads transactions and ticker details after saving and emits the portfolio-updated event. Dates requiring additional historical prices may still need Recalculate.
+- No database schema changes. This endpoint is separate from the legacy general-purpose `PUT /api/stocks/:id` handler.
 
 ### GET /api/stocks/portfolio/summary
 - Returns one response with:

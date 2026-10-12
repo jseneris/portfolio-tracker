@@ -616,6 +616,17 @@ body {
   height: 1.1rem;
 }
 
+.transaction-date-editor {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 220px;
+}
+
+.transaction-date-editor label {
+  display: grid;
+  gap: 0.25rem;
+}
+
 .ticker-restriction-date {
   display: flex;
   flex-direction: column;
@@ -1062,6 +1073,28 @@ body {
 
 .ticker-list-toolbar {
   margin-block: 1rem;
+}
+
+.watchlist-section {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.watchlist-form {
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-block: 1rem;
+}
+
+.watchlist-form label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.watchlist-section input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
 }
 
 .ticker-list-toolbar label {

@@ -203,6 +203,27 @@ async function createTablesIfNotExist() {
         updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
       );
 
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'WatchlistItems')
+      CREATE TABLE WatchlistItems (
+        id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+        userId NVARCHAR(255) NOT NULL,
+        ticker NVARCHAR(10) NOT NULL,
+        startDate DATE NOT NULL,
+        pricesThrough DATE NULL,
+        pricesUpdatedAt DATETIME2 NULL,
+        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        CONSTRAINT UQ_WatchlistItems_User_Ticker UNIQUE (userId, ticker)
+      );
+
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'WatchlistPrices')
+      CREATE TABLE WatchlistPrices (
+        watchlistId UNIQUEIDENTIFIER NOT NULL,
+        priceDate DATE NOT NULL,
+        closePrice DECIMAL(18, 8) NOT NULL CHECK (closePrice > 0),
+        PRIMARY KEY (watchlistId, priceDate),
+        FOREIGN KEY (watchlistId) REFERENCES WatchlistItems(id) ON DELETE CASCADE
+      );
+
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'Users')
       CREATE TABLE Users (
         id NVARCHAR(255) PRIMARY KEY,

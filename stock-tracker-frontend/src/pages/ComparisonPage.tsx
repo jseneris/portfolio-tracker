@@ -8,6 +8,7 @@ import {
   getCashTransactions,
   getStockTransactions,
   syncHistoricalPricesByYear,
+  WatchlistItem,
 } from '../api'
 import { formatCurrency2 } from '../formatters'
 import { calculatePortfolioValue } from '../portfolioSnapshot'
@@ -86,6 +87,7 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
   const [points, setPoints] = useState<PortfolioComparisonPoint[]>([])
   const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([])
   const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([])
+  const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([])
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -109,14 +111,23 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
         years.add(date.getUTCFullYear())
       }
     }
+    if (graph === 'stocks') {
+      const currentYear = new Date().getUTCFullYear()
+      for (const item of watchlistItems) {
+        for (let year = Number(item.startDate.slice(0, 4)); year <= currentYear; year++) years.add(year)
+      }
+    }
     return Array.from(years).sort((a, b) => b - a)
-  }, [stockTransactions, cashTransactions])
+  }, [stockTransactions, cashTransactions, watchlistItems, graph])
 
   const comparisonYears = useMemo(() => {
     return [...availableYears].sort((a, b) => b - a)
   }, [availableYears])
 
   const allComparisonSyncYears = useMemo(() => {
+    const transactionYears = [...new Set([...stockTransactions, ...cashTransactions]
+      .map((transaction) => new Date(transaction.transactionDate).getUTCFullYear())
+      .filter(Number.isFinite))]
     const depositYears = cashTransactions
       .filter((transaction) => String(transaction.type || '').toLowerCase() === 'deposit')
       .map((transaction) => new Date(transaction.transactionDate))
@@ -125,9 +136,9 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
 
     const firstYear = depositYears.length > 0
       ? Math.min(...depositYears)
-      : (comparisonYears.length > 0 ? Math.min(...comparisonYears) : null)
-    const latestYear = comparisonYears.length > 0
-      ? Math.min(new Date().getUTCFullYear(), Math.max(...comparisonYears))
+      : (transactionYears.length > 0 ? Math.min(...transactionYears) : null)
+    const latestYear = transactionYears.length > 0
+      ? Math.min(new Date().getUTCFullYear(), Math.max(...transactionYears))
       : null
 
     if (firstYear == null || latestYear == null || latestYear < firstYear) {
@@ -135,7 +146,7 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
     }
 
     return Array.from({ length: latestYear - firstYear + 1 }, (_, index) => firstYear + index)
-  }, [cashTransactions, comparisonYears])
+  }, [cashTransactions, stockTransactions])
 
   const yearlyStockTransactionSummary = useMemo(() => {
     const summary = {
@@ -533,6 +544,10 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
     setError(null)
     setSuccess(null)
     try {
+      if (graph === 'stocks' && stockTransactions.length === 0) {
+        setStocksRefreshKey((previous) => previous + 1)
+        return
+      }
       if (selectedYear === 'all') {
         const yearsAscending = [...allComparisonSyncYears]
         let totalRows = 0
@@ -660,7 +675,7 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
 
       <div className="panel comparison-chart-panel">
         {graph === 'stocks' ? (
-          <StocksPerformanceChart transactions={stockTransactions} selectedYear={selectedYear} refreshKey={stocksRefreshKey} />
+          <StocksPerformanceChart transactions={stockTransactions} selectedYear={selectedYear} refreshKey={stocksRefreshKey} onWatchlistChange={setWatchlistItems} />
         ) : loading ? (
           <div className="comparison-chart-loading">
             <div className="comparison-spinner" aria-hidden="true">

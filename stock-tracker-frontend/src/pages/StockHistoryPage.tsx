@@ -33,6 +33,7 @@ import {
 } from '../api'
 import { formatCurrency2, formatStockPrice4, getLocalDateString } from '../formatters'
 import { createSplitMultiplierResolver } from '../portfolioSnapshot'
+import TransactionDateEditor from './TransactionDateEditor'
 
 const ALLOCATION_TOLERANCE = 1e-6
 const LOT_STATE_TOLERANCE = 1e-6
@@ -1981,6 +1982,10 @@ export default function StockHistoryPage() {
                         </td>
                         <td>{formatCurrency2(transaction.amount)}</td>
                         <td>
+                          <TransactionDateEditor transaction={transaction} onSaved={async () => {
+                            setSuccess('Transaction date updated.')
+                            await loadTransactions()
+                          }} />
                           {isPartialLotRow ? (
                             <button
                               className="button button-secondary"

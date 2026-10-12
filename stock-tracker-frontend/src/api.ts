@@ -468,7 +468,7 @@ export type PushNotificationConfig = {
 // Internal Request Helpers
 // ============================================================================
 
-type RequestMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
+type RequestMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 type RequestOptions = {
   method?: RequestMethod
@@ -640,6 +640,32 @@ export async function createStockTransaction(payload: CreateStockInput): Promise
 
 export async function deleteStockTransaction(id: string): Promise<void> {
   return requestApi<void>(`/api/stocks/${id}`, { method: 'DELETE' })
+}
+
+export type WatchlistItem = { id: string; ticker: string; startDate: string }
+export type WatchlistPrice = { date: string; close: number }
+
+export async function getWatchlist(): Promise<WatchlistItem[]> {
+  return requestApi<WatchlistItem[]>('/api/watchlist')
+}
+
+export async function addWatchlistItem(ticker: string, startDate: string): Promise<WatchlistItem> {
+  return requestApi<WatchlistItem>('/api/watchlist', { method: 'POST', body: { ticker, startDate } })
+}
+
+export async function removeWatchlistItem(id: string): Promise<void> {
+  return requestApi<void>(`/api/watchlist/${id}`, { method: 'DELETE' })
+}
+
+export async function getWatchlistPrices(id: string, signal?: AbortSignal): Promise<WatchlistPrice[]> {
+  return requestApi<WatchlistPrice[]>(`/api/watchlist/${id}/prices`, { signal })
+}
+
+export async function updateStockTransactionDate(id: string, transactionDate: string, expectedTransactionDate: string): Promise<{ id: string; transactionDate: string }> {
+  return requestApi<{ id: string; transactionDate: string }>(`/api/stocks/${id}/date`, {
+    method: 'PATCH',
+    body: { transactionDate, expectedTransactionDate },
+  })
 }
 
 export async function setInitialPurchaseFlag(id: string, isInitialPurchase: boolean): Promise<{ id: string; isInitialPurchase: boolean }> {

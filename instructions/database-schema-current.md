@@ -9,6 +9,20 @@ This document reflects the schema currently created by [stock-tracker-backend/sr
 
 ## Core Transaction Tables
 
+### WatchlistItems
+- Purpose: per-user Stocks-chart watchlist, independent of holdings and transactions.
+- `id` UNIQUEIDENTIFIER primary key; `userId` NVARCHAR(255); `ticker` NVARCHAR(10); `startDate` DATE; `createdAt` DATETIME2.
+- Unique `(userId, ticker)` prevents duplicate symbols for one user.
+- `pricesThrough` DATE and `pricesUpdatedAt` DATETIME2 track the daily price-cache refresh.
+- Checkbox selections are browser-session state and are not stored.
+
+### WatchlistPrices
+- Purpose: cached daily Yahoo Finance closing prices for each watchlist item.
+- Composite primary key `(watchlistId, priceDate)`; `closePrice` DECIMAL(18,8) must be positive.
+- Foreign key to `WatchlistItems(id)` with cascading deletion.
+- Cache is separate from portfolio `HistoricalPrices`; watchlist downloads do not alter holdings, lots, transactions, or split activations.
+- Provider close prices are split-adjusted; adjusted-close/distribution total returns are not used.
+
 ### CashTransactions
 - Purpose: user cash ledger (`deposit`, `withdrawal`, `interest`, `fee`).
 - Amount precision: `DECIMAL(18,4)`.

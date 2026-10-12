@@ -122,6 +122,30 @@ describe('performance graph selection', () => {
     expect(html).toContain('Combined holdings: --')
   })
 
+  it('renders selected watchlist lines without holdings and keeps them independent of the combined return', () => {
+    const html = renderToStaticMarkup(createElement(StocksGainLossChart, {
+      tickers: [], points: [],
+      watchlistLines: [{
+        id: 'watch', label: 'VTSAX watchlist (since 2026-01-01)', color: '#0891b2',
+        points: [{ date: '2026-01-02', value: 0 }, { date: '2026-02-02', value: 10 }],
+      }],
+    }))
+    expect(html).toContain('<title>VTSAX watchlist (since 2026-01-01)</title>')
+    expect(html).toContain('stroke-dasharray="2 3"')
+    expect(html).not.toContain('<title>Combined holdings</title>')
+    expect(html).toContain('2026-02-02')
+  })
+
+  it('renders no watchlist paths when no watchlist lines are selected', () => {
+    const html = renderToStaticMarkup(createElement(StocksGainLossChart, {
+      tickers: ['AAA'],
+      points: [{ date: '2026-01-01', gains: { AAA: 0 }, bases: { AAA: 100 }, priceReturns: { AAA: 0 }, initialBuysGain: 0, initialBuysBasis: null }],
+      watchlistLines: [],
+    }))
+    expect(html).not.toContain('watchlist (since')
+    expect(html).toContain('<title>Combined holdings</title>')
+  })
+
   it('shows a thin initial-buy performance line alongside the thin combined line', () => {
     const html = renderToStaticMarkup(createElement(StocksGainLossChart, {
       tickers: ['AAA'], hasInitialBuys: true,
