@@ -42,7 +42,15 @@ export function buildStockPerformance(args: {
   startDate: string
   endDate: string
   includeInitialBuys?: boolean
-}): { tickers: string[]; points: StockPerformancePoint[]; missingTickers: string[]; hasInitialBuys: boolean } {
+}): {
+  tickers: string[]
+  points: (StockPerformancePoint & {
+    initialGains: Record<string, number | null>
+    initialBases: Record<string, number | null>
+  })[]
+  missingTickers: string[]
+  hasInitialBuys: boolean
+} {
   const { transactions, historicalPrices, splitEvents, startDate, endDate, includeInitialBuys = true } = args
   const baseline = new Date(`${startDate}T00:00:00Z`)
   baseline.setUTCDate(baseline.getUTCDate() - 1)
@@ -208,10 +216,10 @@ export function buildStockPerformance(args: {
   const visibleTickers = tickers.filter((ticker) => heldTickers.has(ticker))
   return {
     tickers: visibleTickers,
-    points: points.map(({ initialGains, initialBases, ...point }) => ({
+    points: points.map((point) => ({
       ...point,
-      initialBuysGain: getCombinedStockGain({ gains: initialGains }, visibleTickers),
-      initialBuysBasis: getCombinedStockBasis({ bases: initialBases }, visibleTickers),
+      initialBuysGain: getCombinedStockGain({ gains: point.initialGains }, visibleTickers),
+      initialBuysBasis: getCombinedStockBasis({ bases: point.initialBases }, visibleTickers),
     })),
     missingTickers: visibleTickers.filter((ticker) => missingTickers.has(ticker)),
     hasInitialBuys: initialBuys.some((transaction) => heldTickers.has(transaction.ticker.toUpperCase())),

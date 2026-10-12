@@ -25,6 +25,41 @@ describe('stock performance', () => {
     expect(result.hasInitialBuys).toBe(true)
     expect(result.points.map((point) => point.initialBuysGain)).toEqual([0, 0, 100, 200, 300])
     expect(result.points[4].gains.TEST).toBe(340)
+    expect(toGainPercent(result.points[4].gains.TEST, result.points[4].bases.TEST)).toBeCloseTo(340 / 1220 * 100)
+    expect(toGainPercent(result.points[4].initialGains.TEST, result.points[4].initialBases.TEST)).toBe(30)
+  })
+
+  it('provides per-ticker all-time initial returns through the snapshot date only', () => {
+    const result = buildStockPerformance({
+      transactions: [
+        { ...transaction('initial', '2025-01-01', 'buy', 10, 1000, 'AAA'), isInitialPurchase: true },
+        transaction('unmarked', '2025-01-01', 'buy', 5, 500, 'BBB'),
+        transaction('future', '2027-01-01', 'buy', 10, 2000, 'AAA'),
+      ],
+      historicalPrices: [price('2026-01-02', 120, 'AAA'), price('2026-01-02', 90, 'BBB'), price('2027-01-01', 200, 'AAA')],
+      splitEvents: [], startDate: '2025-01-01', endDate: '2026-01-02',
+    })
+    const lastPoint = result.points[result.points.length - 1]
+    expect(toGainPercent(lastPoint.gains.AAA, lastPoint.bases.AAA)).toBe(20)
+    expect(toGainPercent(lastPoint.initialGains.AAA, lastPoint.initialBases.AAA)).toBe(20)
+    expect(toGainPercent(lastPoint.gains.BBB, lastPoint.bases.BBB)).toBe(-10)
+    expect(toGainPercent(lastPoint.initialGains.BBB, lastPoint.initialBases.BBB)).toBeNull()
+  })
+
+  it('includes reinvested dividend value in all-time dollar gains without counting it twice', () => {
+    const result = buildStockPerformance({
+      transactions: [
+        { ...transaction('initial', '2026-01-01', 'buy', 10, 1000), isInitialPurchase: true },
+        transaction('dividend', '2026-01-02', 'div', 1, 100),
+        transaction('sale', '2026-01-03', 'sell', 2, 240),
+        transaction('future-dividend', '2026-02-01', 'div', 1, 120),
+      ],
+      historicalPrices: [price('2026-01-01', 100), price('2026-01-02', 100), price('2026-01-03', 120)],
+      splitEvents: [], startDate: '2026-01-01', endDate: '2026-01-03',
+    })
+    const lastPoint = result.points[result.points.length - 1]
+    expect(lastPoint.gains.TEST).toBe(320)
+    expect(lastPoint.initialGains.TEST).toBe(200)
   })
 
   it('rebases initial-buy performance for selected years and adjusts active splits', () => {
