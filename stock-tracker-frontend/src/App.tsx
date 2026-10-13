@@ -21,7 +21,7 @@ export default function App() {
   const location = useLocation()
   const [aiInsightsEnabled, setAiInsightsEnabled] = useState(false)
   const [unreadMessageCount, setUnreadMessageCount] = useState(0)
-  const [openMenu, setOpenMenu] = useState<'transactions' | 'charts' | null>(null)
+  const [openMenu, setOpenMenu] = useState<'transactions' | 'charts' | 'account' | null>(null)
 
   useEffect(() => {
     setOpenMenu(null)
@@ -155,17 +155,26 @@ export default function App() {
             {window.location.hostname === 'localhost' && aiInsightsEnabled ? (
               <NavLink to="/insights">Insights</NavLink>
             ) : null}
-            <NavLink to="/messages">
-              Messages
-              {unreadMessageCount > 0 ? <span className="nav-badge">{unreadMessageCount}</span> : null}
-            </NavLink>
-            <NavLink to="/user-settings">Account</NavLink>
+            <details className="nav-menu" open={openMenu === 'account'}>
+              <summary onClick={(event) => {
+                event.preventDefault()
+                setOpenMenu((current) => current === 'account' ? null : 'account')
+              }}>
+                Account
+                {unreadMessageCount > 0 ? <span className="nav-badge">{unreadMessageCount}</span> : null}
+              </summary>
+              <div className="nav-submenu">
+                <NavLink to="/user-settings">Settings</NavLink>
+                <NavLink to="/messages">Messages</NavLink>
+                {auth.isConfigured ? (
+                  <button className="nav-logout" type="button" onClick={() => {
+                    setOpenMenu(null)
+                    auth.logout()
+                  }}>Log out</button>
+                ) : null}
+              </div>
+            </details>
           </nav>
-          {auth.isConfigured ? (
-            <button className="button" onClick={() => auth.logout()}>
-              Log out
-            </button>
-          ) : null}
         </div>
       </header>
 

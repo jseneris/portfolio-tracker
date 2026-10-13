@@ -135,6 +135,53 @@ body {
   display: block;
 }
 
+.nav-logout {
+  border: none;
+  background: none;
+  color: #dbeafe;
+  font: inherit;
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nav-logout:hover {
+  background: #1d4ed8;
+}
+
+.transaction-actions {
+  display: inline-block;
+}
+
+.transaction-actions summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 0.25rem 0.6rem;
+  font-weight: 700;
+  border: 1px solid var(--panel-border);
+  border-radius: 0.4rem;
+}
+
+.transaction-actions summary::-webkit-details-marker {
+  display: none;
+}
+
+.transaction-actions-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.4rem;
+  padding-top: 0.4rem;
+}
+
+.transaction-expand {
+  border: none;
+  background: none;
+  color: inherit;
+  padding: 0.25rem;
+  cursor: pointer;
+}
+
 .app-header a.active {
   background: #1d4ed8;
   color: #ffffff;
@@ -1220,7 +1267,7 @@ body {
   min-width: 56px;
   border-radius: 999px;
   background: #e2e8f0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .target-proximity-fill {
@@ -1229,6 +1276,16 @@ body {
   border-radius: 999px;
   background: #94a3b8;
   transition: width 0.2s ease;
+}
+
+.target-proximity-base {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: #0f172a;
+  box-shadow: 0 0 0 1px #ffffff;
+  transform: translateX(-50%);
 }
 
 .target-proximity-value {

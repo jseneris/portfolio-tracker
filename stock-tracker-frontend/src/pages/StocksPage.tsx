@@ -266,14 +266,19 @@ export default function StocksPage() {
                   <td>{formatStockPrice4(transaction.price)}</td>
                   <td>{formatCurrency2(transaction.amount)}</td>
                   <td>
-                    <TransactionDateEditor transaction={transaction} onSaved={async () => {
-                      setSuccess('Transaction date updated.')
-                      await loadTransactions()
-                    }} />
                     {!transaction.isDeletionLocked ? (
-                      <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
-                        Delete
-                      </button>
+                      <details className="transaction-actions">
+                        <summary aria-label="Transaction actions">...</summary>
+                        <div className="transaction-actions-menu">
+                          <TransactionDateEditor transaction={transaction} onSaved={async () => {
+                            setSuccess('Transaction date updated.')
+                            await loadTransactions()
+                          }} />
+                          <button className="button button-danger" type="button" onClick={() => onDeleteTransaction(transaction.id)}>
+                            Delete
+                          </button>
+                        </div>
+                      </details>
                     ) : null}
                   </td>
                 </tr>

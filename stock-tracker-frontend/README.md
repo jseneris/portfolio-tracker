@@ -60,6 +60,8 @@ Create `.env` or use Replit Secrets:
 
 - Allocations grouped by Industry or Size list the included tickers alphabetically beneath each category in the slice list.
 - The Messages page supports selecting alerts to mark as read or delete. Read message summaries use normal font weight (400), while unread summaries remain bold (700), including their ticker or review title.
+- Account is a navigation dropdown containing Settings, Messages, and Log out (when authentication is configured). Unread message counts appear on the Account label.
+- Dashboard Target % progress bars include a vertical marker for the split-adjusted transaction price used to calculate the targets, or the saved Buy on Dip base price when enabled. The marker uses the same buy/sell scale as the bar fill and extends 3px above and below the bar.
 - Each AI chat answer has a Send to Messages button that saves its question and full response as an unread Portfolio Q&A message. Saved items persist after the review expires and support the existing read/delete actions.
 - AI chat supports 2,000-character questions and 8,000-character answers, including saving to Messages. Up to 12 recent messages are sent; older pairs are omitted from AI context when conversation text exceeds 30,000 characters, without removing the visible conversation.
 - The Insights menu item is restored as a top-level link in the tiered navigation, appearing only on localhost when AI insights are enabled for the user. The existing AI-enabled route guard remains unchanged.
@@ -80,6 +82,7 @@ Create `.env` or use Replit Secrets:
 	- Add Transaction modal without ticker field (ticker inferred from route)
 	- edit and delete actions for transaction records
 - Main Stocks page transaction table now supports edit and delete actions.
+- Both stock transaction tables place Edit date and Delete inside a `...` dropdown, preserving transaction eligibility restrictions. On ticker pages, the partial-lot Sales expander is an arrow-only control immediately before the transaction date.
 - Date display was standardized to UTC calendar rendering to prevent day-shift issues from local timezone conversion.
 
 ## Current Delivery Mode

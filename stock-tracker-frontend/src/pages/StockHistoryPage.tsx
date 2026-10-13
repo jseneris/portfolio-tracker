@@ -1956,6 +1956,14 @@ export default function StockHistoryPage() {
                       <tr key={transaction.id}>
                         <td>
                           <div className="purchase-age-cell">
+                            {isPartialLotRow ? (
+                              <button className="transaction-expand" type="button"
+                                aria-label="Show sales consuming this lot"
+                                aria-expanded={expandedPartialTransactionId === transaction.id}
+                                onClick={() => togglePartialLotSales(transaction.id)}>
+                                {expandedPartialTransactionId === transaction.id ? '▼' : '▶'}
+                              </button>
+                            ) : null}
                             <span>{formatDate(transaction.transactionDate)}</span>
                             {transaction.type === 'buy' && isOverOneYearOld(transaction.transactionDate) ? (
                               <span className="pill pill-long-term" title="Purchase is over one year old">1y+</span>
@@ -1997,19 +2005,6 @@ export default function StockHistoryPage() {
                         </td>
                         <td>{formatCurrency2(transaction.amount)}</td>
                         <td>
-                          <TransactionDateEditor transaction={transaction} onSaved={async () => {
-                            setSuccess('Transaction date updated.')
-                            await loadTransactions()
-                          }} />
-                          {isPartialLotRow ? (
-                            <button
-                              className="button button-secondary"
-                              type="button"
-                              onClick={() => togglePartialLotSales(transaction.id)}
-                            >
-                              {expandedPartialTransactionId === transaction.id ? '▼' : '▶'} Sales
-                            </button>
-                          ) : null}
                           {transaction.type === 'sell' ? (
                             <button
                               className="button button-secondary"
@@ -2021,13 +2016,17 @@ export default function StockHistoryPage() {
                             </button>
                           ) : null}
                           {!transaction.isDeletionLocked ? (
-                            <button
-                              className="button button-danger"
-                              type="button"
-                              onClick={() => onDeleteTransaction(transaction.id)}
-                            >
-                              Delete
-                            </button>
+                            <details className="transaction-actions">
+                              <summary aria-label="Transaction actions">...</summary>
+                              <div className="transaction-actions-menu">
+                                <TransactionDateEditor transaction={transaction} onSaved={async () => {
+                                  setSuccess('Transaction date updated.')
+                                  await loadTransactions()
+                                }} />
+                                <button className="button button-danger" type="button"
+                                  onClick={() => onDeleteTransaction(transaction.id)}>Delete</button>
+                              </div>
+                            </details>
                           ) : null}
                         </td>
                       </tr>,

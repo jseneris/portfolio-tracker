@@ -5,7 +5,25 @@ import {
   getLotCountDifference,
   getLotCountDifferenceStyle,
   getSplitAdjustedTargetBasePrice,
+  getTargetBarPosition,
 } from './DashboardPage'
+
+describe('target bar base-price marker', () => {
+  it('maps the base price to the same sell and buy scales as the fill', () => {
+    expect(getTargetBarPosition(100, 110, 'sell')).toBeCloseTo(100 / 110 * 100)
+    expect(getTargetBarPosition(100, 90, 'buy')).toBeCloseTo(10)
+    expect(getTargetBarPosition(100, 99, 'buy')).toBeCloseTo(1)
+  })
+
+  it('clips positions to the bar and omits invalid bases or targets', () => {
+    expect(getTargetBarPosition(120, 110, 'sell')).toBe(100)
+    expect(getTargetBarPosition(80, 90, 'buy')).toBe(0)
+    expect(getTargetBarPosition(null, 110, 'sell')).toBeNull()
+    expect(getTargetBarPosition(100, NaN, 'buy')).toBeNull()
+    expect(getTargetBarPosition(0, 110, 'sell')).toBeNull()
+    expect(getTargetBarPosition(100, 110, null)).toBeNull()
+  })
+})
 
 describe('dashboard display lot count comparison', () => {
   it('shows the difference from the configured base size with a plus sign for positive values', () => {
