@@ -214,8 +214,13 @@ body {
   background: none;
   color: inherit;
   font: inherit;
+  font-weight: 400;
   text-align: left;
   cursor: pointer;
+}
+
+.message-summary strong {
+  font-weight: inherit;
 }
 
 .message-unread .message-summary {

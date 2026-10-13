@@ -478,8 +478,8 @@ export default function StockHistoryPage() {
   const [saleAllocations, setSaleAllocations] = useState<Record<string, SaleAllocation[]>>({})
   const [splitEvents, setSplitEvents] = useState<StockSplitEvent[]>([])
   const [showOriginalPreSplit, setShowOriginalPreSplit] = useState(false)
-  const [showDividends, setShowDividends] = useState(true)
-  const [showSales, setShowSales] = useState(true)
+  const [showDividends, setShowDividends] = useState(false)
+  const [showSales, setShowSales] = useState(false)
   const [buyOnDip, setBuyOnDip] = useState(false)
   const [buyOnDipPrice, setBuyOnDipPrice] = useState<number | null>(null)
   const [baseSize, setBaseSize] = useState('3')
@@ -697,6 +697,8 @@ export default function StockHistoryPage() {
 
     return { overall, years }
   }, [allTickerTransactions])
+
+  const hasDividends = performanceBreakdown.overall.divCount > 0
 
   const yearlyPerformance = useMemo(() => {
     const tickerHistoricalPrices = historicalPrices.filter(
@@ -1146,6 +1148,9 @@ export default function StockHistoryPage() {
   }
 
   useEffect(() => {
+    setShowDividends(false)
+    setShowSales(false)
+    setShowOriginalPreSplit(false)
     if (!ticker) {
       setLoading(false)
       setError('Ticker is required.')
@@ -1813,8 +1818,12 @@ export default function StockHistoryPage() {
                     <dt>Buy Amount</dt><dd>{formatCurrency2(performanceBreakdown.overall.buyAmount)}</dd>
                     <dt>Sales</dt><dd>{performanceBreakdown.overall.sellCount}</dd>
                     <dt>Sale Amount</dt><dd>{formatCurrency2(performanceBreakdown.overall.sellAmount)}</dd>
-                    <dt>Dividends</dt><dd>{performanceBreakdown.overall.divCount}</dd>
-                    <dt>Dividend Amount</dt><dd>{formatCurrency2(performanceBreakdown.overall.divAmount)}</dd>
+                    {hasDividends ? (
+                      <>
+                        <dt>Dividends</dt><dd>{performanceBreakdown.overall.divCount}</dd>
+                        <dt>Dividend Amount</dt><dd>{formatCurrency2(performanceBreakdown.overall.divAmount)}</dd>
+                      </>
+                    ) : null}
                     <dt>Performance</dt>
                     <dd className={getBreakdownPerformanceClassName(yearlyPerformance.overall)}>
                       {formatBreakdownPerformance(yearlyPerformance.overall)}
@@ -1835,8 +1844,12 @@ export default function StockHistoryPage() {
                       <dt>Buy Amount</dt><dd>{formatCurrency2(row.buyAmount)}</dd>
                       <dt>Sales</dt><dd>{row.sellCount}</dd>
                       <dt>Sale Amount</dt><dd>{formatCurrency2(row.sellAmount)}</dd>
-                      <dt>Dividends</dt><dd>{row.divCount}</dd>
-                      <dt>Dividend Amount</dt><dd>{formatCurrency2(row.divAmount)}</dd>
+                      {hasDividends ? (
+                        <>
+                          <dt>Dividends</dt><dd>{row.divCount}</dd>
+                          <dt>Dividend Amount</dt><dd>{formatCurrency2(row.divAmount)}</dd>
+                        </>
+                      ) : null}
                       <dt>Performance</dt>
                       <dd className={getBreakdownPerformanceClassName(yearlyPerformance.performanceByYear.get(row.year)?.performance ?? null)}>
                         {formatBreakdownPerformance(yearlyPerformance.performanceByYear.get(row.year)?.performance ?? null)}
@@ -1851,14 +1864,16 @@ export default function StockHistoryPage() {
 
           <div className="panel panel-tight">
             <div className="inline-actions" style={{ marginBottom: '0.75rem' }}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={showDividends}
-                  onChange={(event) => setShowDividends(event.target.checked)}
-                />
-                Show dividends
-              </label>
+              {hasDividends ? (
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={showDividends}
+                    onChange={(event) => setShowDividends(event.target.checked)}
+                  />
+                  Show dividends
+                </label>
+              ) : null}
               <label>
                 <input
                   type="checkbox"

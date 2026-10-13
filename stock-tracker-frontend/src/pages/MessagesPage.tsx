@@ -110,7 +110,7 @@ export default function MessagesPage() {
       <div className="panel messages-header">
         <div>
           <h2>Messages</h2>
-          <p>Saved AI questions and responses appear here alongside price target alerts, which are checked every five minutes while the US market is open.</p>
+          <p>Saved AI questions and responses appear here alongside price target alerts, which are checked every three minutes while the US market is open.</p>
         </div>
         <div className="messages-actions">
           <button className="button" onClick={() => void onMarkSelectedRead()} disabled={selectedIds.size === 0 || selectionAction !== null}>

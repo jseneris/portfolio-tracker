@@ -36,6 +36,18 @@ export function sortHoldingsByResult(holdings: HoldingRow[], direction: 'asc' | 
   })
 }
 
+export function totalHoldingsResults(holdings: HoldingRow[]): { total: number | null; unavailableCount: number } {
+  let total = 0
+  let availableCount = 0
+  for (const holding of holdings) {
+    if (holding.result != null && Number.isFinite(holding.result)) {
+      total += holding.result
+      availableCount++
+    }
+  }
+  return { total: availableCount > 0 ? total : null, unavailableCount: holdings.length - availableCount }
+}
+
 function toDateOnly(value: string): string {
   return typeof value === 'string' && value.length >= 10 ? value.slice(0, 10) : ''
 }
@@ -181,6 +193,7 @@ export default function HoldingsPage() {
     const holdings = snapshot.holdings.filter((holding) => showClosedHoldings || !holding.closed)
     return resultSortDirection ? sortHoldingsByResult(holdings, resultSortDirection) : holdings
   }, [snapshot.holdings, showClosedHoldings, resultSortDirection])
+  const resultsTotal = totalHoldingsResults(visibleHoldings)
 
   return (
     <section>
@@ -276,6 +289,17 @@ export default function HoldingsPage() {
                     </tr>
                   ))}
                 </tbody>
+                <tfoot>
+                  <tr>
+                    <th scope="row" colSpan={6}>
+                      {resultsTotal.unavailableCount > 0 ? 'Total available results' : 'Total results'}
+                      {resultsTotal.unavailableCount > 0 ? (
+                        <small> ({resultsTotal.unavailableCount} unavailable excluded)</small>
+                      ) : null}
+                    </th>
+                    <td className={gainClassName(resultsTotal.total)}><strong>{formatResult(resultsTotal.total)}</strong></td>
+                  </tr>
+                </tfoot>
               </table>
             )}
           </div>
