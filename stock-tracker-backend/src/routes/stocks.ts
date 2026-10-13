@@ -2987,14 +2987,19 @@ export async function runDailyEodSync(): Promise<IDailyEodSyncSummary> {
           .input('closePrice', sql.Decimal(18, 8), matched.close)
           .input('source', sql.NVarChar, HISTORICAL_PRICE_SOURCE)
           .query(`
-            INSERT INTO HistoricalPrices (id, ticker, priceDate, marketDate, closePrice, source)
-            SELECT NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source
-            WHERE NOT EXISTS (
-              SELECT 1 FROM HistoricalPrices
-              WHERE ticker = @ticker AND priceDate = @priceDate AND source = @source
-            );
+            MERGE HistoricalPrices WITH (HOLDLOCK) AS target
+            USING (SELECT @ticker AS ticker, @priceDate AS priceDate, @source AS source) AS incoming
+            ON target.ticker = incoming.ticker
+              AND target.priceDate = incoming.priceDate
+              AND target.source = incoming.source
+            WHEN MATCHED THEN
+              UPDATE SET marketDate = @marketDate, closePrice = @closePrice
+            WHEN NOT MATCHED THEN
+              INSERT (id, ticker, priceDate, marketDate, closePrice, source)
+              VALUES (NEWID(), @ticker, @priceDate, @marketDate, @closePrice, @source)
+            OUTPUT $action AS action;
           `);
-        summary.pricesInserted += insertResult.rowsAffected?.[0] ?? 0;
+        summary.pricesInserted += (insertResult.recordset ?? []).filter((row: { action: string }) => row.action === 'INSERT').length;
       }
 
       const splitSummary = await fetchAndPersistMissingSplitsForTicker(pool, '', ticker, splitLookbackStartIso, todayIso);

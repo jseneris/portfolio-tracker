@@ -52,7 +52,7 @@ Run this in a separate VS Code terminal when you want the local scheduler active
 npm run scheduler
 ```
 
-The scheduler process connects to the configured SQL Server, checks price targets every three minutes during market hours, and runs the daily EOD sync at its configured time. Stop the process to stop future scheduled runs.
+The scheduler process connects to the configured SQL Server, checks price targets every three minutes during market hours, and runs price retrieval twice each weekday at 3:59pm and 4:05pm America/New_York (DST-aware). Each retrieval refreshes existing same-day Yahoo price rows, so the 4:05pm run can replace the earlier quote rather than leaving the pre-close price unchanged. The sync summary's `pricesInserted` counts new rows only, not refreshed rows. Stop the process to stop future scheduled runs.
 
 ### 5. Run Daily EOD Sync Once
 
