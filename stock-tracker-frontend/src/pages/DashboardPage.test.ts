@@ -8,7 +8,28 @@ import {
   getTargetBaseMarker,
   getTargetBarPosition,
   getTargetProximityLabel,
+  isUsMarketOpenNow,
 } from './DashboardPage'
+
+describe('dashboard live-price market window', () => {
+  it('is closed at 5:10 PM Eastern when loading the dashboard', () => {
+    expect(isUsMarketOpenNow(new Date('2026-10-14T21:10:00Z'))).toBe(false)
+  })
+
+  it('allows regular-session quotes and the existing ten-minute closing buffer', () => {
+    expect(isUsMarketOpenNow(new Date('2026-10-14T13:29:00Z'))).toBe(false)
+    expect(isUsMarketOpenNow(new Date('2026-10-14T13:30:00Z'))).toBe(true)
+    expect(isUsMarketOpenNow(new Date('2026-10-14T20:09:00Z'))).toBe(true)
+    expect(isUsMarketOpenNow(new Date('2026-10-14T20:10:00Z'))).toBe(false)
+  })
+
+  it('uses Eastern time through standard time, weekends, holidays and early closes', () => {
+    expect(isUsMarketOpenNow(new Date('2026-11-02T14:30:00Z'))).toBe(true)
+    expect(isUsMarketOpenNow(new Date('2026-10-17T15:00:00Z'))).toBe(false)
+    expect(isUsMarketOpenNow(new Date('2026-12-25T15:00:00Z'))).toBe(false)
+    expect(isUsMarketOpenNow(new Date('2026-11-27T18:10:00Z'))).toBe(false)
+  })
+})
 
 describe('target proximity labels', () => {
   it('shows the effective signed percentage used for the relevant target', () => {

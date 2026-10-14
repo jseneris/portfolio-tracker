@@ -271,7 +271,7 @@ function getUsMarketClosures(year: number): { fullDay: Set<string>; earlyClose: 
   return { fullDay, earlyClose }
 }
 
-function isUsMarketOpenNow(): boolean {
+export function isUsMarketOpenNow(now = new Date()): boolean {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
     hour12: false,
@@ -281,7 +281,7 @@ function isUsMarketOpenNow(): boolean {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-  }).formatToParts(new Date())
+  }).formatToParts(now)
 
   const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]))
   const isWeekday = lookup.weekday !== 'Sat' && lookup.weekday !== 'Sun'
@@ -946,7 +946,7 @@ export default function DashboardPage() {
       ])
       const tickers = getTickersFromTransactions(transactionsResult)
 
-      if (tickers.length > 0) {
+      if (tickers.length > 0 && isUsMarketOpenNow()) {
         try {
           const livePricesResult = await getCurrentPrices(tickers)
           applyCurrentPricePayload(livePricesResult, true)
@@ -1038,6 +1038,12 @@ export default function DashboardPage() {
   }
 
   function applyCurrentPricePayload(result: { prices: Array<{ ticker?: string; price?: number; changePercent?: number | null }> }, replaceExisting = false) {
+    if (!isUsMarketOpenNow()) {
+      setCurrentPricesByTicker({})
+      setChangePercentByTicker({})
+      return
+    }
+
     const nextPrices: Record<string, number> = {}
     const nextChangePercents: Record<string, number | null> = {}
 
@@ -1138,7 +1144,13 @@ export default function DashboardPage() {
     const wasMarketOpenRef = { current: isUsMarketOpenNow() }
 
     function refreshPollingActiveStatus() {
-      setIsLivePollingActive(document.visibilityState === 'visible' && isUsMarketOpenNow())
+      const marketOpenNow = isUsMarketOpenNow()
+      setIsLivePollingActive(document.visibilityState === 'visible' && marketOpenNow)
+      if (wasMarketOpenRef.current && !marketOpenNow) {
+        setCurrentPricesByTicker({})
+        setChangePercentByTicker({})
+      }
+      wasMarketOpenRef.current = marketOpenNow
     }
 
     function maybeRefreshCurrentPrices() {
@@ -1147,13 +1159,7 @@ export default function DashboardPage() {
 
       if (document.visibilityState === 'visible' && marketOpenNow) {
         void updateCurrentPricesRef.current()
-      } else if (wasMarketOpenRef.current && !marketOpenNow) {
-        // Market just closed: drop live overrides so the snapshot falls back to the latest stored close.
-        setCurrentPricesByTicker({})
-        setChangePercentByTicker({})
       }
-
-      wasMarketOpenRef.current = marketOpenNow
     }
 
     refreshPollingActiveStatus()
