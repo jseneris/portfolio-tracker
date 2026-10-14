@@ -104,6 +104,26 @@ function formatDateOnlyLabel(value: string | null | undefined): string {
 
 type TargetDirection = 'buy' | 'sell' | null
 
+export function getTargetProximityLabel(
+  direction: TargetDirection,
+  basePrice: number | null | undefined,
+  buyTarget: number | null | undefined,
+  sellTarget: number | null | undefined
+): string | undefined {
+  if (direction == null || basePrice == null || basePrice <= 0 || !Number.isFinite(basePrice)) {
+    return undefined
+  }
+
+  const target = direction === 'sell' ? sellTarget : buyTarget
+  if (target == null || target <= 0 || !Number.isFinite(target)) {
+    return undefined
+  }
+
+  const offsetPercent = (target / basePrice - 1) * 100
+  const signedPercent = `${offsetPercent > 0 ? '+' : ''}${offsetPercent.toFixed(2)}%`
+  return `Approaching ${direction === 'sell' ? 'sale' : 'buy'} target (${signedPercent})`
+}
+
 export function getTargetBarPosition(
   price: number | null | undefined,
   buyTarget: number | null | undefined,
@@ -1459,7 +1479,12 @@ export default function DashboardPage() {
                       ) : (
                         <div
                           className={`target-proximity target-proximity-${row.targetDirection ?? 'neutral'}${row.targetProximityPercent >= 100 ? ' target-proximity-hit' : ''}`}
-                          title={row.buyOnDip ? 'Buy on Dip' : row.targetDirection === 'sell' ? 'Approaching sale target' : row.targetDirection === 'buy' ? 'Approaching buy target' : undefined}
+                          title={row.buyOnDip ? 'Buy on Dip' : getTargetProximityLabel(
+                            row.targetDirection,
+                            row.targetBasePrice,
+                            buyTargetsByTicker[row.ticker],
+                            saleTargetsByTicker[row.ticker]
+                          )}
                         >
                           <span className="target-proximity-value">{formatPercent2(row.targetProximityPercent)}</span>
                           <span className="target-proximity-track">

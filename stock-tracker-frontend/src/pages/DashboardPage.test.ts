@@ -6,7 +6,22 @@ import {
   getLotCountDifferenceStyle,
   getSplitAdjustedTargetBasePrice,
   getTargetBarPosition,
+  getTargetProximityLabel,
 } from './DashboardPage'
+
+describe('target proximity labels', () => {
+  it('shows the effective signed percentage used for the relevant target', () => {
+    expect(getTargetProximityLabel('sell', 100, 95, 110)).toBe('Approaching sale target (+10.00%)')
+    expect(getTargetProximityLabel('buy', 100, 95, 110)).toBe('Approaching buy target (-5.00%)')
+  })
+
+  it('reflects target overrides and omits invalid target data', () => {
+    expect(getTargetProximityLabel('buy', 100, 99, 110)).toBe('Approaching buy target (-1.00%)')
+    expect(getTargetProximityLabel('sell', 100, null, 110)).toBe('Approaching sale target (+10.00%)')
+    expect(getTargetProximityLabel('buy', null, 95, 110)).toBeUndefined()
+    expect(getTargetProximityLabel(null, 100, 95, 110)).toBeUndefined()
+  })
+})
 
 describe('target bar base-price marker', () => {
   it('maps prices across the full buy-to-sell target range', () => {
