@@ -1288,6 +1288,14 @@ body {
   transform: translateX(-50%);
 }
 
+.target-proximity-base-buy {
+  background: #16a34a;
+}
+
+.target-proximity-base-sell {
+  background: #dc2626;
+}
+
 .target-proximity-value {
   font-size: 0.8rem;
   font-variant-numeric: tabular-nums;

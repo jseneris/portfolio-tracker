@@ -104,6 +104,18 @@ function formatDateOnlyLabel(value: string | null | undefined): string {
 
 type TargetDirection = 'buy' | 'sell' | null
 
+export function getTargetBaseMarker(
+  basePrice: number | null,
+  transaction: StockTransaction | undefined
+): { className: string; label: string } {
+  const type = transaction?.type.toLowerCase()
+  const transactionLabel = type === 'buy' ? 'Buy' : type === 'sell' ? 'Sale' : null
+  return {
+    className: `target-proximity-base${transactionLabel ? ` target-proximity-base-${type}` : ''}`,
+    label: `Base price: ${formatStockPrice4(basePrice)}${transactionLabel ? ` (${transactionLabel})` : ''}`,
+  }
+}
+
 export function getTargetProximityLabel(
   direction: TargetDirection,
   basePrice: number | null | undefined,
@@ -750,10 +762,12 @@ export default function DashboardPage() {
         buyTargetsByTicker[row.ticker] ?? null
       )
       const tickerPreference = tickerPreferencesByTicker[row.ticker]
+      const latestTargetTransaction = latestTargetTransactions.get(row.ticker)
       const targetBasePrice = tickerPreference?.buyOnDip && tickerPreference.buyOnDipPrice != null
         && Number.isFinite(tickerPreference.buyOnDipPrice) && tickerPreference.buyOnDipPrice > 0
         ? tickerPreference.buyOnDipPrice
-        : getSplitAdjustedTargetBasePrice(latestTargetTransactions.get(row.ticker), splitEvents, snapshotDate)
+        : getSplitAdjustedTargetBasePrice(latestTargetTransaction, splitEvents, snapshotDate)
+      const targetBaseMarker = getTargetBaseMarker(targetBasePrice, latestTargetTransaction)
       const buyTarget = buyTargetsByTicker[row.ticker] ?? null
       const sellTarget = saleTargetsByTicker[row.ticker] ?? null
       const targetBasePosition = getTargetBarPosition(targetBasePrice, buyTarget, sellTarget)
@@ -773,6 +787,7 @@ export default function DashboardPage() {
         targetProximityPercent: targetProximity.percent,
         targetDirection: targetProximity.direction,
         targetBasePrice,
+        targetBaseMarker,
         targetBasePosition,
         targetPricePosition,
         buyOnDip: Boolean(tickerPreference?.buyOnDip),
@@ -1493,10 +1508,10 @@ export default function DashboardPage() {
                               style={{ width: `${row.targetPricePosition ?? 0}%` }}
                             />
                             {row.targetBasePosition != null ? (
-                              <span className="target-proximity-base"
+                              <span className={row.targetBaseMarker.className}
                                 style={{ left: `${row.targetBasePosition}%` }}
-                                title={`Target base price: ${formatStockPrice4(row.targetBasePrice)}`}
-                                aria-label={`Target base price: ${formatStockPrice4(row.targetBasePrice)}`} />
+                                title={row.targetBaseMarker.label}
+                                aria-label={row.targetBaseMarker.label} />
                             ) : null}
                           </span>
                         </div>

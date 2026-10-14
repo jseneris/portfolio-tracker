@@ -5,6 +5,7 @@ import {
   getLotCountDifference,
   getLotCountDifferenceStyle,
   getSplitAdjustedTargetBasePrice,
+  getTargetBaseMarker,
   getTargetBarPosition,
   getTargetProximityLabel,
 } from './DashboardPage'
@@ -24,6 +25,44 @@ describe('target proximity labels', () => {
 })
 
 describe('target bar base-price marker', () => {
+  const transaction: StockTransaction = {
+    id: 'target-transaction',
+    userId: 'user-1',
+    ticker: 'TEST',
+    type: 'buy',
+    quantity: 10,
+    price: 112.354,
+    amount: 1123.54,
+    transactionDate: '2026-10-14T00:00:00Z',
+  }
+
+  it('labels the last buy and selects the green marker class', () => {
+    const marker = getTargetBaseMarker(112.354, transaction)
+    expect(marker.className).toBe('target-proximity-base target-proximity-base-buy')
+    expect(marker.label).toBe('Base price: $112.3540 (Buy)')
+  })
+
+  it('labels the last sale and selects the red marker class', () => {
+    const marker = getTargetBaseMarker(112.354, { ...transaction, type: 'sell' })
+    expect(marker.className).toBe('target-proximity-base target-proximity-base-sell')
+    expect(marker.label).toContain('(Sale)')
+  })
+
+  it('keeps the last transaction label when Buy on Dip supplies a different base price', () => {
+    const marker = getTargetBaseMarker(100, { ...transaction, type: 'sell' })
+    expect(marker.label).toContain('100.0000')
+    expect(marker.label).toContain('(Sale)')
+    expect(marker.className).toContain('target-proximity-base-sell')
+  })
+
+  it('retains a neutral marker when there is no buy or sale transaction', () => {
+    for (const latestTransaction of [undefined, { ...transaction, type: 'div' as const }]) {
+      const marker = getTargetBaseMarker(100, latestTransaction)
+      expect(marker.className).toBe('target-proximity-base')
+      expect(marker.label).not.toMatch(/\((Buy|Sale)\)/)
+    }
+  })
+
   it('maps prices across the full buy-to-sell target range', () => {
     expect(getTargetBarPosition(100, 90, 110)).toBe(50)
     expect(getTargetBarPosition(112.354, 89.712, 123.354)).toBeCloseTo(67.3, 1)
