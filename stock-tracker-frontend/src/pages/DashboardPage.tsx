@@ -104,10 +104,15 @@ function formatDateOnlyLabel(value: string | null | undefined): string {
 
 type TargetDirection = 'buy' | 'sell' | null
 
-export function getTargetBarPosition(price: number | null | undefined, target: number | null | undefined, direction: TargetDirection): number | null {
-  if (price == null || target == null || !Number.isFinite(price) || !Number.isFinite(target)
-    || price <= 0 || target <= 0 || direction == null) return null
-  return Math.min(100, Math.max(0, direction === 'buy' ? 100 - target / price * 100 : price / target * 100))
+export function getTargetBarPosition(
+  price: number | null | undefined,
+  buyTarget: number | null | undefined,
+  sellTarget: number | null | undefined
+): number | null {
+  if (price == null || buyTarget == null || sellTarget == null
+    || !Number.isFinite(price) || !Number.isFinite(buyTarget) || !Number.isFinite(sellTarget)
+    || price <= 0 || buyTarget <= 0 || sellTarget <= buyTarget) return null
+  return Math.min(100, Math.max(0, (price - buyTarget) / (sellTarget - buyTarget) * 100))
 }
 
 function calculateTargetProximity(
@@ -729,9 +734,10 @@ export default function DashboardPage() {
         && Number.isFinite(tickerPreference.buyOnDipPrice) && tickerPreference.buyOnDipPrice > 0
         ? tickerPreference.buyOnDipPrice
         : getSplitAdjustedTargetBasePrice(latestTargetTransactions.get(row.ticker), splitEvents, snapshotDate)
-      const target = targetProximity.direction === 'buy'
-        ? buyTargetsByTicker[row.ticker] : saleTargetsByTicker[row.ticker]
-      const targetBasePosition = getTargetBarPosition(targetBasePrice, target, targetProximity.direction)
+      const buyTarget = buyTargetsByTicker[row.ticker] ?? null
+      const sellTarget = saleTargetsByTicker[row.ticker] ?? null
+      const targetBasePosition = getTargetBarPosition(targetBasePrice, buyTarget, sellTarget)
+      const targetPricePosition = getTargetBarPosition(hydrated?.latestPrice ?? null, buyTarget, sellTarget)
 
       return {
         ticker: row.ticker,
@@ -748,6 +754,7 @@ export default function DashboardPage() {
         targetDirection: targetProximity.direction,
         targetBasePrice,
         targetBasePosition,
+        targetPricePosition,
         buyOnDip: Boolean(tickerPreference?.buyOnDip),
         isBuyRestricted: Boolean(tickerPreference?.isBuyRestricted),
         buyRestrictedUntil: tickerPreference?.buyRestrictedUntil ?? null,
@@ -1458,13 +1465,7 @@ export default function DashboardPage() {
                           <span className="target-proximity-track">
                             <span
                               className="target-proximity-fill"
-                              style={{
-                                width: `${
-                                  row.targetDirection === 'buy'
-                                    ? Math.min(100, Math.max(0, 100 - row.targetProximityPercent))
-                                    : Math.min(100, Math.max(0, row.targetProximityPercent))
-                                }%`,
-                              }}
+                              style={{ width: `${row.targetPricePosition ?? 0}%` }}
                             />
                             {row.targetBasePosition != null ? (
                               <span className="target-proximity-base"

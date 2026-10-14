@@ -9,19 +9,18 @@ import {
 } from './DashboardPage'
 
 describe('target bar base-price marker', () => {
-  it('maps the base price to the same sell and buy scales as the fill', () => {
-    expect(getTargetBarPosition(100, 110, 'sell')).toBeCloseTo(100 / 110 * 100)
-    expect(getTargetBarPosition(100, 90, 'buy')).toBeCloseTo(10)
-    expect(getTargetBarPosition(100, 99, 'buy')).toBeCloseTo(1)
+  it('maps prices across the full buy-to-sell target range', () => {
+    expect(getTargetBarPosition(100, 90, 110)).toBe(50)
+    expect(getTargetBarPosition(112.354, 89.712, 123.354)).toBeCloseTo(67.3, 1)
   })
 
   it('clips positions to the bar and omits invalid bases or targets', () => {
-    expect(getTargetBarPosition(120, 110, 'sell')).toBe(100)
-    expect(getTargetBarPosition(80, 90, 'buy')).toBe(0)
-    expect(getTargetBarPosition(null, 110, 'sell')).toBeNull()
-    expect(getTargetBarPosition(100, NaN, 'buy')).toBeNull()
-    expect(getTargetBarPosition(0, 110, 'sell')).toBeNull()
-    expect(getTargetBarPosition(100, 110, null)).toBeNull()
+    expect(getTargetBarPosition(120, 90, 110)).toBe(100)
+    expect(getTargetBarPosition(80, 90, 110)).toBe(0)
+    expect(getTargetBarPosition(null, 90, 110)).toBeNull()
+    expect(getTargetBarPosition(100, NaN, 110)).toBeNull()
+    expect(getTargetBarPosition(0, 90, 110)).toBeNull()
+    expect(getTargetBarPosition(100, 110, 110)).toBeNull()
   })
 })
 
