@@ -133,7 +133,7 @@ describe('read-only portfolio snapshot routing', () => {
 
   it('includes saved assumptions and calculated filter/timing context in review and follow-up prompts', async () => {
     const id = user();
-    queueReview(lots, true);
+    queueReview(lots.map((lot) => lot.ticker === 'BIG' ? { ...lot, unitCost: 20 } : lot), true);
     mocks.query.mockResolvedValueOnce({ recordsets: [
       [{ ticker: 'BIG', type: 'buy', quantity: 100, amount: 500, transactionDate: '2025-01-01', exchangeSourceQuantity: 0 }],
       [],
@@ -151,6 +151,9 @@ describe('read-only portfolio snapshot routing', () => {
       priorAcquisitionWindowClearsOn: '2026-11-01', daysUntilNextDividend: null,
     });
     expect(response.body.snapshot.holdings).toHaveLength(2);
+    expect(response.body.snapshot.holdingReviewContext[0].qualifyingLossLots).toEqual([
+      expect.objectContaining({ quantity: 100, unitCost: 20, closePrice: 10, lossPercent: 50, estimatedLoss: 1000 }),
+    ]);
     expect(mocks.generate.mock.calls[0][0]).toContain('tracked stocks only');
     expect(mocks.generate.mock.calls[0][0]).toContain('"yearlyGainLoss":-100');
     mocks.query.mockResolvedValueOnce({ recordset: [{ aiInsightsEnabled: true }] });
@@ -159,7 +162,8 @@ describe('read-only portfolio snapshot routing', () => {
     expect(mocks.chat.mock.calls[0][0]).toContain('10-year investment horizon');
     expect(mocks.chat.mock.calls[0][0]).toContain(JSON.stringify(response.body.snapshot));
     expect(mocks.chat.mock.calls[0][0]).toContain('not confirmed tax eligibility');
-    expect(mocks.chat.mock.calls[0][0]).toContain('once per ticker, not individual lots');
+    expect(mocks.chat.mock.calls[0][0]).toContain('list qualifying buy lots beneath each ticker');
+    expect(mocks.chat.mock.calls[0][0]).toContain('at least 30% at the latest stored close');
     expect(mocks.chat.mock.calls[0][0]).toContain('otherwise daysSinceLastDividend');
   });
 

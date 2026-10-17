@@ -378,6 +378,17 @@ export type PortfolioInsightsReport = {
       displayLotCount: number
       yearlyGainLoss: number | null
       matchesLossReviewFilter: boolean | null
+      qualifyingLossLots?: Array<{
+        acquisitionDate: string
+        quantity: number
+        unitCost: number
+        closePrice: number
+        marketDate: string | null
+        costBasis: number
+        estimatedValue: number
+        estimatedLoss: number
+        lossPercent: number
+      }>
       lastTrackedAcquisitionDate: string | null
       priorAcquisitionWindowClearsOn: string | null
       daysUntilPriorAcquisitionWindowClears: number | null

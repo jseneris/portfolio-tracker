@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import { askPortfolioInsights, generatePortfolioInsights, PortfolioInsightsChatTurn, PortfolioInsightsReport, saveAiChatMessage } from '../api'
 import { formatCurrency2 } from '../formatters'
 import { MESSAGES_UPDATED_EVENT } from './MessagesPage'
 import { getAiAssumptions, setAiAssumptions, saveReviewSection } from '../api'
-import { buildFormattedReviewContent, formatDividendTiming, formatWeight, getWaitDayClass, type ReviewSectionTitle } from '../reviewMessages'
+import { buildFormattedReviewContent, formatDividendTiming, formatWeight, getWaitDayClass, LOSS_TIMING_CRITERIA, LOSS_TIMING_LOT_HEADERS, lossTimingLotValues, type ReviewSectionTitle } from '../reviewMessages'
 export { formatDividendTiming } from '../reviewMessages'
 
 function formatPercent(value: number | undefined) {
@@ -115,7 +115,8 @@ export function LossTimingTable({ holdings }: { holdings: ReviewHolding[] }) {
         <thead><tr><th>Ticker</th><th>Yearly Gain/Loss</th><th>Days to wait (prior buy/div window)</th><th>Dividend timing</th></tr></thead>
         <tbody>
           {holdings.filter((holding) => holding.matchesLossReviewFilter === true).map((holding) => (
-            <tr key={holding.ticker}>
+            <Fragment key={holding.ticker}>
+            <tr>
               <td className={getWaitDayClass(holding.daysUntilPriorAcquisitionWindowClears)}>
                 <strong>{holding.ticker}</strong>
               </td>
@@ -123,6 +124,19 @@ export function LossTimingTable({ holdings }: { holdings: ReviewHolding[] }) {
               <td>{holding.daysUntilPriorAcquisitionWindowClears ?? 'Unknown'}</td>
               <td>{formatDividendTiming(holding)}</td>
             </tr>
+            {holding.qualifyingLossLots?.length ? <tr>
+              <td colSpan={4}>
+                <h4>{holding.ticker} qualifying buy lots</h4>
+                <table className="table">
+                  <thead><tr>{LOSS_TIMING_LOT_HEADERS.map((header) => <th key={header}>{header}</th>)}</tr></thead>
+                  <tbody>{holding.qualifyingLossLots.map((lot, index) => <tr key={index}>
+                    {lossTimingLotValues(lot).map((value, column) => <td key={column}
+                      className={column >= 7 ? 'value-negative' : undefined}>{value}</td>)}
+                  </tr>)}</tbody>
+                </table>
+              </td>
+            </tr> : null}
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -144,7 +158,7 @@ export function buildReviewSectionContent(report: PortfolioInsightsReport, secti
           || 'No additional model explanation was returned for this item.', '')
     }
   } else {
-    lines.push('Negative holding Yearly Gain/Loss and more than three display lots.',
+    lines.push(LOSS_TIMING_CRITERIA,
       'Wait days reflect the latest tracked buy/dividend reinvestment; the prior window clears on day 31.',
       'Zero is no remaining prior-window wait, not confirmed wash-sale eligibility. Future purchases, outside accounts, and substantially identical securities remain unknown.',
       'Dividend elapsed days reflect tracked payments, not a prediction.', '')
@@ -152,6 +166,9 @@ export function buildReviewSectionContent(report: PortfolioInsightsReport, secti
     if (!holdings.length) lines.push('No holdings match the review filter with available data.')
     for (const holding of holdings) {
       lines.push(`${holding.ticker}: ${holding.daysUntilPriorAcquisitionWindowClears ?? 'Unknown'} days to wait; ${formatDividendTiming(holding)}; Yearly Gain/Loss: ${formatCurrency2(holding.yearlyGainLoss)}`)
+      for (const lot of holding.qualifyingLossLots ?? []) {
+        lines.push(`  Buy lot: ${lossTimingLotValues(lot).map((value, index) => `${LOSS_TIMING_LOT_HEADERS[index]}: ${value}`).join('; ')}`)
+      }
     }
   }
   lines.push('', 'Important limitations:', ...report.limitations)
@@ -324,8 +341,8 @@ export default function PortfolioInsightsPage() {
           <li>Investment horizon: 10 years.</li>
           <li>Comfortable with volatility; avoid excessive single-stock concentration.</li>
           <li>Risk assessment covers tracked stocks only, not outside holdings or holistic finances.</li>
-          <li>Tax-loss review: only negative holding Yearly Gain/Loss and more than three display lots. Actual open-lot losses must still be verified.</li>
-          <li>Show ticker-level days remaining after the latest tracked buy or dividend reinvestment, not individual lots. This is not confirmed wash-sale eligibility. Future purchases and dividend reinvestments can change the outcome.</li>
+          <li>Tax-loss review: negative holding Yearly Gain/Loss, more than three display lots, and at least one remaining buy lot down 30% or more at the latest stored close.</li>
+          <li>Show ticker-level days remaining after the latest tracked buy or dividend reinvestment and list qualifying buy lots under each ticker. This is not confirmed wash-sale eligibility. Future purchases and dividend reinvestments can change the outcome.</li>
           <li>Show days until the next dividend when its date is verified; otherwise show days since the last tracked dividend.</li>
         </ul>
         <p>{assumptionsLoading ? 'Loading or saving assumptions...' : assumptionsEnabled ? 'Saved assumptions enabled for new reviews.' : 'These assumptions are not yet enabled for your account.'}</p>
@@ -433,7 +450,7 @@ export default function PortfolioInsightsPage() {
               </div>
             ) : (
               <p className="muted-text">{report.snapshot.assumptions
-                ? 'No open lots with an estimated loss matched the negative holding Yearly Gain/Loss and more-than-three-display-lots filters.'
+                ? 'No remaining buy lots with an estimated loss of at least 30% matched the negative holding Yearly Gain/Loss and more-than-three-display-lots filters.'
                 : 'No open lots with an estimated loss were found at the latest stored closes.'}</p>
             )}
             {lossFacts.map((fact) => (
@@ -446,7 +463,7 @@ export default function PortfolioInsightsPage() {
           {report.snapshot.assumptions ? (
             <section className="panel">
               <h3>Loss Timing Review (tracked accounts only)</h3>
-              <p className="muted-text">Only holdings with negative Yearly Gain/Loss and more than three display lots appear below. Wait days are based on the latest tracked buy or dividend reinvestment: the prior 30-day window clears on day 31. Zero means no remaining prior-window wait, not confirmed wash-sale eligibility. Future purchases, outside accounts, and substantially identical securities remain unknown. Dividend elapsed days use tracked payments, not a prediction.</p>
+              <p className="muted-text">{LOSS_TIMING_CRITERIA} Wait days are based on the latest tracked buy or dividend reinvestment: the prior 30-day window clears on day 31. Zero means no remaining prior-window wait, not confirmed wash-sale eligibility. Future purchases, outside accounts, and substantially identical securities remain unknown. Dividend elapsed days use tracked payments, not a prediction.</p>
               <LossTimingTable holdings={report.snapshot.holdingReviewContext ?? []} />
               {!report.snapshot.holdingReviewContext?.some((holding) => holding.matchesLossReviewFilter === true) ? <p>No holdings match the review filter with available data.</p> : null}
               <ReviewSectionSaveButton key={`${report.reportId}-timing`} report={report} section="Loss-review timing"

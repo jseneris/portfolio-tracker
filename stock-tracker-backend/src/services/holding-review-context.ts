@@ -7,6 +7,17 @@ type Transaction = {
 };
 type Split = { ticker: string; splitDate: string; multiplier: number };
 type Holding = { ticker: string; marketValue: number | null };
+type ReviewLot = {
+  ticker: string; sourceType: string; acquisitionDate: string; quantity: number;
+  unitCost: number; closePrice: number | null; marketDate: string | null;
+};
+
+export function isQualifyingLossTimingLot(lot: { sourceType: string; quantity: number; unitCost: number; closePrice: number | null }) {
+  return lot.sourceType === 'purchase' && Number.isFinite(lot.quantity) && lot.quantity > 0
+    && Number.isFinite(lot.unitCost) && lot.unitCost > 0
+    && lot.closePrice != null && Number.isFinite(lot.closePrice) && lot.closePrice >= 0
+    && lot.closePrice <= lot.unitCost * 0.7;
+}
 type ContextRow = {
   ticker: string; lotsCsv: string | null; yearEndClose: number | null;
   yearEndPriceDate: string | null; lastAcquisitionDate: string | null;
@@ -15,7 +26,8 @@ type ContextRow = {
 };
 
 export function buildHoldingReviewContext(
-  holdings: Holding[], transactions: Transaction[], splits: Split[], context: ContextRow[], today: string
+  holdings: Holding[], transactions: Transaction[], splits: Split[], context: ContextRow[], today: string,
+  openLots: ReviewLot[] = []
 ) {
   const yearStart = `${today.slice(0, 4)}-01-01`;
   const yearEnd = `${Number(today.slice(0, 4)) - 1}-12-31`;
@@ -62,11 +74,25 @@ export function buildHoldingReviewContext(
       : Math.floor((new Date(`${today}T00:00:00Z`).getTime() - new Date(`${lastDividendDate}T00:00:00Z`).getTime()) / 86400000);
     const daysUntilNextDividend = nextDeclaredDividendDate == null ? null
       : Math.ceil((new Date(`${nextDeclaredDividendDate}T00:00:00Z`).getTime() - new Date(`${today}T00:00:00Z`).getTime()) / 86400000);
+    const qualifyingLossLots = openLots.filter((lot) => lot.ticker === holding.ticker
+      && lot.acquisitionDate <= today && isQualifyingLossTimingLot(lot)).map((lot) => {
+      const closePrice = Number(lot.closePrice);
+      return {
+        acquisitionDate: lot.acquisitionDate, quantity: lot.quantity, unitCost: lot.unitCost,
+        closePrice, marketDate: lot.marketDate,
+        costBasis: lot.quantity * lot.unitCost,
+        estimatedValue: lot.quantity * closePrice,
+        estimatedLoss: lot.quantity * (lot.unitCost - closePrice),
+        lossPercent: (1 - closePrice / lot.unitCost) * 100,
+      };
+    });
     return {
       ticker: holding.ticker, displayLotCount, yearlyGainLoss,
       yearEndMarketValue: yearEndValue, yearEndPriceDate: row?.yearEndPriceDate ?? null,
       netCurrentYearInvested,
-      matchesLossReviewFilter: yearlyGainLoss == null ? null : yearlyGainLoss < 0 && displayLotCount > 3,
+      qualifyingLossLots,
+      matchesLossReviewFilter: yearlyGainLoss == null ? null
+        : yearlyGainLoss < 0 && displayLotCount > 3 && qualifyingLossLots.length > 0,
       lastTrackedAcquisitionDate: lastAcquisitionDate,
       priorAcquisitionWindowClearsOn, daysUntilPriorAcquisitionWindowClears,
       washSaleEligibility: 'Cannot be established. Only prior tracked same-ticker acquisitions are checked; outside accounts, substantially identical securities, and purchases in the 30 days after a sale are unknown.',
@@ -81,7 +107,7 @@ export function buildHoldingReviewContext(
   });
 }
 
-export async function loadHoldingReviewContext(userId: string, holdings: Holding[], today: string) {
+export async function loadHoldingReviewContext(userId: string, holdings: Holding[], today: string, openLots: ReviewLot[]) {
   const result = await getPool().request()
     .input('userId', sql.NVarChar, userId)
     .input('yearEnd', sql.Date, `${Number(today.slice(0, 4)) - 1}-12-31`)
@@ -128,5 +154,5 @@ export async function loadHoldingReviewContext(userId: string, holdings: Holding
     `);
   const recordsets = result.recordsets;
   if (!Array.isArray(recordsets) || recordsets.length !== 3) throw new Error('Incomplete holding review context.');
-  return buildHoldingReviewContext(holdings, recordsets[0], recordsets[1], recordsets[2], today);
+  return buildHoldingReviewContext(holdings, recordsets[0], recordsets[1], recordsets[2], today, openLots);
 }

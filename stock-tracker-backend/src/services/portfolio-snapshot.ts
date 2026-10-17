@@ -138,7 +138,7 @@ export async function loadPortfolioSnapshot(userId: string) {
   snapshot.assumptions = await loadAiPreferences(userId);
   snapshot.recommendedLotAmount = await loadRecommendedLotAmount(userId, snapshot.holdings, cash.availableCash);
   if (snapshot.assumptions) {
-    snapshot.holdingReviewContext = await loadHoldingReviewContext(userId, snapshot.holdings, snapshot.generatedAt.slice(0, 10));
+    snapshot.holdingReviewContext = await loadHoldingReviewContext(userId, snapshot.holdings, snapshot.generatedAt.slice(0, 10), snapshot.openLots);
   }
   return {
     rows: result.recordset,

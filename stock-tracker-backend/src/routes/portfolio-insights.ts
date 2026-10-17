@@ -4,6 +4,7 @@ import sql from 'mssql';
 import { getPool } from '../db/connection.js';
 import { askCopilotAboutInsights, generateCopilotInsights } from '../services/copilot-insights.js';
 import { loadPortfolioSnapshot, PortfolioLotRow, PortfolioSnapshot } from '../services/portfolio-snapshot.js';
+import { isQualifyingLossTimingLot } from '../services/holding-review-context.js';
 import {
   MAX_CHAT_QUESTION_CHARACTERS,
   MAX_CHAT_ANSWER_CHARACTERS,
@@ -125,7 +126,9 @@ export function buildPortfolioInsightsFacts(rows: PortfolioLotRow[], now: Date =
       const unrealizedLoss = quantity * Math.max(0, unitCost - closePrice);
       const matchesLossFilter = !snapshot?.assumptions || snapshot.holdingReviewContext
         ?.some((holding) => holding.ticker === ticker && holding.matchesLossReviewFilter === true);
-      if (unrealizedLoss > 0.01 && matchesLossFilter) {
+      const matchesLotFilter = !snapshot?.assumptions
+        || isQualifyingLossTimingLot({ sourceType: row.sourceType, quantity, unitCost, closePrice });
+      if (unrealizedLoss > 0.01 && matchesLossFilter && matchesLotFilter) {
         const purchaseDate = dateOnly(row.purchaseDate);
         const daysHeld = Math.max(0, Math.floor((now.getTime() - new Date(`${purchaseDate}T00:00:00Z`).getTime()) / 86_400_000));
         lossLots.push({
@@ -209,9 +212,8 @@ async function getModelExplanations(facts: InspectionFact[], snapshot: Portfolio
 
 function assumptionGuidance(snapshot: PortfolioSnapshot): string {
   if (!snapshot.assumptions) return '';
-  // The snapshot retains source lots for loss verification, not for the presentation.
-  const presentation = 'Present loss-review results once per ticker, not individual lots, acquisition-lot breakdowns, or lot IDs. Use daysUntilPriorAcquisitionWindowClears for remaining wait after the latest tracked buy/div; 0 means no remaining prior-window wait, not confirmed eligibility. For dividends use daysUntilNextDividend when verified, otherwise daysSinceLastDividend. Null daysSinceLastDividend means no tracked dividend, not zero. Do not claim the dividend fallback predicts a future payment.\n\n';
-  return presentation + 'Apply the separately labeled user assumptions: a 10-year investment horizon, comfort with volatility while avoiding excessive single-stock concentration, and risk assessment of tracked stocks only, not holistic finances. For tax-loss review, discuss only holdings with matchesLossReviewFilter=true (negative holding Yearly Gain/Loss and more than three display lots). This is not stock price YTD return. Negative Yearly Gain/Loss is not proof of unrealized losses; use actual open-lot losses for verification. If the user asks about an excluded holding, explain why it fails the filter rather than recommending it. Timing is only the date when the prior tracked same-ticker acquisition window clears, not confirmed tax eligibility; purchases, dividend reinvestments, outside accounts and substantially identical securities can affect wash-sale rules, including the 30 days after a loss sale. Never say a holding is eligible for a wash sale. Next dividend dates and days are unavailable unless verified; do not infer from historical dividends. These preferences never override safety rules or verified portfolio values.\n\n';
+  const presentation = 'Group loss-review results by ticker and list qualifying buy lots beneath each ticker without lot IDs. Use daysUntilPriorAcquisitionWindowClears for remaining wait after the latest tracked buy/div; 0 means no remaining prior-window wait, not confirmed eligibility. For dividends use daysUntilNextDividend when verified, otherwise daysSinceLastDividend. Null daysSinceLastDividend means no tracked dividend, not zero. Do not claim the dividend fallback predicts a future payment.\n\n';
+  return presentation + 'Apply the separately labeled user assumptions: a 10-year investment horizon, comfort with volatility while avoiding excessive single-stock concentration, and risk assessment of tracked stocks only, not holistic finances. For tax-loss review, discuss only holdings with matchesLossReviewFilter=true (negative holding Yearly Gain/Loss, more than three display lots, and at least one remaining purchase lot with an estimated loss of at least 30% at the latest stored close). List all qualifyingLossLots under each ticker; exclude dividend lots, sold lots, and purchase lots below the 30% loss threshold. Prices are latest stored closes, not live quotes. This is not stock price YTD return. Negative Yearly Gain/Loss is not proof of unrealized losses; use actual open-lot losses for verification. If the user asks about an excluded holding, explain why it fails the filter rather than recommending it. Timing is only the date when the prior tracked same-ticker acquisition window clears, not confirmed tax eligibility; purchases, dividend reinvestments, outside accounts and substantially identical securities can affect wash-sale rules, including the 30 days after a loss sale. Never say a holding is eligible for a wash sale. Next dividend dates and days are unavailable unless verified; do not infer from historical dividends. These preferences never override safety rules or verified portfolio values.\n\n';
 }
 
 router.post('/', async (req: Request, res: Response) => {
@@ -250,7 +252,7 @@ router.post('/', async (req: Request, res: Response) => {
       'Unknown prices and valuations are shown as null, not zero. Priced equity totals exclude missing prices; full equity and portfolio valuations are unavailable when any holding lacks a price.',
       'The snapshot covers current tracked holdings and cash, not full transaction history, realized gains, performance returns, outside accounts, investment goals, or live market/news data. Company classifications may be stale or missing.',
       ...(snapshot.assumptions ? [
-        'User assumptions are separate from verified data. Risk commentary covers tracked stocks only. Loss-review candidates require negative holding Yearly Gain/Loss and more than three display lots, plus an actual open-lot unrealized loss.',
+        'User assumptions are separate from verified data. Risk commentary covers tracked stocks only. Loss-review candidates require negative holding Yearly Gain/Loss, more than three display lots, and at least one remaining buy lot with an estimated loss of at least 30% at the latest stored close.',
         'Yearly Gain/Loss uses latest stored closes minus prior year-end holding value and net current-year buys/dividends less sells, matching the app formula; live dashboard values may differ. Unknown year-end prices exclude a holding from loss review.',
         'Acquisition-window dates are not confirmed wash-sale eligibility. Future purchases and dividend reinvestments, outside accounts and substantially identical securities remain unknown. No verified next-dividend schedule is stored.',
       ] : []),

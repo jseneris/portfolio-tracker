@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { buildHoldingReviewContext } from '../src/services/holding-review-context.js';
+import { buildHoldingReviewContext, isQualifyingLossTimingLot } from '../src/services/holding-review-context.js';
 import { SEEDED_AI_ASSUMPTIONS } from '../src/services/ai-preferences.js';
 import settingsRouter from '../src/routes/user-settings.js';
 import { buildPortfolioInsightsFacts } from '../src/routes/portfolio-insights.js';
@@ -29,6 +29,10 @@ const purchase = {
   ticker: 'TEST', type: 'buy', quantity: 10, amount: 100,
   transactionDate: '2025-01-01', exchangeSourceQuantity: 0,
 };
+const qualifyingLot = {
+  ticker: 'TEST', sourceType: 'purchase', acquisitionDate: '2025-01-01',
+  quantity: 2, unitCost: 100, closePrice: 70, marketDate: '2026-10-06',
+};
 
 describe('holding loss-review context', () => {
   it('uses holding Yearly Gain/Loss, accounting for current-year buys, sells and reinvested dividends', () => {
@@ -37,7 +41,7 @@ describe('holding loss-review context', () => {
       { ...purchase, quantity: 5, amount: 50, transactionDate: '2026-01-01' },
       { ...purchase, type: 'sell', quantity: 2, amount: 30, transactionDate: '2026-02-01' },
       { ...purchase, type: 'div', quantity: 1, amount: 10, transactionDate: '2026-09-25' },
-    ], [], [context], '2026-10-06');
+    ], [], [context], '2026-10-06', [qualifyingLot]);
     expect(rows[0]).toMatchObject({
       yearEndMarketValue: 100, netCurrentYearInvested: 30, yearlyGainLoss: -40,
       displayLotCount: 4, matchesLossReviewFilter: true,
@@ -55,8 +59,37 @@ describe('holding loss-review context', () => {
       ['1,0,-1,invalid,2,3', 90, false],
     ] as const) {
       expect(buildHoldingReviewContext([{ ticker: 'TEST', marketValue: value }], [purchase], [],
-        [{ ...context, lotsCsv }], '2026-10-06')[0].matchesLossReviewFilter).toBe(matches);
+        [{ ...context, lotsCsv }], '2026-10-06', [qualifyingLot])[0].matchesLossReviewFilter).toBe(matches);
     }
+  });
+
+  it('includes the exact 30% boundary but excludes smaller losses, dividends, sold lots and missing prices', () => {
+    const candidates = [
+      qualifyingLot,
+      { ...qualifyingLot, closePrice: 69 },
+      { ...qualifyingLot, closePrice: 70.0001 },
+      { ...qualifyingLot, sourceType: 'dividend', closePrice: 10 },
+      { ...qualifyingLot, quantity: 0 },
+      { ...qualifyingLot, closePrice: null },
+      { ...qualifyingLot, unitCost: 0 },
+      { ...qualifyingLot, closePrice: -1 },
+      { ...qualifyingLot, closePrice: NaN },
+      { ...qualifyingLot, ticker: 'OTHER' },
+      { ...qualifyingLot, acquisitionDate: '2027-01-01' },
+    ];
+    const build = (lots: typeof candidates) => buildHoldingReviewContext(
+      [{ ticker: 'TEST', marketValue: 90 }], [purchase], [], [context], '2026-10-06', lots)[0];
+    const result = build(candidates);
+    expect(result.matchesLossReviewFilter).toBe(true);
+    expect(result.qualifyingLossLots).toHaveLength(2);
+    expect(result.qualifyingLossLots[0]).toMatchObject({
+      quantity: 2, costBasis: 200, estimatedValue: 140, estimatedLoss: 60,
+    });
+    expect(result.qualifyingLossLots[0].lossPercent).toBeCloseTo(30);
+    expect(build(candidates.slice(2)).matchesLossReviewFilter).toBe(false);
+    expect(build([]).matchesLossReviewFilter).toBe(false);
+    expect(build(Array.from({ length: 12 }, () => qualifyingLot)).qualifyingLossLots).toHaveLength(12);
+    expect(isQualifyingLossTimingLot({ ...qualifyingLot, quantity: 0.1 })).toBe(true);
   });
 
   it('keeps missing baseline/current values unknown and handles newly acquired holdings without a baseline', () => {
@@ -113,7 +146,11 @@ describe('holding loss-review context', () => {
         remainingQuantity: 1, unitCost: 1000, closePrice: 10, marketDate: '2026-10-06', recentAcquisitionCount: 0,
       })),
       { ticker: 'TEST', sourceType: 'purchase', purchaseDate: '2025-01-01',
-        remainingQuantity: 10, unitCost: 10, closePrice: 9, marketDate: '2026-10-06', recentAcquisitionCount: 0 },
+        remainingQuantity: 10, unitCost: 20, closePrice: 9, marketDate: '2026-10-06', recentAcquisitionCount: 0 },
+      { ticker: 'TEST', sourceType: 'dividend', purchaseDate: '2025-01-01',
+        remainingQuantity: 1, unitCost: 100, closePrice: 9, marketDate: '2026-10-06', recentAcquisitionCount: 0 },
+      { ticker: 'TEST', sourceType: 'purchase', purchaseDate: '2025-01-01',
+        remainingQuantity: 1, unitCost: 10, closePrice: 9, marketDate: '2026-10-06', recentAcquisitionCount: 0 },
     ];
     const snapshot = {
       ...buildPortfolioSnapshot(rows, {
@@ -121,7 +158,7 @@ describe('holding loss-review context', () => {
         availableCash: 0, costBasis: 0, adjustments: 0,
       }, '2026-10-06'),
       assumptions: SEEDED_AI_ASSUMPTIONS,
-      holdingReviewContext: buildHoldingReviewContext([{ ticker: 'TEST', marketValue: 90 }], [purchase], [], [context], '2026-10-06'),
+      holdingReviewContext: buildHoldingReviewContext([{ ticker: 'TEST', marketValue: 90 }], [purchase], [], [context], '2026-10-06', [qualifyingLot]),
     };
     const facts = buildPortfolioInsightsFacts(rows, new Date('2026-10-06'), snapshot);
     expect(snapshot.holdings).toHaveLength(2);

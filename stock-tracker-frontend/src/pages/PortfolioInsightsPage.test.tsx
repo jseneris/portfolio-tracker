@@ -24,6 +24,10 @@ describe('AI response save action', () => {
       totals: { holdingCount: 0, openLotCount: 0, equityCostBasis: 0, pricedEquityValue: 0, equityValue: 0, portfolioValue: 0, unrealizedGainLoss: 0, cashPercentOfPortfolio: null },
       holdingReviewContext: [
         { ticker: 'TEST', displayLotCount: 4, yearlyGainLoss: -10, matchesLossReviewFilter: true,
+          qualifyingLossLots: [{
+            acquisitionDate: '2025-02-03', quantity: 2, unitCost: 100, closePrice: 70,
+            marketDate: '2026-10-06', costBasis: 200, estimatedValue: 140, estimatedLoss: 60, lossPercent: 30,
+          }],
           lastTrackedAcquisitionDate: null, priorAcquisitionWindowClearsOn: null, daysUntilPriorAcquisitionWindowClears: 0,
           lastTrackedDividendDate: null, nextDeclaredDividendDate: null, daysUntilNextDividend: null, daysSinceLastDividend: 11 },
         { ticker: 'EXCLUDED', displayLotCount: 3, yearlyGainLoss: -10, matchesLossReviewFilter: false,
@@ -75,6 +79,10 @@ describe('AI response save action', () => {
     expect(html).toContain('11 days since last tracked dividend')
     expect(html).toContain('not confirmed wash-sale eligibility')
     expect(html).not.toContain('EXCLUDED')
+    expect(html).toContain('TEST qualifying buy lots')
+    expect(html).toContain('2025-02-03')
+    expect(html).toContain('30.00%')
+    expect(html).toContain('$60.00')
   })
 
   it('retains empty review sections and escapes saved text instead of executing HTML', () => {
@@ -104,6 +112,8 @@ describe('AI response save action', () => {
     expect(text).toContain('Yearly Gain/Loss: -$10.00')
     expect(text).not.toContain('EXCLUDED')
     expect(text).toContain('not confirmed wash-sale eligibility')
+    expect(text).toContain('Buy lot: Acquired: 2025-02-03')
+    expect(text).toContain('Loss %: 30.00%')
   })
 
   it('colors zero-wait tickers green, waiting tickers red, and leaves unknown waits neutral while showing yearly losses', () => {
@@ -120,6 +130,9 @@ describe('AI response save action', () => {
     expect(html).toContain('-$250.00')
     expect(html).toContain('Yearly Gain/Loss')
     expect(html).not.toContain('EXCLUDED')
+    expect(html).toContain('TEST qualifying buy lots')
+    expect(html).toContain('30.00%')
+    expect(html).toContain('2026-10-06')
   })
 
   it('saves empty sections explicitly and allows a section-specific success confirmation', () => {

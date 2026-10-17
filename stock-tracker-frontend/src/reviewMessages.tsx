@@ -2,6 +2,16 @@ import { PortfolioInsightsReport } from './api'
 import { formatCurrency2 } from './formatters'
 
 export type ReviewSectionTitle = 'Largest concentrations' | 'Loss-review timing' | 'Recommended lot amount'
+export const LOSS_TIMING_CRITERIA = 'Only holdings with negative Yearly Gain/Loss, more than three display lots, and at least one remaining buy lot with an estimated loss of 30% or more appear below. Only qualifying buy lots are listed, using remaining shares, split-adjusted unit costs, and latest stored closes (not live quotes).'
+type LossTimingLot = NonNullable<NonNullable<PortfolioInsightsReport['snapshot']['holdingReviewContext']>[number]['qualifyingLossLots']>[number]
+export const LOSS_TIMING_LOT_HEADERS = ['Acquired', 'Remaining shares', 'Unit cost', 'Stored price', 'Price as of', 'Cost basis', 'Estimated value', 'Estimated loss', 'Loss %']
+
+export function lossTimingLotValues(lot: LossTimingLot): string[] {
+  return [lot.acquisitionDate, lot.quantity.toLocaleString(undefined, { maximumFractionDigits: 8 }),
+    formatCurrency2(lot.unitCost), formatCurrency2(lot.closePrice), lot.marketDate ?? 'Unknown',
+    formatCurrency2(lot.costBasis), formatCurrency2(lot.estimatedValue),
+    formatCurrency2(lot.estimatedLoss), `${lot.lossPercent.toFixed(2)}%`]
+}
 const REVIEW_SECTION_TITLES: string[] = ['Largest concentrations', 'Loss-review timing', 'Recommended lot amount']
 const FORMAT_MARKER = 'Formatted review v1:\n'
 
@@ -94,7 +104,7 @@ export function buildFormattedReviewContent(report: PortfolioInsightsReport, tit
   const content: FormattedReview = {
     version: 1, title, generatedAt: new Date(report.generatedAt).toISOString(),
     description: isTiming
-      ? 'Only holdings with negative Yearly Gain/Loss and more than three display lots appear below. Wait days reflect the latest tracked buy/dividend reinvestment; the prior window clears on day 31. Zero means no remaining prior-window wait, not confirmed wash-sale eligibility. Future purchases, outside accounts, and substantially identical securities remain unknown. Dividend elapsed days reflect tracked payments, not a prediction.'
+      ? `${LOSS_TIMING_CRITERIA} Wait days reflect the latest tracked buy/dividend reinvestment; the prior window clears on day 31. Zero means no remaining prior-window wait, not confirmed wash-sale eligibility. Future purchases, outside accounts, and substantially identical securities remain unknown. Dividend elapsed days reflect tracked payments, not a prediction.`
       : 'Share of priced equities (20% review threshold).',
     headers: isTiming ? ['Ticker', 'Yearly Gain/Loss', 'Days to wait (prior buy/div window)', 'Dividend timing']
       : ['Ticker', 'Share of priced equities', 'Market value'],
@@ -117,6 +127,12 @@ export function buildFormattedReviewContent(report: PortfolioInsightsReport, tit
     emptyText: isTiming ? 'No holdings match the review filter with available data.'
       : 'No holding reached the 20% concentration review threshold.',
     limitations: report.limitations,
+    additionalTables: isTiming ? holdings.filter((holding) => holding.qualifyingLossLots?.length).map((holding) => ({
+      heading: `${holding.ticker} qualifying buy lots`,
+      headers: LOSS_TIMING_LOT_HEADERS,
+      rows: (holding.qualifyingLossLots ?? []).map((lot) => lossTimingLotValues(lot)
+        .map((value, index) => cell(value, index >= 7 ? 'negative' : 'neutral'))),
+    })) : [],
   }
   return FORMAT_MARKER + JSON.stringify(content)
 }
