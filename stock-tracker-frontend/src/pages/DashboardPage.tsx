@@ -36,7 +36,6 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10
 const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25
-const POST_MARKET_CLOSE_POLLING_BUFFER_MINUTES = 10
 
 export function getSplitAdjustedTargetBasePrice(
   transaction: StockTransaction | undefined,
@@ -293,7 +292,16 @@ export function isUsMarketOpenNow(now = new Date()): boolean {
   return isWeekday
     && !closures.fullDay.has(dateKey)
     && minutesSinceMidnight >= 9 * 60 + 30
-    && minutesSinceMidnight < closingMinutes + POST_MARKET_CLOSE_POLLING_BUFFER_MINUTES
+    && minutesSinceMidnight < closingMinutes
+}
+
+export function mergeDashboardHistoricalPrices(previous: HistoricalPrice[], next: HistoricalPrice[]): HistoricalPrice[] {
+  const merged = new Map<string, HistoricalPrice>()
+  for (const row of [...previous, ...next]) {
+    const key = `${String(row.ticker || '').toUpperCase()}|${String(row.priceDate || '')}|${String(row.source || '')}`
+    merged.set(key, row)
+  }
+  return Array.from(merged.values())
 }
 
 function calculateStockCostBasisExcludingDividends(lots: PurchaseLot[]): number {
@@ -378,7 +386,6 @@ export default function DashboardPage() {
   const [addStockForm, setAddStockForm] = useState<AddStockFormState>(createEmptyAddStockForm)
   const [summaryLoading, setSummaryLoading] = useState(true)
   const [holdingsLoading, setHoldingsLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
   const [saleTargetsByTicker, setSaleTargetsByTicker] = useState<Record<string, number | null>>({})
   const [buyTargetsByTicker, setBuyTargetsByTicker] = useState<Record<string, number | null>>({})
@@ -392,7 +399,6 @@ export default function DashboardPage() {
   const [historicalLoadedEndDate, setHistoricalLoadedEndDate] = useState<string | null>(null)
   const [splitEvents, setSplitEvents] = useState<StockSplitEvent[]>([])
   const updateCurrentPricesRef = useRef<() => Promise<void>>(async () => {})
-  const [updatingPrices, setUpdatingPrices] = useState(false)
   const [isLivePollingActive, setIsLivePollingActive] = useState(false)
   const [currentPricesByTicker, setCurrentPricesByTicker] = useState<Record<string, number>>({})
   const [changePercentByTicker, setChangePercentByTicker] = useState<Record<string, number | null>>({})
@@ -922,9 +928,7 @@ export default function DashboardPage() {
           : 'value'
 
   async function loadSummary(backgroundRefresh = false) {
-    if (backgroundRefresh) {
-      setRefreshing(true)
-    } else {
+    if (!backgroundRefresh) {
       setSummaryLoading(true)
     }
     setHoldingsLoading(true)
@@ -1033,7 +1037,6 @@ export default function DashboardPage() {
     } finally {
       setSummaryLoading(false)
       setHoldingsLoading(false)
-      setRefreshing(false)
     }
   }
 
@@ -1082,18 +1085,31 @@ export default function DashboardPage() {
       return
     }
 
-    setUpdatingPrices(true)
     setError(null)
 
     try {
-      const [result, preferences] = await Promise.all([getCurrentPrices(tickers), getTickerPreferences()])
+      const marketOpen = isUsMarketOpenNow()
+      if (!marketOpen) {
+        setCurrentPricesByTicker({})
+        setChangePercentByTicker({})
+      }
+      const endDate = new Date().toISOString().slice(0, 10)
+      const [result, preferences] = await Promise.all([
+        marketOpen
+          ? getCurrentPrices(tickers)
+          : getHistoricalPrices(historicalLoadedEndDate ?? endDate, endDate, tickers),
+        getTickerPreferences(),
+      ])
       setTickerPreferencesByTicker(Object.fromEntries(preferences.map((preference) => [preference.ticker, preference])))
-      applyCurrentPricePayload(result)
+      if (Array.isArray(result)) {
+        setHistoricalPrices((previous) => mergeDashboardHistoricalPrices(previous, result))
+        setHistoricalLoadedEndDate(endDate)
+      } else {
+        applyCurrentPricePayload(result)
+      }
       setLastUpdatedAt(new Date())
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to update current prices')
-    } finally {
-      setUpdatingPrices(false)
     }
   }
 
@@ -1137,7 +1153,7 @@ export default function DashboardPage() {
     }
   }, [auth.isConfigured, auth.isAuthenticated])
 
-  // Live-price polling: only while this tab is visible and the US market is open.
+  // Closed-market polling picks up saved closes even when the EOD job finishes later.
   useEffect(() => {
     const POLL_INTERVAL_MS = 5 * 60 * 1000
     const POLLING_STATUS_CHECK_MS = 30 * 1000
@@ -1146,18 +1162,22 @@ export default function DashboardPage() {
     function refreshPollingActiveStatus() {
       const marketOpenNow = isUsMarketOpenNow()
       setIsLivePollingActive(document.visibilityState === 'visible' && marketOpenNow)
+      const marketStateChanged = wasMarketOpenRef.current !== marketOpenNow
       if (wasMarketOpenRef.current && !marketOpenNow) {
         setCurrentPricesByTicker({})
         setChangePercentByTicker({})
       }
       wasMarketOpenRef.current = marketOpenNow
+      if (marketStateChanged && document.visibilityState === 'visible') {
+        void updateCurrentPricesRef.current()
+      }
+      return marketStateChanged
     }
 
     function maybeRefreshCurrentPrices() {
-      refreshPollingActiveStatus()
-      const marketOpenNow = isUsMarketOpenNow()
+      const marketStateChanged = refreshPollingActiveStatus()
 
-      if (document.visibilityState === 'visible' && marketOpenNow) {
+      if (document.visibilityState === 'visible' && !marketStateChanged) {
         void updateCurrentPricesRef.current()
       }
     }
@@ -1202,15 +1222,7 @@ export default function DashboardPage() {
         }
 
         if (nextRows.length > 0) {
-          setHistoricalPrices((previous) => {
-            const merged = [...previous, ...nextRows]
-            const deduped = new Map<string, HistoricalPrice>()
-            for (const row of merged) {
-              const key = `${String(row.ticker || '').toUpperCase()}|${String(row.priceDate || '')}|${String(row.source || '')}`
-              deduped.set(key, row)
-            }
-            return Array.from(deduped.values())
-          })
+          setHistoricalPrices((previous) => mergeDashboardHistoricalPrices(previous, nextRows))
         }
 
         setHistoricalLoadedEndDate(targetEndDate)
@@ -1336,17 +1348,6 @@ export default function DashboardPage() {
           <h2>Dashboard</h2>
         </div>
         <div className="stack-right">
-          <div className="inline-actions">
-            <button className="button button-primary" type="button" onClick={openAddStockModal}>
-              Add Stock
-            </button>
-            <button className="button" type="button" onClick={() => loadSummary(true)} disabled={refreshing}>
-              {refreshing ? 'Refreshing...' : 'Refresh'}
-            </button>
-            <button className="button" type="button" onClick={updateCurrentPrices} disabled={updatingPrices || summaryHoldings.length === 0}>
-              {updatingPrices ? 'Updating...' : 'Update'}
-            </button>
-          </div>
           <small>Last updated: {formatDateTime(lastUpdatedAt)}</small>
           <small className={isLivePollingActive ? 'live-polling-badge live-polling-badge-active' : 'live-polling-badge'}>
             <span className={isLivePollingActive ? 'live-polling-dot live-polling-dot-active' : 'live-polling-dot'} />
@@ -1371,7 +1372,10 @@ export default function DashboardPage() {
       {data ? (
         <>
           <div className="panel panel-tight stat-strip">
-            <div className="stat"><div className="label">Portfolio Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedPortfolioValue)}</div></div>
+            <div className="stat">
+              <div className="label">Portfolio Value</div>
+              <div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedPortfolioValue)}</div>
+            </div>
             <div className="stat">
               <div className="label">Yearly Gain/Loss</div>
               <div className={`value ${getPerformanceClassName(yearlyGainLoss)}`}>
@@ -1394,6 +1398,9 @@ export default function DashboardPage() {
             </div>
             <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedHoldingsMarketValue)}</div></div>
             <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(snapshot.availableCash)}</div></div>
+            <button className="button button-primary" type="button" onClick={openAddStockModal} style={{ marginLeft: 'auto', justifySelf: 'end' }}>
+              Add Stock
+            </button>
           </div>
 
           <div className="panel panel-tight">

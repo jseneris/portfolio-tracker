@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { StockSplitEvent, StockTransaction } from '../api'
+import { HistoricalPrice, StockSplitEvent, StockTransaction } from '../api'
+import { calculatePortfolioSnapshot } from '../portfolioSnapshot'
 import {
   formatLotCountDifference,
   getLotCountDifference,
@@ -9,6 +10,7 @@ import {
   getTargetBarPosition,
   getTargetProximityLabel,
   isUsMarketOpenNow,
+  mergeDashboardHistoricalPrices,
 } from './DashboardPage'
 
 describe('dashboard live-price market window', () => {
@@ -16,10 +18,12 @@ describe('dashboard live-price market window', () => {
     expect(isUsMarketOpenNow(new Date('2026-10-14T21:10:00Z'))).toBe(false)
   })
 
-  it('allows regular-session quotes and the existing ten-minute closing buffer', () => {
+  it('allows live quotes only during the regular session, without a closing buffer', () => {
     expect(isUsMarketOpenNow(new Date('2026-10-14T13:29:00Z'))).toBe(false)
     expect(isUsMarketOpenNow(new Date('2026-10-14T13:30:00Z'))).toBe(true)
-    expect(isUsMarketOpenNow(new Date('2026-10-14T20:09:00Z'))).toBe(true)
+    expect(isUsMarketOpenNow(new Date('2026-10-14T19:59:59Z'))).toBe(true)
+    expect(isUsMarketOpenNow(new Date('2026-10-14T20:00:00Z'))).toBe(false)
+    expect(isUsMarketOpenNow(new Date('2026-10-14T20:09:00Z'))).toBe(false)
     expect(isUsMarketOpenNow(new Date('2026-10-14T20:10:00Z'))).toBe(false)
   })
 
@@ -27,7 +31,66 @@ describe('dashboard live-price market window', () => {
     expect(isUsMarketOpenNow(new Date('2026-11-02T14:30:00Z'))).toBe(true)
     expect(isUsMarketOpenNow(new Date('2026-10-17T15:00:00Z'))).toBe(false)
     expect(isUsMarketOpenNow(new Date('2026-12-25T15:00:00Z'))).toBe(false)
+    expect(isUsMarketOpenNow(new Date('2026-11-27T17:59:59Z'))).toBe(true)
+    expect(isUsMarketOpenNow(new Date('2026-11-27T18:00:00Z'))).toBe(false)
     expect(isUsMarketOpenNow(new Date('2026-11-27T18:10:00Z'))).toBe(false)
+    expect(isUsMarketOpenNow(new Date('2026-11-02T21:00:00Z'))).toBe(false)
+  })
+})
+
+describe('dashboard saved closing prices', () => {
+  const previousClose: HistoricalPrice = {
+    ticker: 'TEST', priceDate: '2026-10-13', marketDate: '2026-10-13',
+    closePrice: 100, source: 'test',
+  }
+  const closingPrice: HistoricalPrice = {
+    ...previousClose, priceDate: '2026-10-14', marketDate: '2026-10-14', closePrice: 110,
+  }
+  const transaction: StockTransaction = {
+    id: 'buy-1', userId: 'user-1', ticker: 'TEST', type: 'buy',
+    quantity: 10, price: 90, amount: 900, transactionDate: '2026-10-01',
+  }
+
+  function holdingAt(time: string, history: HistoricalPrice[]) {
+    return calculatePortfolioSnapshot({
+      stockTransactions: [transaction],
+      cashTransactions: [],
+      historicalPrices: history,
+      splitEvents: [],
+      snapshotDate: '2026-10-14',
+      currentPricesByTicker: isUsMarketOpenNow(new Date(time)) ? { TEST: 105 } : {},
+    }).holdings[0]
+  }
+
+  it('uses the latest saved price and its date before opening and live prices during trading', () => {
+    expect(holdingAt('2026-10-14T13:29:00Z', [previousClose])).toMatchObject({
+      latestPrice: 100, priceDate: '2026-10-13', isLivePrice: false,
+    })
+    expect(holdingAt('2026-10-14T13:30:00Z', [previousClose])).toMatchObject({
+      latestPrice: 105, isLivePrice: true,
+    })
+  })
+
+  it('switches to the saved close and its date at the exact closing boundary', () => {
+    expect(holdingAt('2026-10-14T20:00:00Z', [closingPrice, previousClose])).toMatchObject({
+      latestPrice: 110, priceDate: '2026-10-14', isLivePrice: false, marketValue: 1100,
+      historicalChangePercent: 10,
+    })
+  })
+
+  it('keeps the actual saved date until a delayed close arrives, then replaces same-day corrections', () => {
+    expect(holdingAt('2026-10-14T20:01:00Z', [previousClose])).toMatchObject({
+      latestPrice: 100, priceDate: '2026-10-13', isLivePrice: false,
+    })
+    const refreshed = mergeDashboardHistoricalPrices([previousClose], [closingPrice])
+    expect(holdingAt('2026-10-14T20:05:00Z', refreshed)).toMatchObject({
+      latestPrice: 110, priceDate: '2026-10-14', isLivePrice: false,
+    })
+    const corrected = mergeDashboardHistoricalPrices(refreshed, [{ ...closingPrice, closePrice: 111 }])
+    expect(corrected).toHaveLength(2)
+    expect(holdingAt('2026-10-14T20:10:00Z', corrected)).toMatchObject({
+      latestPrice: 111, priceDate: '2026-10-14', isLivePrice: false,
+    })
   })
 })
 
