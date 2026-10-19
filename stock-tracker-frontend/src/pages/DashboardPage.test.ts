@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { HistoricalPrice, StockSplitEvent, StockTransaction } from '../api'
+import { CashTransaction, HistoricalPrice, StockSplitEvent, StockTransaction } from '../api'
 import { calculatePortfolioSnapshot } from '../portfolioSnapshot'
 import {
+  calculateDashboardDailyChange,
   formatLotCountDifference,
   getLotCountDifference,
   getLotCountDifferenceStyle,
@@ -12,6 +13,147 @@ import {
   isUsMarketOpenNow,
   mergeDashboardHistoricalPrices,
 } from './DashboardPage'
+
+describe('dashboard daily portfolio change', () => {
+  const transaction: StockTransaction = {
+    id: 'buy-1', userId: 'user-1', ticker: 'TEST', type: 'buy',
+    quantity: 10, price: 90, amount: 900, transactionDate: '2026-10-01',
+  }
+  const deposit: CashTransaction = {
+    id: 'deposit-1', userId: 'user-1', type: 'deposit',
+    amount: 900, transactionDate: '2026-10-01',
+  }
+  const thursday: HistoricalPrice = {
+    ticker: 'TEST', priceDate: '2026-10-15', marketDate: '2026-10-15',
+    closePrice: 100, source: 'test',
+  }
+  const friday: HistoricalPrice = {
+    ...thursday, priceDate: '2026-10-16', marketDate: '2026-10-16', closePrice: 110,
+  }
+  const args = {
+    stockTransactions: [transaction],
+    cashTransactions: [deposit],
+    historicalPrices: [friday, thursday],
+    splitEvents: [],
+    snapshotDate: '2026-10-19',
+    currentPortfolioValue: 1100,
+    marketOpen: false,
+  }
+
+  it.each([
+    '2026-10-16T20:00:00Z',
+    '2026-10-17T15:00:00Z',
+    '2026-10-18T15:00:00Z',
+    '2026-10-19T12:59:00Z',
+  ])('compares Friday with Thursday outside trading at %s', (time) => {
+    expect(calculateDashboardDailyChange({
+      ...args,
+      snapshotDate: time.slice(0, 10),
+      marketOpen: isUsMarketOpenNow(new Date(time)),
+    })).toBe(100)
+  })
+
+  it('compares live Monday value with Friday at the opening boundary', () => {
+    expect(calculateDashboardDailyChange({
+      ...args,
+      marketOpen: isUsMarketOpenNow(new Date('2026-10-19T13:30:00Z')),
+      currentPortfolioValue: 1150,
+    })).toBe(50)
+  })
+
+  it('uses available closing dates across a holiday, not calendar-day prices', () => {
+    expect(calculateDashboardDailyChange({
+      ...args,
+      snapshotDate: '2026-12-28',
+      historicalPrices: [
+        { ...thursday, priceDate: '2026-12-23', closePrice: 100 },
+        { ...friday, priceDate: '2026-12-24', closePrice: 110 },
+      ],
+      marketOpen: isUsMarketOpenNow(new Date('2026-12-28T14:00:00Z')),
+    })).toBe(100)
+  })
+
+  it('keeps the last completed change until a delayed close arrives', () => {
+    expect(calculateDashboardDailyChange(args)).toBe(100)
+    expect(calculateDashboardDailyChange({
+      ...args,
+      historicalPrices: [...args.historicalPrices, {
+        ...friday, priceDate: '2026-10-19', marketDate: '2026-10-19', closePrice: 115,
+      }],
+      currentPortfolioValue: 1150,
+    })).toBe(50)
+  })
+
+  it('excludes cash and stock transactions after the last saved close', () => {
+    expect(calculateDashboardDailyChange({
+      ...args,
+      stockTransactions: [...args.stockTransactions, {
+        ...transaction, id: 'buy-2', transactionDate: '2026-10-19',
+      }],
+      cashTransactions: [...args.cashTransactions, {
+        ...deposit, id: 'deposit-2', amount: 2000, transactionDate: '2026-10-18',
+      }],
+      currentPortfolioValue: 3100,
+    })).toBe(100)
+  })
+
+  it('includes sales on the last closing date in its portfolio snapshot', () => {
+    expect(calculateDashboardDailyChange({
+      ...args,
+      stockTransactions: [...args.stockTransactions, {
+        ...transaction, id: 'sell-1', type: 'sell', quantity: 2, price: 110,
+        amount: 220, transactionDate: '2026-10-16',
+      }],
+    })).toBe(100)
+  })
+
+  it('applies splits independently to the two closing snapshots', () => {
+    expect(calculateDashboardDailyChange({
+      ...args,
+      historicalPrices: [thursday, { ...friday, closePrice: 55 }],
+      splitEvents: [{
+        id: 'split-1', ticker: 'TEST', splitDate: '2026-10-16', multiplier: 2, isActive: true,
+        ratioNumerator: 2, ratioDenominator: 1,
+      }],
+    })).toBe(100)
+  })
+
+  it('ignores prices for unrelated tickers and future closing dates', () => {
+    expect(calculateDashboardDailyChange({
+      ...args,
+      historicalPrices: [...args.historicalPrices,
+        { ...friday, ticker: 'OTHER', priceDate: '2026-10-19' },
+        { ...friday, priceDate: '2026-10-20', closePrice: 200 },
+      ],
+    })).toBe(100)
+  })
+
+  it('returns unavailable rather than zero when either close cannot be valued', () => {
+    expect(calculateDashboardDailyChange({ ...args, historicalPrices: [] })).toBeNull()
+    expect(calculateDashboardDailyChange({ ...args, historicalPrices: [friday] })).toBeNull()
+    expect(calculateDashboardDailyChange({
+      ...args, marketOpen: true, currentPortfolioValue: null,
+    })).toBeNull()
+  })
+
+  it('preserves calendar-day cash changes for portfolios without stock transactions', () => {
+    expect(calculateDashboardDailyChange({
+      ...args,
+      stockTransactions: [],
+      historicalPrices: [],
+      cashTransactions: [deposit, {
+        ...deposit, id: 'deposit-2', amount: 500, transactionDate: '2026-10-19',
+      }],
+      currentPortfolioValue: 1400,
+    })).toBe(500)
+  })
+
+  it.each([[90, -100], [100, 0]])('preserves negative and zero changes for a close of %s', (price, change) => {
+    expect(calculateDashboardDailyChange({
+      ...args, historicalPrices: [thursday, { ...friday, closePrice: price }],
+    })).toBe(change)
+  })
+})
 
 describe('dashboard live-price market window', () => {
   it('is closed at 5:10 PM Eastern when loading the dashboard', () => {

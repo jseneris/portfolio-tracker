@@ -304,6 +304,51 @@ export function mergeDashboardHistoricalPrices(previous: HistoricalPrice[], next
   return Array.from(merged.values())
 }
 
+export function calculateDashboardDailyChange(args: {
+  stockTransactions: StockTransaction[]
+  cashTransactions: CashTransaction[]
+  historicalPrices: HistoricalPrice[]
+  splitEvents: StockSplitEvent[]
+  snapshotDate: string
+  currentPortfolioValue: number | null
+  marketOpen: boolean
+}): number | null {
+  const { currentPortfolioValue, marketOpen, ...snapshotArgs } = args
+  let comparisonDate = snapshotArgs.snapshotDate
+  let portfolioValue = currentPortfolioValue
+  const portfolioTickers = new Set(snapshotArgs.stockTransactions
+    .filter((transaction) => toDateOnly(transaction.transactionDate) <= snapshotArgs.snapshotDate)
+    .map((transaction) => normalizeTicker(transaction.ticker)))
+
+  if (!marketOpen && portfolioTickers.size > 0) {
+    const latestCloseDate = snapshotArgs.historicalPrices.reduce((latest, price) => {
+      const date = toDateOnly(price.priceDate)
+      return portfolioTickers.has(normalizeTicker(price.ticker))
+        && date <= snapshotArgs.snapshotDate
+        && Number.isFinite(price.closePrice)
+        && date > latest ? date : latest
+    }, '')
+    if (!latestCloseDate) {
+      return null
+    }
+
+    comparisonDate = latestCloseDate
+    portfolioValue = calculatePortfolioSnapshot({
+      ...snapshotArgs,
+      snapshotDate: latestCloseDate,
+    }).portfolioValue
+  }
+
+  const previousPortfolioValue = calculatePortfolioSnapshot({
+    ...snapshotArgs,
+    snapshotDate: subtractDaysFromDateOnly(comparisonDate, 1),
+  }).portfolioValue
+
+  return portfolioValue == null || previousPortfolioValue == null
+    ? null
+    : portfolioValue - previousPortfolioValue
+}
+
 function calculateStockCostBasisExcludingDividends(lots: PurchaseLot[]): number {
   return lots.reduce((sum, lot) => {
     if (lot.sourceType !== 'purchase') {
@@ -817,21 +862,18 @@ export default function DashboardPage() {
     ? null
     : snapshot.availableCash + displayedHoldingsMarketValue
 
-  const previousDayPortfolioValue = useMemo(() => {
-    const previousDaySnapshot = calculatePortfolioSnapshot({
+  const marketOpen = isUsMarketOpenNow()
+  const portfolioDailyChange = useMemo(() => {
+    return calculateDashboardDailyChange({
       stockTransactions,
       cashTransactions,
       historicalPrices,
       splitEvents,
-      snapshotDate: subtractDaysFromDateOnly(snapshotDate, 1),
+      snapshotDate,
+      currentPortfolioValue: displayedPortfolioValue,
+      marketOpen,
     })
-
-    return previousDaySnapshot.portfolioValue
-  }, [stockTransactions, cashTransactions, historicalPrices, splitEvents, snapshotDate])
-
-  const portfolioValueChangeSinceYesterday = displayedPortfolioValue == null || previousDayPortfolioValue == null
-    ? null
-    : displayedPortfolioValue - previousDayPortfolioValue
+  }, [stockTransactions, cashTransactions, historicalPrices, splitEvents, snapshotDate, displayedPortfolioValue, marketOpen])
 
   const previousYearEndPortfolioValue = useMemo(() => {
     const currentYear = Number(snapshotDate.slice(0, 4))
@@ -1388,12 +1430,12 @@ export default function DashboardPage() {
             </div>
             <div className="stat">
               <div className="label">Change vs Prev. Day</div>
-              <div className={`value ${getPerformanceClassName(portfolioValueChangeSinceYesterday)}`}>
+              <div className={`value ${getPerformanceClassName(portfolioDailyChange)}`}>
                 {holdingsLoading
                   ? 'Loading...'
-                  : portfolioValueChangeSinceYesterday == null
+                  : portfolioDailyChange == null
                     ? '--'
-                    : `${portfolioValueChangeSinceYesterday >= 0 ? '+' : ''}${formatCurrency2(portfolioValueChangeSinceYesterday)}`}
+                    : `${portfolioDailyChange >= 0 ? '+' : ''}${formatCurrency2(portfolioDailyChange)}`}
               </div>
             </div>
             <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedHoldingsMarketValue)}</div></div>
