@@ -401,6 +401,16 @@ function getPerformanceClassName(value: number | null) {
 
 type HoldingsSortColumn = 'ticker' | 'historicalChangePercent' | 'marketValue' | 'gainLoss' | 'yearlyGainLoss' | 'targetProximityPercent' | 'lotCount'
 
+export function countDailyStockChanges(changes: Array<number | null>): { positive: number; negative: number } {
+  return changes.reduce<{ positive: number; negative: number }>((counts, change) => {
+    if (change != null && Number.isFinite(change)) {
+      if (change > 0) counts.positive += 1
+      if (change < 0) counts.negative += 1
+    }
+    return counts
+  }, { positive: 0, negative: 0 })
+}
+
 export function getLotCountDifference(lotCount: number, baseSize: number) {
   return lotCount - baseSize
 }
@@ -831,6 +841,7 @@ export default function DashboardPage() {
         priceDate: hydrated?.priceDate ?? null,
         isLivePrice: hydrated?.isLivePrice ?? false,
         historicalChangePercent: hydrated?.historicalChangePercent ?? null,
+        dailyChangePercent: changePercentByTicker[row.ticker] ?? hydrated?.historicalChangePercent ?? null,
         marketValue: hydrated?.marketValue ?? null,
         costBasis,
         gainLoss,
@@ -848,7 +859,12 @@ export default function DashboardPage() {
         lotCount: Number(displayLotCountsByTicker[row.ticker] ?? snapshot.lotCountByTicker[row.ticker] ?? row.lotCount),
       }
     })
-  }, [summaryHoldings, snapshot.holdings, snapshot.stockCostBasisExcludingDividendsByTicker, snapshot.realizedSalesPerformanceByTicker, snapshot.lotCountByTicker, stockTransactions, cashTransactions, historicalPrices, splitEvents, snapshotDate, displayLotCountsByTicker, saleTargetsByTicker, buyTargetsByTicker, tickerPreferencesByTicker])
+  }, [summaryHoldings, snapshot.holdings, snapshot.stockCostBasisExcludingDividendsByTicker, snapshot.realizedSalesPerformanceByTicker, snapshot.lotCountByTicker, stockTransactions, cashTransactions, historicalPrices, splitEvents, snapshotDate, displayLotCountsByTicker, saleTargetsByTicker, buyTargetsByTicker, tickerPreferencesByTicker, changePercentByTicker])
+
+  const dailyStockCounts = useMemo(
+    () => countDailyStockChanges(holdingsRows.map((row) => row.dailyChangePercent)),
+    [holdingsRows]
+  )
 
   const displayedHoldingsMarketValue = useMemo(() => {
     if (holdingsRows.some((row) => row.marketValue == null || !Number.isFinite(row.marketValue))) {
@@ -903,7 +919,7 @@ export default function DashboardPage() {
     const directionMultiplier = holdingsSortDirection === 'asc' ? 1 : -1
 
     const getSortValue = (row: typeof holdingsRows[number]) => {
-      if (holdingsSortColumn === 'historicalChangePercent') return changePercentByTicker[row.ticker] ?? row.historicalChangePercent
+      if (holdingsSortColumn === 'historicalChangePercent') return row.dailyChangePercent
       if (holdingsSortColumn === 'lotCount') return getLotCountDifference(row.lotCount, row.baseSize)
       return row[holdingsSortColumn as Exclude<HoldingsSortColumn, 'ticker' | 'historicalChangePercent' | 'lotCount'>]
     }
@@ -930,7 +946,7 @@ export default function DashboardPage() {
 
       return (Number(aValue) - Number(bValue)) * directionMultiplier
     })
-  }, [changePercentByTicker, holdingsRows, holdingsSortColumn, holdingsSortDirection])
+  }, [holdingsRows, holdingsSortColumn, holdingsSortDirection])
 
   function handleHoldingsSort(column: HoldingsSortColumn) {
     if (column === holdingsSortColumn) {
@@ -1440,6 +1456,18 @@ export default function DashboardPage() {
             </div>
             <div className="stat"><div className="label">Holdings Market Value</div><div className="value">{holdingsLoading ? 'Loading...' : formatCurrency2(displayedHoldingsMarketValue)}</div></div>
             <div className="stat"><div className="label">Available Cash</div><div className="value">{formatCurrency2(snapshot.availableCash)}</div></div>
+            <div className="stat">
+              <div className="label"># of stocks</div>
+              <div className="value">
+                {holdingsLoading ? 'Loading...' : (
+                  <span aria-label={`${dailyStockCounts.positive} tickers with positive daily change, ${dailyStockCounts.negative} tickers with negative daily change`}>
+                    <span className="value-positive">{dailyStockCounts.positive}</span>
+                    {' / '}
+                    <span className="value-negative">{dailyStockCounts.negative}</span>
+                  </span>
+                )}
+              </div>
+            </div>
             <button className="button button-primary" type="button" onClick={openAddStockModal} style={{ marginLeft: 'auto', justifySelf: 'end' }}>
               Add Stock
             </button>
@@ -1471,7 +1499,7 @@ export default function DashboardPage() {
                 {sortedHoldingsRows.map((row) => {
                   const isExpanded = expandedHoldingTickers.has(row.ticker)
                   const liveChangePercent = changePercentByTicker[row.ticker]
-                  const changePercent = liveChangePercent ?? row.historicalChangePercent
+                  const changePercent = row.dailyChangePercent
 
                   return (
                   <Fragment key={row.ticker}>

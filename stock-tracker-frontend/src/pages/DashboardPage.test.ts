@@ -3,6 +3,7 @@ import { CashTransaction, HistoricalPrice, StockSplitEvent, StockTransaction } f
 import { calculatePortfolioSnapshot } from '../portfolioSnapshot'
 import {
   calculateDashboardDailyChange,
+  countDailyStockChanges,
   formatLotCountDifference,
   getLotCountDifference,
   getLotCountDifferenceStyle,
@@ -13,6 +14,22 @@ import {
   isUsMarketOpenNow,
   mergeDashboardHistoricalPrices,
 } from './DashboardPage'
+
+describe('dashboard daily stock counts', () => {
+  it('counts positive and negative tickers, not the size of their changes', () => {
+    expect(countDailyStockChanges([1, 5, -2, -0.01, 0.001])).toEqual({ positive: 3, negative: 2 })
+  })
+
+  it('excludes unchanged, unavailable, and non-finite daily changes', () => {
+    expect(countDailyStockChanges([0, -0, null, NaN, Infinity, -Infinity])).toEqual({
+      positive: 0, negative: 0,
+    })
+  })
+
+  it('shows zero counts for no holdings', () => {
+    expect(countDailyStockChanges([])).toEqual({ positive: 0, negative: 0 })
+  })
+})
 
 describe('dashboard daily portfolio change', () => {
   const transaction: StockTransaction = {
