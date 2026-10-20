@@ -71,6 +71,7 @@ describe('18. User Settings - Target Preferences', () => {
       buyTargetPercentFor4DisplayLots: 15,
       buyTargetPercentFor5DisplayLots: 20,
       buyTargetPercentFor6OrMoreDisplayLots: 25,
+      buyOnDipBuyTargetPercent: 1,
     });
   });
 
@@ -82,6 +83,7 @@ describe('18. User Settings - Target Preferences', () => {
       buyTargetPercentFor4DisplayLots: 13,
       buyTargetPercentFor5DisplayLots: 17.75,
       buyTargetPercentFor6OrMoreDisplayLots: 22.5,
+      buyOnDipBuyTargetPercent: 2.5,
     };
 
     const putResponse = await request(app)
@@ -115,6 +117,7 @@ describe('18. User Settings - Target Preferences', () => {
       buyTargetPercentFor4DisplayLots: 16,
       buyTargetPercentFor5DisplayLots: 21,
       buyTargetPercentFor6OrMoreDisplayLots: 26,
+      buyOnDipBuyTargetPercent: 1.5,
     };
 
     const secondPayload = {
@@ -124,6 +127,7 @@ describe('18. User Settings - Target Preferences', () => {
       buyTargetPercentFor4DisplayLots: 17,
       buyTargetPercentFor5DisplayLots: 22,
       buyTargetPercentFor6OrMoreDisplayLots: 27,
+      buyOnDipBuyTargetPercent: 3,
     };
 
     await request(app)
@@ -164,6 +168,7 @@ describe('18. User Settings - Target Preferences', () => {
         buyTargetPercentFor4DisplayLots: 15,
         buyTargetPercentFor5DisplayLots: 20,
         buyTargetPercentFor6OrMoreDisplayLots: 25,
+        buyOnDipBuyTargetPercent: 1,
       })
       .expect(400);
 
@@ -177,6 +182,23 @@ describe('18. User Settings - Target Preferences', () => {
         buyTargetPercentFor4DisplayLots: 15,
         buyTargetPercentFor5DisplayLots: 20,
         buyTargetPercentFor6OrMoreDisplayLots: 1001,
+        buyOnDipBuyTargetPercent: 1,
+      })
+      .expect(400);
+  });
+
+  it.each([0, -1, 100, 150, 'abc', null, undefined])('rejects invalid Buy on Dip buy target percent %s', async (value) => {
+    await request(app)
+      .put('/api/user-settings/targets')
+      .set('x-user-id', TEST_USER_ID)
+      .send({
+        saleTargetPercent: 10,
+        buyTargetPercentUnder3DisplayLots: 5,
+        buyTargetPercentFor3DisplayLots: 10,
+        buyTargetPercentFor4DisplayLots: 15,
+        buyTargetPercentFor5DisplayLots: 20,
+        buyTargetPercentFor6OrMoreDisplayLots: 25,
+        buyOnDipBuyTargetPercent: value,
       })
       .expect(400);
   });

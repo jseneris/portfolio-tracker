@@ -149,6 +149,7 @@ export default function App() {
               <div className="nav-submenu">
                 <NavLink to="/comparison">vs Indexes</NavLink>
                 <NavLink to="/stock-performance">Stocks</NavLink>
+                <NavLink to="/red-green">Red/Green</NavLink>
                 <NavLink to="/allocations">Allocations</NavLink>
               </div>
             </details>
@@ -190,6 +191,7 @@ export default function App() {
           <Route path="/comparison" element={<ComparisonPage />} />
           <Route path="/comparison-all" element={<ComparisonPage />} />
           <Route path="/stock-performance" element={<ComparisonPage graph="stocks" />} />
+          <Route path="/red-green" element={<ComparisonPage graph="redGreen" />} />
           <Route
             path="/insights"
             element={aiInsightsEnabled ? <PortfolioInsightsPage /> : <Navigate to="/" replace />}

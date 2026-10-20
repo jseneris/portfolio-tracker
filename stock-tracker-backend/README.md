@@ -69,7 +69,7 @@ For Railway, deploy the API with build command `npm run build` and start command
 
 ## Phone Notifications
 
-During scheduled market-hour price-target checks, reaching or falling below a buy target automatically saves **Buy on Dip** when the holding has three or fewer display lots (including zero). The trigger quote is captured as `buyOnDipPrice`; subsequent targets use the existing 1%-below buy and 10%-above sell rules. Active buying restrictions suppress this change. Already-enabled preferences retain their captured price. The change is independent of unread-message deduplication, so an existing unread alert does not prevent it. New buy alerts mention automatic activation. This requires the scheduler to be running; it does not execute a trade.
+During scheduled market-hour price-target checks, reaching or falling below a buy target automatically saves **Buy on Dip** when the holding has three or fewer display lots (including zero). The trigger quote is captured as `buyOnDipPrice`; subsequent targets use the configurable Buy on Dip buy percent (`UserSettings.buyOnDipBuyTargetPercent`, default 1% below) and the 10%-above sell rule. Active buying restrictions suppress this change. Already-enabled preferences retain their captured price. The change is independent of unread-message deduplication, so an existing unread alert does not prevent it. New buy alerts mention automatic activation. This requires the scheduler to be running; it does not execute a trade.
 
 Web Push uses the browser's service worker and sends alerts only after a new price-target message is inserted. Generate a VAPID key pair once with `npx web-push generate-vapid-keys`, then configure these secrets on both the API and scheduler Railway services:
 

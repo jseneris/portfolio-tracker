@@ -259,6 +259,9 @@ async function createTablesIfNotExist() {
         updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
       );
 
+    IF COL_LENGTH('UserSettings', 'buyOnDipBuyTargetPercent') IS NULL
+      ALTER TABLE UserSettings ADD buyOnDipBuyTargetPercent DECIMAL(9, 4) NOT NULL CONSTRAINT DF_UserSettings_BuyOnDipBuyTargetPercent DEFAULT 1;
+
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'UserTickerPreferences')
       CREATE TABLE UserTickerPreferences (
         id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),

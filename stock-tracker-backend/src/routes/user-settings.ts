@@ -10,6 +10,7 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25;
+const DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT = 1;
 
 router.get('/ai-assumptions', async (req: Request, res: Response) => {
   if (!req.user?.id) return res.status(401).json({ error: 'Authentication required.' });
@@ -69,7 +70,8 @@ router.get('/targets', async (req: Request, res: Response) => {
           buyTargetPercentFor3DisplayLots,
           buyTargetPercentFor4DisplayLots,
           buyTargetPercentFor5DisplayLots,
-          buyTargetPercentFor6OrMoreDisplayLots
+          buyTargetPercentFor6OrMoreDisplayLots,
+          buyOnDipBuyTargetPercent
         FROM UserSettings
         WHERE userId = @userId
       `);
@@ -97,6 +99,7 @@ router.get('/targets', async (req: Request, res: Response) => {
         row.buyTargetPercentFor6OrMoreDisplayLots,
         DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS
       ),
+      buyOnDipBuyTargetPercent: normalizeBuyOnDipBuyTargetPercent(row.buyOnDipBuyTargetPercent),
     });
   } catch (error) {
     res.status(500).json({ error: String(error) });
@@ -112,6 +115,7 @@ router.put('/targets', async (req: Request, res: Response) => {
     const buyTargetPercentFor4DisplayLots = Number(req.body?.buyTargetPercentFor4DisplayLots);
     const buyTargetPercentFor5DisplayLots = Number(req.body?.buyTargetPercentFor5DisplayLots);
     const buyTargetPercentFor6OrMoreDisplayLots = Number(req.body?.buyTargetPercentFor6OrMoreDisplayLots);
+    const buyOnDipBuyTargetPercent = Number(req.body?.buyOnDipBuyTargetPercent);
 
     if (!Number.isFinite(saleTargetPercent) || saleTargetPercent <= 0) {
       return res.status(400).json({ error: 'saleTargetPercent must be a positive number' });
@@ -131,6 +135,10 @@ router.put('/targets', async (req: Request, res: Response) => {
     }
     if (!Number.isFinite(buyTargetPercentFor6OrMoreDisplayLots) || buyTargetPercentFor6OrMoreDisplayLots <= 0) {
       return res.status(400).json({ error: 'buyTargetPercentFor6OrMoreDisplayLots must be a positive number' });
+    }
+
+    if (!Number.isFinite(buyOnDipBuyTargetPercent) || buyOnDipBuyTargetPercent <= 0 || buyOnDipBuyTargetPercent >= 100) {
+      return res.status(400).json({ error: 'buyOnDipBuyTargetPercent must be greater than 0 and less than 100' });
     }
 
     if (saleTargetPercent > 1000) {
@@ -160,6 +168,7 @@ router.put('/targets', async (req: Request, res: Response) => {
       .input('buyTargetPercentFor4DisplayLots', sql.Decimal(9, 4), buyTargetPercentFor4DisplayLots)
       .input('buyTargetPercentFor5DisplayLots', sql.Decimal(9, 4), buyTargetPercentFor5DisplayLots)
       .input('buyTargetPercentFor6OrMoreDisplayLots', sql.Decimal(9, 4), buyTargetPercentFor6OrMoreDisplayLots)
+      .input('buyOnDipBuyTargetPercent', sql.Decimal(9, 4), buyOnDipBuyTargetPercent)
       .query(`
         MERGE UserSettings AS target
         USING (SELECT @userId AS userId) AS source
@@ -171,6 +180,7 @@ router.put('/targets', async (req: Request, res: Response) => {
                      buyTargetPercentFor4DisplayLots = @buyTargetPercentFor4DisplayLots,
                      buyTargetPercentFor5DisplayLots = @buyTargetPercentFor5DisplayLots,
                      buyTargetPercentFor6OrMoreDisplayLots = @buyTargetPercentFor6OrMoreDisplayLots,
+                     buyOnDipBuyTargetPercent = @buyOnDipBuyTargetPercent,
                      updatedAt = GETUTCDATE()
         WHEN NOT MATCHED THEN
           INSERT (
@@ -181,7 +191,8 @@ router.put('/targets', async (req: Request, res: Response) => {
             buyTargetPercentFor3DisplayLots,
             buyTargetPercentFor4DisplayLots,
             buyTargetPercentFor5DisplayLots,
-            buyTargetPercentFor6OrMoreDisplayLots
+            buyTargetPercentFor6OrMoreDisplayLots,
+            buyOnDipBuyTargetPercent
           )
           VALUES (
             NEWID(),
@@ -191,7 +202,8 @@ router.put('/targets', async (req: Request, res: Response) => {
             @buyTargetPercentFor3DisplayLots,
             @buyTargetPercentFor4DisplayLots,
             @buyTargetPercentFor5DisplayLots,
-            @buyTargetPercentFor6OrMoreDisplayLots
+            @buyTargetPercentFor6OrMoreDisplayLots,
+            @buyOnDipBuyTargetPercent
           );
       `);
 
@@ -202,6 +214,7 @@ router.put('/targets', async (req: Request, res: Response) => {
       buyTargetPercentFor4DisplayLots,
       buyTargetPercentFor5DisplayLots,
       buyTargetPercentFor6OrMoreDisplayLots,
+      buyOnDipBuyTargetPercent,
     });
   } catch (error) {
     res.status(500).json({ error: String(error) });
@@ -211,6 +224,11 @@ router.put('/targets', async (req: Request, res: Response) => {
 function normalizeTargetPercent(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeBuyOnDipBuyTargetPercent(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 && parsed < 100 ? parsed : DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT;
 }
 
 export default router;

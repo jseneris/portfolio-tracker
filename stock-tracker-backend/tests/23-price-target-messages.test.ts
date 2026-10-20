@@ -180,6 +180,38 @@ describe('23. Price Target Messages', () => {
       expect(messages[0].targetPrice).toBeCloseTo(79.2, 6);
     });
 
+    it('uses the configured Buy on Dip buy target percent', async () => {
+      await buyStock(TICKER, 10, 100, new Date('2026-01-05T15:00:00Z'));
+      await request(app)
+        .put('/api/user-settings/targets')
+        .set('x-user-id', TEST_USER_ID)
+        .send({
+          saleTargetPercent: 10,
+          buyTargetPercentUnder3DisplayLots: 5,
+          buyTargetPercentFor3DisplayLots: 10,
+          buyTargetPercentFor4DisplayLots: 15,
+          buyTargetPercentFor5DisplayLots: 20,
+          buyTargetPercentFor6OrMoreDisplayLots: 25,
+          buyOnDipBuyTargetPercent: 2.5,
+        })
+        .expect(200);
+      await request(app)
+        .put(`/api/ticker-preferences/${TICKER}`)
+        .set('x-user-id', TEST_USER_ID)
+        .send({ buyOnDip: true, buyOnDipPrice: 80, buyRestricted: false, buyRestrictedUntil: null })
+        .expect(200);
+
+      await runCycle(79);
+      expect(await listMessages()).toHaveLength(0);
+
+      await runCycle(78);
+
+      const messages = await listMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0].type).toBe('buy-target-hit');
+      expect(messages[0].targetPrice).toBeCloseTo(78, 6);
+    });
+
     it('uses a sell target 10% above the captured Buy on Dip price', async () => {
       await buyStock(TICKER, 10, 100, new Date('2026-01-05T15:00:00Z'));
       await request(app)

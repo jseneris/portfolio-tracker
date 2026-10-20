@@ -36,6 +36,7 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10
 const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25
+const DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT = 1
 
 export function getSplitAdjustedTargetBasePrice(
   transaction: StockTransaction | undefined,
@@ -474,7 +475,13 @@ export default function DashboardPage() {
       buyTargetPercentFor4DisplayLots: normalizePositivePercent(settings.buyTargetPercentFor4DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS),
       buyTargetPercentFor5DisplayLots: normalizePositivePercent(settings.buyTargetPercentFor5DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS),
       buyTargetPercentFor6OrMoreDisplayLots: normalizePositivePercent(settings.buyTargetPercentFor6OrMoreDisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS),
+      buyOnDipBuyTargetPercent: normalizeBuyOnDipBuyTargetPercent(settings.buyOnDipBuyTargetPercent),
     }
+  }
+
+  function normalizeBuyOnDipBuyTargetPercent(value: unknown): number {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) && parsed > 0 && parsed < 100 ? parsed : DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT
   }
 
   function buildLatestBuyOrSellByTicker(transactions: StockTransaction[]): Map<string, StockTransaction> {
@@ -578,7 +585,7 @@ export default function DashboardPage() {
       const ticker = String(stock.ticker || '').toUpperCase()
       const preference = preferencesByTicker[ticker]
       if (preference?.buyOnDip && preference.buyOnDipPrice != null && Number.isFinite(preference.buyOnDipPrice) && preference.buyOnDipPrice > 0) {
-        targets[ticker] = Number((preference.buyOnDipPrice * 0.99).toFixed(8))
+        targets[ticker] = Number((preference.buyOnDipPrice * (1 - settings.buyOnDipBuyTargetPercent / 100)).toFixed(8))
         continue
       }
       const displayLotCount = Number(displayLotCountsByTicker[ticker] || 0)

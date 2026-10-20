@@ -272,11 +272,11 @@ Request body:
 
 ### GET /api/user-settings/targets
 - Returns user target settings with defaults if row is missing.
-- Fields include sale target percent and buy target thresholds by display-lot count bands.
+- Fields include sale target percent, buy target thresholds by display-lot count bands, and `buyOnDipBuyTargetPercent` (default 1).
 
 ### PUT /api/user-settings/targets
 - Upserts user target settings.
-- Validates all target fields are finite positive numbers and bounds-checks large values.
+- Validates all target fields are finite positive numbers and bounds-checks large values. `buyOnDipBuyTargetPercent` is required and must be greater than 0 and less than 100.
 
 ## Ticker Preferences
 
@@ -291,7 +291,7 @@ Request body:
 ### PUT /api/ticker-preferences/:ticker
 - Upserts one row keyed by current user and normalized ticker.
 - Request fields: `buyOnDip`, optional `buyOnDipPrice`, `buyRestricted`, and `buyRestrictedUntil`.
-- The frontend captures `buyOnDipPrice` when checking Buy on Dip and submits it on Save Preferences. A supplied price must be a finite positive number within `DECIMAL(18,8)` precision/range. While enabled, targets are 110% (sell) and 99% (buy) of this price, rounded to eight decimal places; quotes do not move the targets. Omitting the price preserves the stored value when enabled, while disabling clears it. Legacy preferences without a price fall back to normal target rules.
+- The frontend captures `buyOnDipPrice` when checking Buy on Dip and submits it on Save Preferences. A supplied price must be a finite positive number within `DECIMAL(18,8)` precision/range. While enabled, targets are 110% (sell) of this price and `buyOnDipBuyTargetPercent` from user settings below it (buy, default 1%), rounded to eight decimal places; quotes do not move the targets. Omitting the price preserves the stored value when enabled, while disabling clears it. Legacy preferences without a price fall back to normal target rules.
 - A valid `YYYY-MM-DD` restriction date is required when `buyRestricted` is enabled.
 - Restrictions are active through the selected date and expire automatically afterward.
 

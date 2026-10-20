@@ -302,6 +302,7 @@ export type UserTargetSettings = {
   buyTargetPercentFor4DisplayLots: number
   buyTargetPercentFor5DisplayLots: number
   buyTargetPercentFor6OrMoreDisplayLots: number
+  buyOnDipBuyTargetPercent: number
 }
 
 export type UserProfile = {

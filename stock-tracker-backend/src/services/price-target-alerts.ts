@@ -10,6 +10,7 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20;
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25;
+const DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT = 1;
 const QUANTITY_TOLERANCE = 1e-6;
 
 type TargetSettings = {
@@ -19,6 +20,7 @@ type TargetSettings = {
   buyTargetPercentFor4DisplayLots: number;
   buyTargetPercentFor5DisplayLots: number;
   buyTargetPercentFor6OrMoreDisplayLots: number;
+  buyOnDipBuyTargetPercent: number;
 };
 
 type MessageType = 'buy-target-hit' | 'sell-target-hit';
@@ -40,6 +42,11 @@ export type PriceTargetCycleSummary = {
 function positiveOr(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function buyOnDipPercentOr(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 && parsed < 100 ? parsed : DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT;
 }
 
 function toDateOnly(value: Date | string | null | undefined): string {
@@ -147,7 +154,8 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
     `),
     pool.request().query(`
       SELECT userId, saleTargetPercent, buyTargetPercentUnder3DisplayLots, buyTargetPercentFor3DisplayLots,
-             buyTargetPercentFor4DisplayLots, buyTargetPercentFor5DisplayLots, buyTargetPercentFor6OrMoreDisplayLots
+             buyTargetPercentFor4DisplayLots, buyTargetPercentFor5DisplayLots, buyTargetPercentFor6OrMoreDisplayLots,
+             buyOnDipBuyTargetPercent
       FROM UserSettings
     `),
     pool.request().query(`
@@ -191,6 +199,7 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
       buyTargetPercentFor4DisplayLots: positiveOr(row.buyTargetPercentFor4DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS),
       buyTargetPercentFor5DisplayLots: positiveOr(row.buyTargetPercentFor5DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS),
       buyTargetPercentFor6OrMoreDisplayLots: positiveOr(row.buyTargetPercentFor6OrMoreDisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS),
+      buyOnDipBuyTargetPercent: buyOnDipPercentOr(row.buyOnDipBuyTargetPercent),
     });
   }
   const defaultSettings: TargetSettings = {
@@ -200,6 +209,7 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
     buyTargetPercentFor4DisplayLots: DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS,
     buyTargetPercentFor5DisplayLots: DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS,
     buyTargetPercentFor6OrMoreDisplayLots: DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS,
+    buyOnDipBuyTargetPercent: DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT,
   };
 
   const preferences = new Map<string, { baseSize: number; buyOnDip: boolean; buyOnDipPrice: number | null; isBuyRestricted: boolean }>();
@@ -278,7 +288,7 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
 
     if (preference?.buyOnDip && preference.buyOnDipPrice != null && Number.isFinite(preference.buyOnDipPrice) && preference.buyOnDipPrice > 0) {
       sellTarget = Number((preference.buyOnDipPrice * 1.10).toFixed(8));
-      buyTarget = Number((preference.buyOnDipPrice * 0.99).toFixed(8));
+      buyTarget = Number((preference.buyOnDipPrice * (1 - settings.buyOnDipBuyTargetPercent / 100)).toFixed(8));
     }
 
     if (sellTarget != null && price >= sellTarget) {

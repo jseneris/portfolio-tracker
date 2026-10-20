@@ -98,6 +98,7 @@ describe('19. Database Schema - Clean Install', () => {
       'buyTargetPercentFor6OrMoreDisplayLots',
       'createdAt',
       'updatedAt',
+      'buyOnDipBuyTargetPercent',
     ]);
 
     const userTickerPreferencesColumnsResult = await pool.request().query(`

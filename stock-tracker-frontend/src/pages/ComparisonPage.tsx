@@ -13,6 +13,7 @@ import {
 import { formatCurrency2 } from '../formatters'
 import { calculatePortfolioValue } from '../portfolioSnapshot'
 import StocksPerformanceChart from './StocksPerformanceChart'
+import RedGreenChart from './RedGreenChart'
 
 type YearSelection = number | 'all'
 
@@ -81,7 +82,7 @@ function alignPortfolioValues(points: PortfolioComparisonPoint[]): PortfolioComp
   }))
 }
 
-export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes' | 'stocks' }) {
+export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes' | 'stocks' | 'redGreen' }) {
   const [stocksRefreshKey, setStocksRefreshKey] = useState(0)
   const [selectedYear, setSelectedYear] = useState<YearSelection | null>(null)
   const [points, setPoints] = useState<PortfolioComparisonPoint[]>([])
@@ -544,7 +545,7 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
     setError(null)
     setSuccess(null)
     try {
-      if (graph === 'stocks' && stockTransactions.length === 0) {
+      if (graph !== 'indexes' && stockTransactions.length === 0) {
         setStocksRefreshKey((previous) => previous + 1)
         return
       }
@@ -632,9 +633,11 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
     <section>
       <div className="panel row-between">
         <div>
-          <h2>{graph === 'indexes' ? 'vs Indexes' : 'Stocks'} Performance ({selectedYearLabel})</h2>
+          <h2>{graph === 'redGreen' ? 'Red/Green' : `${graph === 'indexes' ? 'vs Indexes' : 'Stocks'} Performance`} ({selectedYearLabel})</h2>
           <p>{graph === 'indexes'
             ? 'Portfolio vs Indexes: uses Yahoo closes on cash deposit/withdrawal dates plus the year-end date for each selected year.'
+            : graph === 'redGreen'
+            ? 'Red/Green: number of held stocks that closed up (green, above zero) or down (red, below zero) each trading day.'
             : `Stocks: combined cumulative gain/loss including realized gains, unrealized gains, and reinvested dividends. ${selectedYear === 'all' ? 'Initial buys shows buy-and-hold gain/loss for marked Initial Purchases, ignoring later sales and excluding subsequent purchases and dividends. ' : ''}Select individual stocks below to add their lines. Each selected period starts at zero, using the prior close for existing holdings.`}</p>
         </div>
         <div className="inline-actions">
@@ -676,6 +679,8 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
       <div className="panel comparison-chart-panel">
         {graph === 'stocks' ? (
           <StocksPerformanceChart transactions={stockTransactions} selectedYear={selectedYear} refreshKey={stocksRefreshKey} onWatchlistChange={setWatchlistItems} />
+        ) : graph === 'redGreen' ? (
+          <RedGreenChart transactions={stockTransactions} selectedYear={selectedYear} refreshKey={stocksRefreshKey} />
         ) : loading ? (
           <div className="comparison-chart-loading">
             <div className="comparison-spinner" aria-hidden="true">

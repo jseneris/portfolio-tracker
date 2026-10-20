@@ -91,6 +91,16 @@ describe('performance graph selection', () => {
     expect(html).not.toContain('Stocks</option>')
   })
 
+  it('shows the red/green view when selected by its route with the same year selector', () => {
+    const html = renderToStaticMarkup(createElement(ComparisonPage, { graph: 'redGreen' }))
+    expect(html).toContain('Red/Green (')
+    expect(html).toContain('Red/Green: number of held stocks')
+    expect(html).toContain('<option value="all">All</option>')
+    expect(html).toContain('Recalculate')
+    expect(html).not.toContain('Portfolio vs Indexes:')
+    expect(html).not.toContain('No chart data loaded yet.')
+  })
+
   it('renders only the combined line by default with unchecked individual stock selectors', () => {
     const html = renderToStaticMarkup(createElement(StocksGainLossChart, {
       tickers: ['AAA', 'BBB'],

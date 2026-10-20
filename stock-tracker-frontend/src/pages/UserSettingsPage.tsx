@@ -14,6 +14,7 @@ const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10
 const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15
 const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20
 const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25
+const DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT = 1
 
 function decodeApplicationServerKey(value: string): ArrayBuffer {
   const padding = '='.repeat((4 - (value.length % 4)) % 4)
@@ -45,6 +46,7 @@ export default function UserSettingsPage() {
   const [buyTargetPercentFor4DisplayLots, setBuyTargetPercentFor4DisplayLots] = useState(String(DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS))
   const [buyTargetPercentFor5DisplayLots, setBuyTargetPercentFor5DisplayLots] = useState(String(DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS))
   const [buyTargetPercentFor6OrMoreDisplayLots, setBuyTargetPercentFor6OrMoreDisplayLots] = useState(String(DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS))
+  const [buyOnDipBuyTargetPercent, setBuyOnDipBuyTargetPercent] = useState(String(DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT))
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -104,6 +106,7 @@ export default function UserSettingsPage() {
           setBuyTargetPercentFor4DisplayLots(String(settings.buyTargetPercentFor4DisplayLots))
           setBuyTargetPercentFor5DisplayLots(String(settings.buyTargetPercentFor5DisplayLots))
           setBuyTargetPercentFor6OrMoreDisplayLots(String(settings.buyTargetPercentFor6OrMoreDisplayLots))
+          setBuyOnDipBuyTargetPercent(String(settings.buyOnDipBuyTargetPercent))
         }
       } catch (err: unknown) {
         if (!cancelled) {
@@ -164,6 +167,12 @@ export default function UserSettingsPage() {
       return
     }
 
+    const parsedBuyOnDipBuyTargetPercent = Number(buyOnDipBuyTargetPercent)
+    if (!Number.isFinite(parsedBuyOnDipBuyTargetPercent) || parsedBuyOnDipBuyTargetPercent <= 0 || parsedBuyOnDipBuyTargetPercent >= 100) {
+      setError('Buy on Dip buy target percent must be greater than 0 and less than 100.')
+      return
+    }
+
     setSaving(true)
     try {
       const updated = await updateUserTargetSettings({
@@ -173,6 +182,7 @@ export default function UserSettingsPage() {
         buyTargetPercentFor4DisplayLots: parsedBuyTargetPercentFor4DisplayLots,
         buyTargetPercentFor5DisplayLots: parsedBuyTargetPercentFor5DisplayLots,
         buyTargetPercentFor6OrMoreDisplayLots: parsedBuyTargetPercentFor6OrMoreDisplayLots,
+        buyOnDipBuyTargetPercent: parsedBuyOnDipBuyTargetPercent,
       })
       setSaleTargetPercent(String(updated.saleTargetPercent))
       setBuyTargetPercentUnder3DisplayLots(String(updated.buyTargetPercentUnder3DisplayLots))
@@ -180,6 +190,7 @@ export default function UserSettingsPage() {
       setBuyTargetPercentFor4DisplayLots(String(updated.buyTargetPercentFor4DisplayLots))
       setBuyTargetPercentFor5DisplayLots(String(updated.buyTargetPercentFor5DisplayLots))
       setBuyTargetPercentFor6OrMoreDisplayLots(String(updated.buyTargetPercentFor6OrMoreDisplayLots))
+      setBuyOnDipBuyTargetPercent(String(updated.buyOnDipBuyTargetPercent))
       setSuccess('User settings saved.')
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Unable to save user settings.')
@@ -345,6 +356,22 @@ export default function UserSettingsPage() {
                   step="0.0001"
                   value={buyTargetPercentFor6OrMoreDisplayLots}
                   onChange={(event) => setBuyTargetPercentFor6OrMoreDisplayLots(event.target.value)}
+                  disabled={saving}
+                />
+              </label>
+            </div>
+
+            <div className="target-settings-section target-settings-divider">
+              <h3>Buy on Dip</h3>
+              <label>
+                New Buy Target Percent Below Buy on Dip Price
+                <input
+                  type="number"
+                  min="0.0001"
+                  max="99.9999"
+                  step="0.0001"
+                  value={buyOnDipBuyTargetPercent}
+                  onChange={(event) => setBuyOnDipBuyTargetPercent(event.target.value)}
                   disabled={saving}
                 />
               </label>
