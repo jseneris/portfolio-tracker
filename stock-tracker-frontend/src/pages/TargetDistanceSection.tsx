@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import {
   getAllStockSplits, getCurrentPrices, getDisplayLots, getHistoricalPrices,
   getPortfolioSummary, getStockTransactions, getTickerPreferences, getUserTargetSettings,
+  type PortfolioReview,
 } from '../api'
 import { formatStockPrice4 } from '../formatters'
 import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, normalizeTargetSettings } from '../targetPrices'
@@ -31,8 +32,18 @@ export function getTargetDistanceRows(inputs: TargetDistanceInput[]) {
   }).sort((a, b) => b.tier - a.tier || b.minimum - a.minimum || a.ticker.localeCompare(b.ticker))
 }
 
-export function TargetDistanceTable({ inputs }: { inputs: TargetDistanceInput[] }) {
+type AcquisitionTiming = NonNullable<PortfolioReview['snapshot']['holdingReviewContext']>
+
+export function TargetDistanceTable({ inputs, acquisitionTiming }: { inputs: TargetDistanceInput[]; acquisitionTiming?: AcquisitionTiming }) {
   const rows = getTargetDistanceRows(inputs)
+  const timingByTicker = new Map(acquisitionTiming?.map((holding) => [holding.ticker.toUpperCase(), holding]))
+  function timingLabel(ticker: string) {
+    const holding = timingByTicker.get(ticker.toUpperCase())
+    const days = holding?.daysUntilPriorAcquisitionWindowClears
+    if (days == null) return 'Unknown'
+    if (days === 0) return 'Prior window clear (0 days remaining)'
+    return `Within prior acquisition window - ${days} ${days === 1 ? 'day' : 'days'} until clear${holding?.priorAcquisitionWindowClearsOn ? ` (${holding.priorAcquisitionWindowClearsOn})` : ''}`
+  }
   return <>
     {[30, 25, 20].map((tier) => {
       const group = rows.filter((row) => row.tier === tier)
@@ -40,12 +51,13 @@ export function TargetDistanceTable({ inputs }: { inputs: TargetDistanceInput[] 
         <h4>{tier === 30 ? '30% or more' : `${tier}% to under ${tier + 5}%`} from both targets ({group.length})</h4>
         {group.length ? <div className="table-scroll">
           <table className="table">
-            <thead><tr><th>Ticker</th><th>Price</th><th>Price as of</th><th>Buy target</th><th>Above buy target</th><th>Sell target</th><th>Below sell target</th></tr></thead>
+            <thead><tr><th>Ticker</th><th>Price</th><th>Price as of</th><th>Buy target</th><th>Above buy target</th><th>Sell target</th><th>Below sell target</th><th>Prior acquisition window</th></tr></thead>
             <tbody>{group.map((row) => <tr key={row.ticker}>
               <td><Link to={`/stocks/${encodeURIComponent(row.ticker)}`}>{row.ticker}</Link></td>
               <td>{formatStockPrice4(row.price)}</td><td>{row.priceLabel}</td>
               <td>{formatStockPrice4(row.buy)}</td><td>{formatStockPrice4(row.aboveBuyAmount)} ({row.aboveBuy.toFixed(2)}%)</td>
               <td>{formatStockPrice4(row.sell)}</td><td>{formatStockPrice4(row.belowSellAmount)} ({row.belowSell.toFixed(2)}%)</td>
+              <td>{timingLabel(row.ticker)}</td>
             </tr>)}</tbody>
           </table>
         </div> : <p>No qualifying tickers in this tier.</p>}
@@ -111,7 +123,7 @@ export async function loadTargetDistances() {
   return { inputs, excluded, warning }
 }
 
-export default function TargetDistanceSection() {
+export default function TargetDistanceSection({ acquisitionTiming }: { acquisitionTiming?: AcquisitionTiming }) {
   const [result, setResult] = useState<Awaited<ReturnType<typeof loadTargetDistances>> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -140,10 +152,13 @@ export default function TargetDistanceSection() {
       Each percentage is measured from its target price. Each ticker appears once in its highest qualifying tier,
       based on the smaller of the two distances, largest first. Uses live prices during the regular US market session
       when available, otherwise the latest stored close. As of page load; reload the page to update.</p>
+    <p className="muted-text">Prior acquisition timing uses the latest tracked buy or dividend reinvestment and clears on day 31.
+      Zero means the prior window is clear, not confirmed wash-sale eligibility. Future purchases, outside accounts,
+      and substantially identical securities remain unknown. Missing timing data is shown as Unknown.</p>
     {loading ? <p role="status">Loading target distances...</p> : null}
     {error ? <p className="status status-error" role="alert">{error}</p> : null}
     {result?.warning ? <p className="status status-warning" role="status">{result.warning}</p> : null}
     {result?.excluded.length ? <p className="status status-warning">Excluded (missing price or valid targets): {result.excluded.join(', ')}.</p> : null}
-    {result ? <TargetDistanceTable inputs={result.inputs} /> : null}
+    {result ? <TargetDistanceTable inputs={result.inputs} acquisitionTiming={acquisitionTiming} /> : null}
   </section>
 }

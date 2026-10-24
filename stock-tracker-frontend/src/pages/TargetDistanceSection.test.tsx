@@ -16,6 +16,32 @@ const settings: api.UserTargetSettings = {
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
 
 describe('target-distance tiers', () => {
+  it.each([
+    [12, 'Within prior acquisition window - 12 days until clear (2026-11-05)'],
+    [1, 'Within prior acquisition window - 1 day until clear (2026-11-05)'],
+    [0, 'Prior window clear (0 days remaining)'],
+    [null, 'Unknown'],
+  ])('shows prior-acquisition timing for %s days without applying loss-review filters', (days, label) => {
+    const timing: NonNullable<api.PortfolioReview['snapshot']['holdingReviewContext']>[number] = {
+      ticker: 'test', displayLotCount: 1, yearlyGainLoss: 100, matchesLossReviewFilter: false,
+      lastTrackedAcquisitionDate: '2026-10-05', priorAcquisitionWindowClearsOn: '2026-11-05',
+      daysUntilPriorAcquisitionWindowClears: days,
+      lastTrackedDividendDate: null, nextDeclaredDividendDate: null,
+      daysUntilNextDividend: null, daysSinceLastDividend: null,
+    }
+    const html = renderToStaticMarkup(createElement(StaticRouter, { location: '/review' },
+      createElement(TargetDistanceTable, { inputs: [input], acquisitionTiming: [timing] })))
+    expect(html).toContain('Prior acquisition window')
+    expect(html).toContain(label)
+  })
+
+  it('shows unknown rather than clear when a ticker has no timing data', () => {
+    const html = renderToStaticMarkup(createElement(StaticRouter, { location: '/review' },
+      createElement(TargetDistanceTable, { inputs: [input], acquisitionTiming: [] })))
+    expect(html).toContain('<td>Unknown</td>')
+    expect(html).not.toContain('Prior window clear')
+  })
+
   it.each([20, 25, 30])('includes exact %s%% boundaries measured from each target', (threshold) => {
     const [row] = getTargetDistanceRows([{ ...input, buy: 100, price: 100 + threshold, sell: (100 + threshold) / (1 - threshold / 100) }])
     expect(row.tier).toBe(threshold)

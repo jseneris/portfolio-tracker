@@ -136,7 +136,7 @@ export default function ReviewPage() {
     <header className="row-between insights-heading">
       <div><p className="eyebrow">Calculated portfolio review</p><h2>Review</h2><p className="muted-text">Holdings, cash deployment, targets, and loss timing. No AI required. As of page load; reload the page to update.</p></div>
     </header>
-    <TargetDistanceSection />
+    <TargetDistanceSection acquisitionTiming={review?.snapshot.holdingReviewContext} />
     {error ? <p className="status status-error" role="alert">{error}</p> : null}
     {loading ? <p role="status">Loading portfolio review...</p> : null}
     {review ? <ReviewSections review={review} /> : null}
