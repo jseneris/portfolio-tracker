@@ -29,31 +29,8 @@ import {
 } from '../api'
 import { formatCurrency2, formatStockPrice4, getLocalDateString } from '../formatters'
 import { calculatePortfolioSnapshot, calculateTickerYearlyGainLoss, calculateYearlyGainLoss, createSplitMultiplierResolver } from '../portfolioSnapshot'
-
-const DEFAULT_SALE_TARGET_PERCENT = 10
-const DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS = 5
-const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10
-const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15
-const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20
-const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25
-const DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT = 1
-
-export function getSplitAdjustedTargetBasePrice(
-  transaction: StockTransaction | undefined,
-  splitEvents: StockSplitEvent[],
-  snapshotDate: string
-): number | null {
-  const originalPrice = Number(transaction?.price)
-  const transactionDate = toDateOnly(String(transaction?.transactionDate || ''))
-  const ticker = String(transaction?.ticker || '').toUpperCase()
-  if (!Number.isFinite(originalPrice) || originalPrice <= 0 || !transactionDate || !ticker) {
-    return null
-  }
-
-  const splitMultiplier = createSplitMultiplierResolver(splitEvents, snapshotDate)(ticker, transactionDate)
-  const adjustedPrice = originalPrice / splitMultiplier
-  return Number.isFinite(adjustedPrice) && adjustedPrice > 0 ? adjustedPrice : null
-}
+import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, normalizeTargetSettings } from '../targetPrices'
+export { getSplitAdjustedTargetBasePrice } from '../targetPrices'
 
 type AddStockFormState = {
   ticker: string
@@ -462,63 +439,6 @@ export default function DashboardPage() {
   const [holdingsSortDirection, setHoldingsSortDirection] = useState<'asc' | 'desc'>('desc')
   const [expandedHoldingTickers, setExpandedHoldingTickers] = useState<Set<string>>(() => new Set())
 
-  function normalizePositivePercent(value: unknown, fallback: number): number {
-    const parsed = Number(value)
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-  }
-
-  function normalizeSettings(settings: UserTargetSettings): UserTargetSettings {
-    return {
-      saleTargetPercent: normalizePositivePercent(settings.saleTargetPercent, DEFAULT_SALE_TARGET_PERCENT),
-      buyTargetPercentUnder3DisplayLots: normalizePositivePercent(settings.buyTargetPercentUnder3DisplayLots, DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS),
-      buyTargetPercentFor3DisplayLots: normalizePositivePercent(settings.buyTargetPercentFor3DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS),
-      buyTargetPercentFor4DisplayLots: normalizePositivePercent(settings.buyTargetPercentFor4DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS),
-      buyTargetPercentFor5DisplayLots: normalizePositivePercent(settings.buyTargetPercentFor5DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS),
-      buyTargetPercentFor6OrMoreDisplayLots: normalizePositivePercent(settings.buyTargetPercentFor6OrMoreDisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS),
-      buyOnDipBuyTargetPercent: normalizeBuyOnDipBuyTargetPercent(settings.buyOnDipBuyTargetPercent),
-    }
-  }
-
-  function normalizeBuyOnDipBuyTargetPercent(value: unknown): number {
-    const parsed = Number(value)
-    return Number.isFinite(parsed) && parsed > 0 && parsed < 100 ? parsed : DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT
-  }
-
-  function buildLatestBuyOrSellByTicker(transactions: StockTransaction[]): Map<string, StockTransaction> {
-    const latestByTicker = new Map<string, StockTransaction>()
-
-    for (const tx of transactions) {
-      const type = String(tx.type || '').toLowerCase()
-      if (type !== 'buy' && type !== 'sell') {
-        continue
-      }
-
-      const price = Number(tx.price)
-      if (!Number.isFinite(price) || price <= 0) {
-        continue
-      }
-
-      const ticker = String(tx.ticker || '').toUpperCase()
-      if (!ticker) {
-        continue
-      }
-
-      const existing = latestByTicker.get(ticker)
-      if (!existing) {
-        latestByTicker.set(ticker, tx)
-        continue
-      }
-
-      const existingTs = new Date(existing.transactionDate).getTime()
-      const currentTs = new Date(tx.transactionDate).getTime()
-      if (currentTs > existingTs) {
-        latestByTicker.set(ticker, tx)
-      }
-    }
-
-    return latestByTicker
-  }
-
   function getTickersFromTransactions(transactions: StockTransaction[]): string[] {
     return Array.from(new Set(
       transactions
@@ -527,44 +447,20 @@ export default function DashboardPage() {
     ))
   }
 
-  function getBuyTargetPercentForDisplayLotCount(settings: UserTargetSettings, displayLotCount: number): number {
-    if (displayLotCount < 3) {
-      return settings.buyTargetPercentUnder3DisplayLots
-    }
-    if (displayLotCount === 3) {
-      return settings.buyTargetPercentFor3DisplayLots
-    }
-    if (displayLotCount === 4) {
-      return settings.buyTargetPercentFor4DisplayLots
-    }
-    if (displayLotCount === 5) {
-      return settings.buyTargetPercentFor5DisplayLots
-    }
-    return settings.buyTargetPercentFor6OrMoreDisplayLots
-  }
-
   function calculateSaleTargetsByTicker(
     summary: PortfolioSummary,
     latestByTicker: Map<string, StockTransaction>,
-    saleTargetPercent: number,
+    settings: UserTargetSettings,
     splitEvents: StockSplitEvent[],
     snapshotDate: string,
     preferencesByTicker: Record<string, TickerPreference>
   ): Record<string, number | null> {
     const targets: Record<string, number | null> = {}
-    const multiplier = 1 + saleTargetPercent / 100
     for (const stock of summary.stocks) {
       const ticker = String(stock.ticker || '').toUpperCase()
-      const preference = preferencesByTicker[ticker]
-      if (preference?.buyOnDip && preference.buyOnDipPrice != null && Number.isFinite(preference.buyOnDipPrice) && preference.buyOnDipPrice > 0) {
-        targets[ticker] = Number((preference.buyOnDipPrice * 1.10).toFixed(8))
-        continue
-      }
       const baseTx = latestByTicker.get(ticker)
       const basePrice = getSplitAdjustedTargetBasePrice(baseTx, splitEvents, snapshotDate)
-      targets[ticker] = basePrice != null
-        ? basePrice * multiplier
-        : null
+      targets[ticker] = calculateTickerTargets(basePrice, 0, settings, preferencesByTicker[ticker]).sell
     }
 
     return targets
@@ -583,22 +479,10 @@ export default function DashboardPage() {
 
     for (const stock of summary.stocks) {
       const ticker = String(stock.ticker || '').toUpperCase()
-      const preference = preferencesByTicker[ticker]
-      if (preference?.buyOnDip && preference.buyOnDipPrice != null && Number.isFinite(preference.buyOnDipPrice) && preference.buyOnDipPrice > 0) {
-        targets[ticker] = Number((preference.buyOnDipPrice * (1 - settings.buyOnDipBuyTargetPercent / 100)).toFixed(8))
-        continue
-      }
       const displayLotCount = Number(displayLotCountsByTicker[ticker] || 0)
-      const buyTargetPercent = getBuyTargetPercentForDisplayLotCount(settings, displayLotCount)
-
       const baseTx = latestByTicker.get(ticker)
       const basePrice = getSplitAdjustedTargetBasePrice(baseTx, splitEvents, snapshotDate)
-      if (basePrice == null) {
-        targets[ticker] = null
-        continue
-      }
-
-      targets[ticker] = basePrice * (1 - buyTargetPercent / 100)
+      targets[ticker] = calculateTickerTargets(basePrice, displayLotCount, settings, preferencesByTicker[ticker]).buy
     }
 
     return targets
@@ -1053,7 +937,7 @@ export default function DashboardPage() {
       const sellTransactions = transactionsResult.filter((tx) => tx.type === 'sell')
       setSaleAllocationsBySaleId(await getSaleAllocationsByTransactionIds(sellTransactions.map((tx) => tx.id)))
 
-      const normalizedSettings = normalizeSettings(settingsResult)
+      const normalizedSettings = normalizeTargetSettings(settingsResult)
       const preferencesByTicker = Object.fromEntries(
         tickerPreferencesResult.map((preference) => [preference.ticker, preference])
       )
@@ -1081,7 +965,7 @@ export default function DashboardPage() {
       setSaleTargetsByTicker(calculateSaleTargetsByTicker(
         summary,
         latestByTicker,
-        normalizedSettings.saleTargetPercent,
+        normalizedSettings,
         splitEventsResult,
         snapshotDate,
         preferencesByTicker

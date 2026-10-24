@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { useAppAuth } from './auth'
 import { getUnreadMessageCount, getUserProfile } from './api'
+import { updateAppBadge } from './appBadge'
 import DashboardPage from './pages/DashboardPage'
 import CashPage from './pages/CashPage'
 import StocksPage from './pages/StocksPage'
@@ -12,6 +13,7 @@ import StockSplitsPage from './pages/StockSplitsPage'
 import UserSettingsPage from './pages/UserSettingsPage'
 import AllocationsPage from './pages/AllocationsPage'
 import PortfolioInsightsPage from './pages/PortfolioInsightsPage'
+import ReviewPage from './pages/ReviewPage'
 import MessagesPage, { MESSAGES_UPDATED_EVENT } from './pages/MessagesPage'
 
 const UNREAD_MESSAGES_POLL_MS = 5 * 60 * 1000
@@ -30,29 +32,53 @@ export default function App() {
   useEffect(() => {
     if (auth.isLoading || !auth.isAuthenticated) {
       setUnreadMessageCount(0)
+      if (!auth.isLoading) void updateAppBadge(0)
       return
     }
 
     let cancelled = false
+    let refreshVersion = 0
 
     function refreshUnreadCount() {
+      const version = ++refreshVersion
       getUnreadMessageCount()
         .then((count) => {
-          if (!cancelled) setUnreadMessageCount(count)
+          if (!cancelled && version === refreshVersion) {
+            setUnreadMessageCount(count)
+            void updateAppBadge(count)
+          }
         })
-        .catch(() => undefined)
+        .catch((error) => {
+          console.error('[messages] Unable to refresh the unread count:', error)
+        })
+    }
+
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') refreshUnreadCount()
+    }
+
+    function onServiceWorkerMessage(event: MessageEvent) {
+      if (event.data?.type === MESSAGES_UPDATED_EVENT) refreshUnreadCount()
     }
 
     refreshUnreadCount()
     const intervalId = window.setInterval(refreshUnreadCount, UNREAD_MESSAGES_POLL_MS)
     window.addEventListener('focus', refreshUnreadCount)
     window.addEventListener(MESSAGES_UPDATED_EVENT, refreshUnreadCount)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', onServiceWorkerMessage)
+    }
 
     return () => {
       cancelled = true
       window.clearInterval(intervalId)
       window.removeEventListener('focus', refreshUnreadCount)
       window.removeEventListener(MESSAGES_UPDATED_EVENT, refreshUnreadCount)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', onServiceWorkerMessage)
+      }
     }
   }, [auth.isAuthenticated, auth.isLoading])
 
@@ -153,6 +179,7 @@ export default function App() {
                 <NavLink to="/allocations">Allocations</NavLink>
               </div>
             </details>
+            <NavLink to="/review">Review</NavLink>
             {window.location.hostname === 'localhost' && aiInsightsEnabled ? (
               <NavLink to="/insights">Insights</NavLink>
             ) : null}
@@ -186,6 +213,7 @@ export default function App() {
           <Route path="/stocks" element={<StocksPage />} />
           <Route path="/stocks/:ticker" element={<StockHistoryPage />} />
           <Route path="/holdings" element={<HoldingsPage />} />
+          <Route path="/review" element={<ReviewPage />} />
           <Route path="/allocations" element={<AllocationsPage />} />
           <Route path="/splits" element={<StockSplitsPage />} />
           <Route path="/comparison" element={<ComparisonPage />} />
@@ -194,7 +222,7 @@ export default function App() {
           <Route path="/red-green" element={<ComparisonPage graph="redGreen" />} />
           <Route
             path="/insights"
-            element={aiInsightsEnabled ? <PortfolioInsightsPage /> : <Navigate to="/" replace />}
+            element={window.location.hostname === 'localhost' && aiInsightsEnabled ? <PortfolioInsightsPage /> : <Navigate to="/" replace />}
           />
           <Route path="/messages" element={<MessagesPage />} />
           <Route path="/user-settings" element={<UserSettingsPage />} />

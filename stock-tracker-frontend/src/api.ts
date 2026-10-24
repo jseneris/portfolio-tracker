@@ -450,6 +450,8 @@ export type PortfolioInsightsChatTurn = {
   content: string
 }
 
+export type PortfolioReview = Pick<PortfolioInsightsReport, 'generatedAt' | 'snapshot' | 'facts' | 'limitations'>
+
 export type AppMessage = {
   id: string
   type: 'buy-target-hit' | 'sell-target-hit' | 'ai-chat'
@@ -807,6 +809,14 @@ export async function generatePortfolioInsights(): Promise<PortfolioInsightsRepo
   return requestApi<PortfolioInsightsReport>('/api/portfolio-insights', { method: 'POST' })
 }
 
+export async function getPortfolioReview(): Promise<PortfolioReview> {
+  return requestApi<PortfolioReview>('/api/portfolio-review')
+}
+
+export async function getAiAvailability(): Promise<{ available: boolean; reason?: string }> {
+  return requestApi<{ available: boolean; reason?: string }>('/api/portfolio-insights/status')
+}
+
 export async function getAiAssumptions(): Promise<boolean> {
   const result = await requestApi<{ assumptions: unknown | null }>('/api/user-settings/ai-assumptions')
   return result.assumptions !== null
@@ -820,7 +830,7 @@ export async function setAiAssumptions(enabled: boolean): Promise<boolean> {
 }
 
 export async function askPortfolioInsights(
-  reportId: string,
+  reportId: string | undefined,
   question: string,
   history: PortfolioInsightsChatTurn[]
 ): Promise<string> {

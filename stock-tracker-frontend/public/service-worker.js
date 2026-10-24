@@ -14,8 +14,36 @@ self.addEventListener('push', (event) => {
     data: { url: payload.url || '/messages' },
   }
 
-  event.waitUntil(self.registration.showNotification(title, options))
+  event.waitUntil(Promise.all([
+    self.registration.showNotification(title, options),
+    updateAppBadge(payload.unreadCount),
+    notifyOpenWindows(),
+  ]))
 })
+
+async function updateAppBadge(count) {
+  if (count === undefined) return
+  if (!Number.isSafeInteger(count) || count < 0) {
+    console.error('[badge] Push included an invalid unread count:', count)
+    return
+  }
+  try {
+    if (count === 0) {
+      if ('clearAppBadge' in self.navigator) await self.navigator.clearAppBadge()
+    } else if ('setAppBadge' in self.navigator) {
+      await self.navigator.setAppBadge(count)
+    }
+  } catch (error) {
+    console.error('[badge] Unable to update the app badge from push:', error)
+  }
+}
+
+async function notifyOpenWindows() {
+  const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+  for (const client of windows) {
+    client.postMessage({ type: 'messages-updated' })
+  }
+}
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()

@@ -5,7 +5,7 @@ excludeAgent: "code-review"
 
 # API Endpoints (Current Implementation)
 
-Last updated: 2026-10-12
+Last updated: 2026-10-24
 
 Authentication and scoping notes:
 - `authenticateRequest` middleware is applied globally before route handlers.
@@ -76,13 +76,34 @@ Authentication and scoping notes:
   - per-ticker holdings (`ticker`, `totalShares`, `costBasis`, `lotCount`).
 - Uses `PurchaseLots` for holdings calculations.
 
-## Portfolio Insights
+## Portfolio Review and Local AI Insights
+
+### GET /api/portfolio-review
+- Available to every authenticated user, independent of `aiInsightsEnabled`, saved AI assumptions, or request hostname.
+- Returns `{ generatedAt, snapshot, facts, limitations }`, calculated from the current user's tracked portfolio without contacting AI or caching an AI report.
+- Includes recommended lot amount, concentration facts (20% of priced equities), up to eight largest open-lot losses, missing-price tickers, and holding-level loss timing.
+- Loss timing is always calculated; it does not require enabling AI assumptions. Its filter remains negative holding Yearly Gain/Loss, more than three display lots, and a remaining buy lot down at least 30%.
+- Uses stored closes. The Review page loads target-distance live/stored prices separately. Data-load errors return `500`, not an empty review.
+
+### GET /api/portfolio-insights/status
+- Requires local loopback access, a local hostname/origin, authentication, and `aiInsightsEnabled`.
+- Returns `{ available, reason? }` after checking the local Copilot CLI's sign-in and configured model availability. Does not generate AI text or load portfolio data.
+- CLI connection errors return `503`; missing sign-in/model returns `available: false` with a reason.
+
+### POST /api/portfolio-insights/chat
+- Same local-only and account-access restrictions as status. Nonlocal access returns `403`, including direct endpoint requests.
+- Body: `{ question, history, reportId? }`. The Insights UI no longer generates a report or supplies `reportId`.
+- Without `reportId`, loads a fresh user-scoped portfolio snapshot for each question, with saved AI assumptions where enabled. Sends calculated context and recent conversation to Copilot, without generating intermediate AI explanations.
+- Limits: 2,000-character question, 8,000-character answer, at most 12 history messages, bounded to the newest 30,000 history characters, and 10 questions per user per minute.
+- Legacy `reportId` requests still use the user's cached report and return `404` when it expires or belongs to another user.
+- Review sections and AI responses no longer offer Send to Messages actions; previously saved messages remain readable.
 
 ### GET /api/user-settings/profile
 - Returns the authenticated user's `aiInsightsEnabled` feature flag.
 - The flag defaults to `false` and is not writable through public user-settings routes.
 
 ### POST /api/portfolio-insights
+- Legacy report-generation endpoint; no longer called by the Review or Insights UI. Restricted to local loopback access with a local hostname/origin.
 - Requires the authenticated current user to have `Users.aiInsightsEnabled = 1` and a locally authenticated Copilot CLI session.
 - Returns `403` when AI insights are disabled for the current user.
 - Returns concentration facts, open-lot unrealized-loss estimates, missing-price tickers, model explanations linked to fact IDs, and limitations.

@@ -108,7 +108,7 @@ export type PortfolioSnapshot = ReturnType<typeof buildPortfolioSnapshot> & {
   recommendedLotAmount?: RecommendedLotAmount;
 };
 
-export async function loadPortfolioSnapshot(userId: string) {
+export async function loadPortfolioSnapshot(userId: string, options: { review?: boolean } = {}) {
   const result = await getPool().request()
     .input('userId', sql.NVarChar, userId)
     .query<PortfolioLotRow>(`
@@ -135,9 +135,9 @@ export async function loadPortfolioSnapshot(userId: string) {
     `);
   const cash = await getCashSummary(userId);
   const snapshot: PortfolioSnapshot = buildPortfolioSnapshot(result.recordset, cash, new Date().toISOString());
-  snapshot.assumptions = await loadAiPreferences(userId);
+  snapshot.assumptions = options.review ? null : await loadAiPreferences(userId);
   snapshot.recommendedLotAmount = await loadRecommendedLotAmount(userId, snapshot.holdings, cash.availableCash);
-  if (snapshot.assumptions) {
+  if (options.review || snapshot.assumptions) {
     snapshot.holdingReviewContext = await loadHoldingReviewContext(userId, snapshot.holdings, snapshot.generatedAt.slice(0, 10), snapshot.openLots);
   }
   return {

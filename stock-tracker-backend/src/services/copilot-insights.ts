@@ -57,6 +57,17 @@ export async function askCopilotAboutInsights(prompt: string): Promise<string> {
   return sendCopilotPrompt(prompt);
 }
 
+export async function checkCopilotAvailability(): Promise<{ available: boolean; reason?: string }> {
+  const client = await getCopilotClient();
+  const auth = await client.getAuthStatus();
+  if (!auth.isAuthenticated) return { available: false, reason: 'Sign in to the local Copilot CLI.' };
+  const model = process.env.COPILOT_MODEL?.trim() || 'gpt-5.6-luna';
+  const models = await client.listModels();
+  return models.some((item) => item.id === model && (!item.policy || item.policy.state === 'enabled'))
+    ? { available: true }
+    : { available: false, reason: 'The configured AI model is unavailable.' };
+}
+
 async function sendCopilotPrompt(prompt: string): Promise<string> {
   const client = await getCopilotClient();
   const session = await client.createSession({

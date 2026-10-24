@@ -1990,3 +1990,23 @@ body {
     min-width: 56px;
   }
 }
+.ai-availability {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ai-status-light {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  background: #64748b;
+}
+
+.ai-status-available {
+  background: #16a34a;
+}
+
+.ai-status-unavailable {
+  background: #dc2626;
+}

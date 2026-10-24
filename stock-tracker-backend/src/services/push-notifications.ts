@@ -49,13 +49,24 @@ export async function sendPushNotification(userId: string, payload: PushPayload)
     .input('userId', sql.NVarChar, userId)
     .query('SELECT endpoint, p256dh, auth FROM PushSubscriptions WHERE userId = @userId');
 
+  if (result.recordset.length === 0) return 0;
+
+  const unreadResult = await getPool().request()
+    .input('userId', sql.NVarChar, userId)
+    .query('SELECT COUNT(*) AS count FROM Messages WHERE userId = @userId AND isRead = 0');
+  const unreadCount = Number(unreadResult.recordset[0]?.count);
+  if (!Number.isSafeInteger(unreadCount) || unreadCount < 0) {
+    throw new Error('[push] Unable to determine the unread message count.');
+  }
+  const notificationPayload = JSON.stringify({ ...payload, unreadCount });
+
   const accepted = await Promise.all((result.recordset as StoredSubscription[]).map(async (subscription) => {
     const endpointHash = hashPushEndpoint(subscription.endpoint);
     try {
       await webpush.sendNotification({
         endpoint: subscription.endpoint,
         keys: { p256dh: subscription.p256dh, auth: subscription.auth },
-      }, JSON.stringify(payload), { TTL: 60 });
+      }, notificationPayload, { TTL: 60 });
       return true;
     } catch (error) {
       const statusCode = (error as { statusCode?: number }).statusCode;

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import insightsRouter from '../src/routes/portfolio-insights.js';
+import insightsRouter, { reviewRouter } from '../src/routes/portfolio-insights.js';
 import cashRouter from '../src/routes/cash.js';
 
 const mocks = vi.hoisted(() => ({
@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   input: vi.fn(),
   generate: vi.fn(),
   chat: vi.fn(),
+  available: vi.fn(),
 }));
 vi.mock('../src/db/connection.js', () => ({
   getPool: () => ({
@@ -21,6 +22,7 @@ vi.mock('../src/db/connection.js', () => ({
 vi.mock('../src/services/copilot-insights.js', () => ({
   generateCopilotInsights: mocks.generate,
   askCopilotAboutInsights: mocks.chat,
+  checkCopilotAvailability: mocks.available,
 }));
 
 const app = express();
@@ -31,6 +33,7 @@ app.use((req, _res, next) => {
   next();
 });
 app.use('/insights', insightsRouter);
+app.use('/review', reviewRouter);
 app.use('/cash', cashRouter);
 const lots = [
   {
@@ -66,6 +69,113 @@ describe('read-only portfolio snapshot routing', () => {
     mocks.input.mockImplementation(() => ({ input: mocks.input, query: mocks.query }));
     mocks.generate.mockResolvedValue('{"explanations":[]}');
     mocks.chat.mockResolvedValue('The SMALL holding is included.');
+    mocks.available.mockResolvedValue({ available: true });
+  });
+
+  describe('public calculated review and local-only chat', () => {
+    beforeEach(() => {
+      vi.resetAllMocks();
+      mocks.input.mockImplementation(() => ({ input: mocks.input, query: mocks.query }));
+      mocks.chat.mockResolvedValue('Current portfolio answer.');
+      mocks.available.mockResolvedValue({ available: true });
+    });
+
+    function queueCalculatedReview() {
+      mocks.query.mockResolvedValueOnce({ recordset: lots });
+      queueCash();
+      mocks.query.mockResolvedValueOnce({ recordsets: [
+        [{ ticker: 'BIG', lotsCsv: '1,2,3' }], [{ ticker: 'BIG', baseSize: 3 }],
+      ] });
+      mocks.query.mockResolvedValueOnce({ recordsets: [[], [], []] });
+    }
+
+    it('serves Review for any authenticated user, including nonlocal requests, without AI access or assumption checks', async () => {
+      queueCalculatedReview();
+      const response = await request(app).get('/review').set('x-user-id', user())
+        .set('Host', 'portfolio.example.com').set('Origin', 'https://portfolio.example.com').expect(200);
+      expect(response.body.snapshot.assumptions).toBeNull();
+      expect(response.body.snapshot.holdingReviewContext).toHaveLength(2);
+      expect(response.body.snapshot.recommendedLotAmount).toBeDefined();
+      expect(response.body.facts).toContainEqual(expect.objectContaining({ type: 'concentration', ticker: 'BIG' }));
+      expect(response.body).not.toHaveProperty('reportId');
+      expect(response.body).not.toHaveProperty('explanations');
+      expect(mocks.generate).not.toHaveBeenCalled();
+      expect(mocks.chat).not.toHaveBeenCalled();
+      expect(mocks.available).not.toHaveBeenCalled();
+      for (const [query] of mocks.query.mock.calls) {
+        expect(query).not.toContain('aiInsightsEnabled');
+        expect(query).not.toContain('aiAssumptionsEnabled');
+        expect(query).not.toMatch(/\b(INSERT|UPDATE|DELETE|MERGE)\b/i);
+      }
+    });
+
+    it('requires authentication for Review and AI status', async () => {
+      await request(app).get('/review').expect(401);
+      await request(app).get('/insights/status').expect(401);
+      expect(mocks.query).not.toHaveBeenCalled();
+    });
+
+    it('reports Review data failures without invoking AI or returning an empty review', async () => {
+      mocks.query.mockRejectedValueOnce(new Error('Database unavailable'));
+      await request(app).get('/review').set('x-user-id', user()).expect(500);
+      expect(mocks.generate).not.toHaveBeenCalled();
+    });
+
+    it('checks actual local AI availability without creating a report or prompting the model', async () => {
+      mocks.query.mockResolvedValueOnce({ recordset: [{ aiInsightsEnabled: true }] });
+      const response = await request(app).get('/insights/status').set('x-user-id', user()).expect(200);
+      expect(response.body).toEqual({ available: true });
+      expect(mocks.available).toHaveBeenCalledTimes(1);
+      expect(mocks.generate).not.toHaveBeenCalled();
+      expect(mocks.chat).not.toHaveBeenCalled();
+    });
+
+    it('returns an unavailable status and its reason, and reports connection errors explicitly', async () => {
+      mocks.query.mockResolvedValueOnce({ recordset: [{ aiInsightsEnabled: true }] });
+      mocks.available.mockResolvedValueOnce({ available: false, reason: 'Sign in to the local Copilot CLI.' });
+      const response = await request(app).get('/insights/status').set('x-user-id', user()).expect(200);
+      expect(response.body.available).toBe(false);
+      expect(response.body.reason).toContain('Sign in');
+      mocks.query.mockResolvedValueOnce({ recordset: [{ aiInsightsEnabled: true }] });
+      mocks.available.mockRejectedValueOnce(new Error('CLI not found'));
+      await request(app).get('/insights/status').set('x-user-id', user()).expect(503);
+    });
+
+    it('does not probe the local AI for users without access', async () => {
+      mocks.query.mockResolvedValueOnce({ recordset: [{ aiInsightsEnabled: false }] });
+      await request(app).get('/insights/status').set('x-user-id', user()).expect(403);
+      expect(mocks.available).not.toHaveBeenCalled();
+    });
+
+    it('blocks nonlocal hosts and origins on all AI endpoints, including direct URLs', async () => {
+      await request(app).get('/insights/status').set('x-user-id', user()).set('Host', 'portfolio.example.com').expect(403);
+      await request(app).post('/insights/chat').set('x-user-id', user())
+        .set('Origin', 'https://portfolio.example.com').send({ question: 'q', history: [] }).expect(403);
+      await request(app).post('/insights').set('x-user-id', user()).set('Host', 'portfolio.example.com').expect(403);
+      expect(mocks.query).not.toHaveBeenCalled();
+      expect(mocks.chat).not.toHaveBeenCalled();
+    });
+
+    it('answers without generating a report and reloads the snapshot for each subsequent question', async () => {
+      const id = user();
+      queueReview();
+      const first = await request(app).post('/insights/chat').set('x-user-id', id)
+        .send({ question: 'How much cash do I have?', history: [] }).expect(200);
+      expect(first.body.answer).toBe('Current portfolio answer.');
+      expect(mocks.generate).not.toHaveBeenCalled();
+      expect(mocks.chat.mock.calls[0][0]).toContain('"availableCash":1465');
+      expect(mocks.chat.mock.calls[0][0]).not.toContain(id);
+      queueReview([{ ...lots[0], remainingQuantity: 200 }]);
+      await request(app).post('/insights/chat').set('x-user-id', id).send({
+        question: 'What changed?', history: [
+          { role: 'user', content: 'How much cash do I have?' },
+          { role: 'assistant', content: first.body.answer },
+        ],
+      }).expect(200);
+      expect(mocks.chat.mock.calls[1][0]).toContain('"quantity":200');
+      expect(mocks.chat.mock.calls[1][0]).toContain('Current portfolio answer.');
+      expect(mocks.query).toHaveBeenCalledTimes(12);
+    });
   });
 
   it('sends all holdings and cash to review and chat, using user-scoped SELECT queries only', async () => {
@@ -169,7 +279,6 @@ describe('read-only portfolio snapshot routing', () => {
 
   it('gives specific validation errors without calling AI', async () => {
     for (const [payload, error] of [
-      [{ question: 'q', history: [] }, 'A report ID is required. Generate a review before asking a question.'],
       [{ reportId: 'report', question: '', history: [] }, 'A non-empty question is required.'],
       [{ reportId: 'report', question: 'q'.repeat(2001), history: [] }, 'Your question exceeds 2000 characters.'],
     ] as const) {

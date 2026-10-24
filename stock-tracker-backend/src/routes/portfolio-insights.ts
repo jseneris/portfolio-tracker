@@ -1,8 +1,8 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
 import sql from 'mssql';
 import { getPool } from '../db/connection.js';
-import { askCopilotAboutInsights, generateCopilotInsights } from '../services/copilot-insights.js';
+import { askCopilotAboutInsights, checkCopilotAvailability, generateCopilotInsights } from '../services/copilot-insights.js';
 import { loadPortfolioSnapshot, PortfolioLotRow, PortfolioSnapshot } from '../services/portfolio-snapshot.js';
 import { isQualifyingLossTimingLot } from '../services/holding-review-context.js';
 import {
@@ -13,6 +13,64 @@ import {
 } from '../services/portfolio-chat-limits.js';
 
 const router = Router();
+export const reviewRouter = Router();
+const REVIEW_LIMITATIONS = [
+  'Market values use the latest stored closing price and may be stale. Target distances separately use live quotes during the regular US market session when available.',
+  'Tax figures are estimates based on tracked open lots, not tax calculations or trade instructions.',
+  'Acquisition-window dates are not confirmed wash-sale eligibility. Future purchases, dividend reinvestments, outside accounts and substantially identical securities remain unknown.',
+  'Loss timing requires negative holding Yearly Gain/Loss, more than three display lots, and at least one remaining buy lot down at least 30%. Unknown year-end prices exclude a holding from this filter.',
+  'Dividend timing uses tracked payments unless a verified future date is available; it is not a prediction.',
+  'Unknown valuations are null, not zero. Priced equity totals exclude missing prices.',
+];
+
+reviewRouter.get('/', async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    const { rows, snapshot } = await loadPortfolioSnapshot(userId, { review: true });
+    res.json({
+      generatedAt: snapshot.generatedAt, snapshot,
+      facts: buildPortfolioInsightsFacts(rows, new Date(snapshot.generatedAt)),
+      limitations: REVIEW_LIMITATIONS,
+    });
+  } catch (error) {
+    console.error('Portfolio review failed:', error);
+    res.status(500).json({ error: 'Unable to load portfolio review. Please try again.' });
+  }
+});
+
+router.use((req: Request, res: Response, next: NextFunction) => {
+  const localHosts = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+  const localAddresses = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+  let localOrigin = true;
+  if (req.headers.origin) {
+    try {
+      localOrigin = localHosts.has(new URL(req.headers.origin).hostname);
+    } catch {
+      localOrigin = false;
+    }
+  }
+  if (!localAddresses.has(req.socket.remoteAddress || '') || !localHosts.has(req.hostname) || !localOrigin) {
+    return res.status(403).json({ error: 'AI Insights is available locally only.' });
+  }
+  next();
+});
+
+router.get('/status', async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ error: 'Authentication required.' });
+  try {
+    const access = await getPool().request().input('userId', sql.NVarChar, userId)
+      .query('SELECT aiInsightsEnabled FROM Users WHERE id = @userId');
+    if (!access.recordset[0]?.aiInsightsEnabled) {
+      return res.status(403).json({ error: 'Portfolio insights are not enabled for this user.' });
+    }
+    res.json(await checkCopilotAvailability());
+  } catch (error) {
+    console.error('Copilot availability check failed:', error);
+    res.status(503).json({ error: 'AI unavailable. Ensure the local Copilot CLI is installed and signed in.' });
+  }
+});
 const REQUEST_COOLDOWN_MS = 60_000;
 const lastRequestByUser = new Map<string, number>();
 const REPORT_TTL_MS = 30 * 60 * 1000;
@@ -300,7 +358,6 @@ router.post('/chat', async (req: Request, res: Response) => {
     const reportId = typeof req.body?.reportId === 'string' ? req.body.reportId : '';
     const question = typeof req.body?.question === 'string' ? req.body.question.trim() : '';
     const history = parsePortfolioChatHistory(req.body?.history);
-    if (!reportId) return res.status(400).json({ error: 'A report ID is required. Generate a review before asking a question.' });
     if (!question) return res.status(400).json({ error: 'A non-empty question is required.' });
     if (question.length > MAX_CHAT_QUESTION_CHARACTERS) {
       return res.status(400).json({ error: `Your question exceeds ${MAX_CHAT_QUESTION_CHARACTERS} characters.` });
@@ -313,12 +370,20 @@ router.post('/chat', async (req: Request, res: Response) => {
 
     const now = Date.now();
     pruneExpiredReports(now);
-    const report = reportsById.get(reportId);
-    if (!report || report.userId !== userId) {
+    const cachedReport = reportId ? reportsById.get(reportId) : undefined;
+    if (reportId && (!cachedReport || cachedReport.userId !== userId)) {
       return res.status(404).json({ error: 'This review has expired or is unavailable. Generate a new review to continue.' });
     }
     if (isChatRateLimited(userId, now)) {
       return res.status(429).json({ error: 'Chat is limited to 10 questions per minute.' });
+    }
+    let report = cachedReport;
+    if (!report) {
+      const { rows, snapshot } = await loadPortfolioSnapshot(userId);
+      report = {
+        userId, snapshot, facts: buildPortfolioInsightsFacts(rows, new Date(snapshot.generatedAt), snapshot),
+        explanations: [], limitations: REVIEW_LIMITATIONS, expiresAt: now + REPORT_TTL_MS,
+      };
     }
 
     const content = await askCopilotAboutInsights(
