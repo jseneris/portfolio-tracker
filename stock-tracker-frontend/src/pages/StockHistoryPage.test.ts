@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { StockSplitEvent, StockTransaction } from '../api'
 import {
+  buildThreeMonthChartPoints,
   calculateYearlyPerformance,
   findPriceOnOrBefore,
+  getStockDocumentTitle,
+  getStockHeading,
+  getHoveredChartPointIndex,
   getSharesAtDate,
   getWashSaleWindowTransactions,
 } from './StockHistoryPage'
+import type { HistoricalPrice } from '../api'
 
 function makeTransaction(overrides: Partial<StockTransaction> = {}): StockTransaction {
   return {
@@ -39,6 +44,62 @@ const PRICES = [
   { priceDate: '2025-12-31', closePrice: 200 },
   { priceDate: '2026-09-04', closePrice: 250 },
 ]
+
+describe('stock detail page heading', () => {
+  it('shows the company name and ticker when available', () => {
+    expect(getStockHeading('AAPL', 'Apple Inc.')).toBe('Apple Inc. (AAPL)')
+  })
+
+  describe('three-month stock chart data', () => {
+    it('calculates 20-, 50-, 100-, and 200-day averages before restricting rows to the three-month range', () => {
+      const prices: HistoricalPrice[] = Array.from({ length: 220 }, (_, index) => {
+        const date = new Date(Date.UTC(2026, 1, 1 + index)).toISOString().slice(0, 10)
+        return {
+          ticker: 'TEST', priceDate: date, marketDate: date, closePrice: index + 1, source: 'test',
+        }
+      })
+
+      const points = buildThreeMonthChartPoints(prices, 'TEST', '2026-08-29')
+      expect(points[0].priceDate).toBe('2026-05-29')
+      expect(points[points.length - 1]?.priceDate).toBe('2026-08-29')
+      const last = points[points.length - 1]
+      expect(last.movingAverage20).toBe(200.5)
+      expect(last.movingAverage50).toBe(185.5)
+      expect(last.movingAverage100).toBe(160.5)
+      expect(last.movingAverage200).toBe(110.5)
+    })
+
+    it('only includes the requested ticker and dates through the as-of date', () => {
+      const prices: HistoricalPrice[] = [
+        { ticker: 'TEST', priceDate: '2026-07-01', marketDate: '2026-07-01', closePrice: 1, source: 'test' },
+        { ticker: 'OTHER', priceDate: '2026-08-01', marketDate: '2026-08-01', closePrice: 2, source: 'test' },
+        { ticker: 'TEST', priceDate: '2026-09-01', marketDate: '2026-09-01', closePrice: 3, source: 'test' },
+      ]
+      expect(buildThreeMonthChartPoints(prices, 'TEST', '2026-08-31').map((point) => point.closePrice)).toEqual([1])
+    })
+
+    it('selects the nearest daily close across the chart plot and clears outside it', () => {
+      expect(getHoveredChartPointIndex(54, 54, 730, 4)).toBe(0)
+      expect(getHoveredChartPointIndex(419, 54, 730, 4)).toBe(2)
+      expect(getHoveredChartPointIndex(784, 54, 730, 4)).toBe(3)
+      expect(getHoveredChartPointIndex(53, 54, 730, 4)).toBeNull()
+      expect(getHoveredChartPointIndex(54, 54, 730, 0)).toBeNull()
+      expect(getHoveredChartPointIndex(100, 54, 730, 1)).toBe(0)
+    })
+  })
+
+  describe('stock detail document title', () => {
+    it('uses the ticker instead of the generic application title', () => {
+      expect(getStockDocumentTitle('AAPL')).toBe('AAPL')
+      expect(getStockDocumentTitle('')).toBe('Stock Tracker')
+    })
+  })
+
+  it('falls back to the ticker while the profile is unavailable', () => {
+    expect(getStockHeading('NVDA', null)).toBe('NVDA')
+    expect(getStockHeading('', null)).toBe('Stock Tracker')
+  })
+})
 
 describe('sell-lot wash-sale-window check', () => {
   it('includes buys/dividends on the sale date and both 30-day boundaries but excludes outside dates and other types/tickers', () => {

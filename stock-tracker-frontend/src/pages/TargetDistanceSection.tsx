@@ -144,10 +144,9 @@ export default function TargetDistanceSection({ acquisitionTiming }: { acquisiti
       cancelled = true
     }
   }, [])
-  return <section className="panel">
-    <div className="row-between insights-section-heading">
-      <h3>Distance from buy and sell targets</h3>
-    </div>
+  return <details className="panel review-collapsible">
+    <summary><h3>Distance from buy and sell targets</h3></summary>
+    <div className="review-section-content">
     <p className="muted-text">Current holdings at least 20% above their buy target AND 20% below their sell target.
       Each percentage is measured from its target price. Each ticker appears once in its highest qualifying tier,
       based on the smaller of the two distances, largest first. Uses live prices during the regular US market session
@@ -160,5 +159,6 @@ export default function TargetDistanceSection({ acquisitionTiming }: { acquisiti
     {result?.warning ? <p className="status status-warning" role="status">{result.warning}</p> : null}
     {result?.excluded.length ? <p className="status status-warning">Excluded (missing price or valid targets): {result.excluded.join(', ')}.</p> : null}
     {result ? <TargetDistanceTable inputs={result.inputs} acquisitionTiming={acquisitionTiming} /> : null}
-  </section>
+    </div>
+  </details>
 }

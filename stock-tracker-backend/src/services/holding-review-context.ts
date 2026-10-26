@@ -59,8 +59,10 @@ export function buildHoldingReviewContext(
       : row?.yearEndClose == null ? null : yearEndShares * Number(row.yearEndClose);
     const yearlyGainLoss = holding.marketValue == null || yearEndValue == null
       ? null : holding.marketValue - yearEndValue - netCurrentYearInvested;
-    const displayLotCount = row?.lotsCsv == null ? 0 : row.lotsCsv.split(',')
-      .filter((part) => Number.isFinite(Number(part)) && Number(part) > 1e-6).length;
+    const displayLots = row?.lotsCsv == null ? [] : row.lotsCsv.split(',')
+      .map(Number).filter((part) => Number.isFinite(part) && part > 1e-6);
+    const displayLotCount = displayLots.length;
+    const largestDisplayLot = Math.max(0, ...displayLots);
     const lastAcquisitionDate = row?.lastAcquisitionDate ?? null;
     const windowDate = lastAcquisitionDate == null ? null : new Date(`${lastAcquisitionDate}T00:00:00Z`);
     if (windowDate) windowDate.setUTCDate(windowDate.getUTCDate() + 31);
@@ -87,7 +89,7 @@ export function buildHoldingReviewContext(
       };
     });
     return {
-      ticker: holding.ticker, displayLotCount, yearlyGainLoss,
+      ticker: holding.ticker, displayLotCount, largestDisplayLot, yearlyGainLoss,
       yearEndMarketValue: yearEndValue, yearEndPriceDate: row?.yearEndPriceDate ?? null,
       netCurrentYearInvested,
       qualifyingLossLots,

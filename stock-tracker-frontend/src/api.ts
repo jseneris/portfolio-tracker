@@ -357,6 +357,7 @@ export type PortfolioInsightsReport = {
     recommendedLotAmount?: {
       lotAmount: number | null
       increment: number
+      totalLotsAbovePlusOne: number
       targetWeight: number
       availableCash: number
       totalCost: number
@@ -369,6 +370,7 @@ export type PortfolioInsightsReport = {
         baseSize: number
         weight: number
         lotsNeeded: number
+        lotsAbovePlusOne: number
         sharesPerLot: number | null
         costPerLot: number | null
         totalCost: number | null
@@ -377,6 +379,7 @@ export type PortfolioInsightsReport = {
     holdingReviewContext?: Array<{
       ticker: string
       displayLotCount: number
+      largestDisplayLot: number
       yearlyGainLoss: number | null
       matchesLossReviewFilter: boolean | null
       qualifyingLossLots?: Array<{

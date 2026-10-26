@@ -12,9 +12,9 @@ describe('Home Screen app badge', () => {
     const clearAppBadge = vi.fn().mockResolvedValue(undefined)
     vi.stubGlobal('navigator', { setAppBadge, clearAppBadge })
 
-    await updateAppBadge(123)
-    await updateAppBadge(2)
-    await updateAppBadge(0)
+    await expect(updateAppBadge(123)).resolves.toEqual({ status: 'updated' })
+    await expect(updateAppBadge(2)).resolves.toEqual({ status: 'updated' })
+    await expect(updateAppBadge(0)).resolves.toEqual({ status: 'updated' })
 
     expect(setAppBadge.mock.calls).toEqual([[123], [2]])
     expect(clearAppBadge).toHaveBeenCalledOnce()
@@ -22,8 +22,8 @@ describe('Home Screen app badge', () => {
 
   it('does nothing in browsers without the Badging API', async () => {
     vi.stubGlobal('navigator', {})
-    await expect(updateAppBadge(3)).resolves.toBeUndefined()
-    await expect(updateAppBadge(0)).resolves.toBeUndefined()
+    await expect(updateAppBadge(3)).resolves.toEqual({ status: 'unsupported' })
+    await expect(updateAppBadge(0)).resolves.toEqual({ status: 'unsupported' })
   })
 
   it.each([0, 3])('logs badge failures without breaking messages (count %s)', async (count) => {
@@ -34,7 +34,7 @@ describe('Home Screen app badge', () => {
       clearAppBadge: vi.fn().mockRejectedValue(error),
     })
 
-    await expect(updateAppBadge(count)).resolves.toBeUndefined()
+    await expect(updateAppBadge(count)).resolves.toEqual({ status: 'failed', error })
     expect(log).toHaveBeenCalledWith('[badge] Unable to update the app badge:', error)
   })
 })

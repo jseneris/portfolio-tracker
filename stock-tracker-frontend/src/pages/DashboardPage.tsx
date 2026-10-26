@@ -29,7 +29,7 @@ import {
 } from '../api'
 import { formatCurrency2, formatStockPrice4, getLocalDateString } from '../formatters'
 import { calculatePortfolioSnapshot, calculateTickerYearlyGainLoss, calculateYearlyGainLoss, createSplitMultiplierResolver } from '../portfolioSnapshot'
-import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, normalizeTargetSettings } from '../targetPrices'
+import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, getTargetPricePosition, normalizeTargetSettings } from '../targetPrices'
 export { getSplitAdjustedTargetBasePrice } from '../targetPrices'
 
 type AddStockFormState = {
@@ -79,6 +79,21 @@ function formatDateOnlyLabel(value: string | null | undefined): string {
   return parsed.toLocaleDateString(undefined, { timeZone: 'UTC' })
 }
 
+export function getTickerInfoBadgeMessages(preference: Pick<TickerPreference, 'baseSize' | 'buyOnDip' | 'buyOnDipPrice'>): string[] {
+  const messages: string[] = []
+  if (preference.baseSize !== 3) messages.push(`Custom base size: ${preference.baseSize} display lots (default is 3).`)
+  if (preference.buyOnDip) messages.push(`Buy on Dip is enabled${preference.buyOnDipPrice != null ? ` with a base price of ${formatStockPrice4(preference.buyOnDipPrice)}` : ''}.`)
+  return messages
+}
+
+function TickerInfoBadge({ messages }: { messages: string[] }) {
+  if (!messages.length) return null
+  return <details className="ticker-info-badge">
+    <summary aria-label="Ticker information" title={messages.join(' ')}>i</summary>
+    <span role="note">{messages.join(' ')}</span>
+  </details>
+}
+
 type TargetDirection = 'buy' | 'sell' | null
 
 export function getTargetBaseMarker(
@@ -118,10 +133,7 @@ export function getTargetBarPosition(
   buyTarget: number | null | undefined,
   sellTarget: number | null | undefined
 ): number | null {
-  if (price == null || buyTarget == null || sellTarget == null
-    || !Number.isFinite(price) || !Number.isFinite(buyTarget) || !Number.isFinite(sellTarget)
-    || price <= 0 || buyTarget <= 0 || sellTarget <= buyTarget) return null
-  return Math.min(100, Math.max(0, (price - buyTarget) / (sellTarget - buyTarget) * 100))
+  return getTargetPricePosition(price, buyTarget, sellTarget)
 }
 
 function calculateTargetProximity(
@@ -1410,6 +1422,10 @@ export default function DashboardPage() {
                       <Link className="link-button" to={`/stocks/${encodeURIComponent(row.ticker)}`}>
                         {row.ticker}
                       </Link>
+                      <TickerInfoBadge messages={getTickerInfoBadgeMessages({
+                        baseSize: row.baseSize, buyOnDip: row.buyOnDip,
+                        buyOnDipPrice: tickerPreferencesByTicker[row.ticker]?.buyOnDipPrice ?? null,
+                      })} />
                     </td>
                     <td>
                       {holdingsLoading && row.latestPrice == null ? (

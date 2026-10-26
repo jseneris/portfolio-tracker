@@ -2,6 +2,7 @@ import sql from 'mssql';
 import { getPool } from '../db/connection.js';
 
 export const LOT_AMOUNT_INCREMENT = 50;
+export const MINIMUM_LOT_AMOUNT = 250;
 const TARGET_WEIGHT = 1;
 const DEFAULT_BASE_SIZE = 3;
 const NEXT_STEP_COUNT = 5;
@@ -20,6 +21,7 @@ export type RecommendedLotHolding = {
   baseSize: number;
   weight: number;
   lotsNeeded: number;
+  lotsAbovePlusOne: number;
   sharesPerLot: number | null;
   costPerLot: number | null;
   totalCost: number | null;
@@ -34,6 +36,7 @@ export type RecommendedLotAmount = {
   nextSteps: Array<{ lotAmount: number; totalCost: number; shortfall: number }>;
   holdings: RecommendedLotHolding[];
   unpricedTickers: string[];
+  totalLotsAbovePlusOne: number;
 };
 
 // A lot buys whole shares: one share when the price is at or above X, otherwise the fewest shares reaching X.
@@ -53,8 +56,10 @@ function totalCostFor(holdings: LotHoldingInput[], lotsNeeded: Map<string, numbe
 export function calculateRecommendedLotAmount(holdings: LotHoldingInput[], availableCash: number): RecommendedLotAmount {
   const cash = Number.isFinite(availableCash) ? Math.max(0, availableCash) : 0;
   const lotsNeeded = new Map<string, number>();
+  const lotsAbovePlusOne = new Map<string, number>();
   for (const holding of holdings) {
     lotsNeeded.set(holding.ticker, Math.max(0, TARGET_WEIGHT - (holding.displayLotCount - holding.baseSize)));
+    lotsAbovePlusOne.set(holding.ticker, Math.max(0, holding.displayLotCount - holding.baseSize - TARGET_WEIGHT));
   }
   const priced = holdings.filter((holding) => holding.closePrice != null && Number.isFinite(holding.closePrice) && holding.closePrice > 0);
   const unpricedTickers = holdings
@@ -66,7 +71,7 @@ export function calculateRecommendedLotAmount(holdings: LotHoldingInput[], avail
   // Total cost never decreases as X grows and is at least X per needed lot, so X never needs to exceed cash.
   let lotAmount: number | null = null;
   if (anyLotsNeeded) {
-    for (let candidate = LOT_AMOUNT_INCREMENT; candidate <= cash; candidate += LOT_AMOUNT_INCREMENT) {
+    for (let candidate = MINIMUM_LOT_AMOUNT; candidate <= cash; candidate += LOT_AMOUNT_INCREMENT) {
       if (totalCostFor(priced, lotsNeeded, candidate) > cash + 1e-9) break;
       lotAmount = candidate;
     }
@@ -74,7 +79,7 @@ export function calculateRecommendedLotAmount(holdings: LotHoldingInput[], avail
   // Always show five $50 steps past X.
   const nextSteps: RecommendedLotAmount['nextSteps'] = [];
   if (anyLotsNeeded) {
-    for (let step = 1, amount = (lotAmount ?? 0) + LOT_AMOUNT_INCREMENT;
+    for (let step = 1, amount = lotAmount == null ? MINIMUM_LOT_AMOUNT : lotAmount + LOT_AMOUNT_INCREMENT;
       step <= NEXT_STEP_COUNT;
       step++, amount += LOT_AMOUNT_INCREMENT) {
       const totalCost = totalCostFor(priced, lotsNeeded, amount);
@@ -89,6 +94,7 @@ export function calculateRecommendedLotAmount(holdings: LotHoldingInput[], avail
     availableCash: cash,
     totalCost: lotAmount == null ? 0 : totalCostFor(priced, lotsNeeded, lotAmount),
     nextSteps,
+    totalLotsAbovePlusOne: Array.from(lotsAbovePlusOne.values()).reduce((sum, lots) => sum + lots, 0),
     holdings: holdings.map((holding) => {
       const lots = lotsNeeded.get(holding.ticker) ?? 0;
       const isPriced = priced.includes(holding);
@@ -100,6 +106,7 @@ export function calculateRecommendedLotAmount(holdings: LotHoldingInput[], avail
         baseSize: holding.baseSize,
         weight: holding.displayLotCount - holding.baseSize,
         lotsNeeded: lots,
+        lotsAbovePlusOne: lotsAbovePlusOne.get(holding.ticker) ?? 0,
         sharesPerLot: purchase?.shares ?? null,
         costPerLot: purchase?.cost ?? null,
         totalCost: lots === 0 ? 0 : purchase == null ? null : lots * purchase.cost,

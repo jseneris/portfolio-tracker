@@ -2,11 +2,13 @@ import { FormEvent, useEffect, useState } from 'react'
 import {
   deletePushSubscription,
   getPushNotificationConfig,
+  getUnreadMessageCount,
   getUserTargetSettings,
   savePushSubscription,
   updateUserTargetSettings,
   type PushSubscriptionPayload,
 } from '../api'
+import { updateAppBadge } from '../appBadge'
 
 const DEFAULT_SALE_TARGET_PERCENT = 10
 const DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS = 5
@@ -59,6 +61,10 @@ export default function UserSettingsPage() {
   const [pushError, setPushError] = useState<string | null>(null)
   const [pushNotice, setPushNotice] = useState<string | null>(null)
   const [pushPermission, setPushPermission] = useState<NotificationPermission | null>(null)
+  const [badgeRefreshBusy, setBadgeRefreshBusy] = useState(false)
+  const [badgeRefreshStatus, setBadgeRefreshStatus] = useState<string | null>(null)
+  const [badgeRefreshError, setBadgeRefreshError] = useState<string | null>(null)
+  const appBadgeSupported = typeof navigator.setAppBadge === 'function'
 
   useEffect(() => {
     let cancelled = false
@@ -245,6 +251,32 @@ export default function UserSettingsPage() {
     }
   }
 
+  async function onRefreshAppBadge() {
+    setBadgeRefreshBusy(true)
+    setBadgeRefreshStatus(null)
+    setBadgeRefreshError(null)
+    try {
+      const unreadCount = await getUnreadMessageCount()
+      const badgeResult = await updateAppBadge(unreadCount)
+      if (badgeResult.status === 'unsupported') {
+        setBadgeRefreshError('This browser context does not support app icon badges. On iPhone or iPad, open Stock Tracker from its Home Screen icon on iOS/iPadOS 16.4 or newer.')
+        return
+      }
+      if (badgeResult.status === 'failed') {
+        const errorDetails = badgeResult.error instanceof Error
+          ? ` ${badgeResult.error.name}: ${badgeResult.error.message}`
+          : ''
+        setBadgeRefreshError(`The browser rejected the badge update.${errorDetails} Check notification permission and the iPhone/iPad Badges setting.`)
+        return
+      }
+      setBadgeRefreshStatus(`Requested an icon badge update for ${unreadCount} unread message${unreadCount === 1 ? '' : 's'}.`)
+    } catch (err: unknown) {
+      setBadgeRefreshError(err instanceof Error ? err.message : 'Unable to refresh the app icon badge.')
+    } finally {
+      setBadgeRefreshBusy(false)
+    }
+  }
+
   return (
     <section>
       <div className="panel">
@@ -263,7 +295,7 @@ export default function UserSettingsPage() {
           {pushSupported && !pushAvailable ? <p className="push-settings-detail">Phone notifications are not configured on the server.</p> : null}
           {pushSupported && pushPermission === 'denied' ? <p className="push-settings-detail">Notifications are blocked in this browser’s site settings.</p> : null}
           {pushSupported && /iPhone|iPad|iPod/.test(navigator.userAgent) ? (
-            <p className="push-settings-detail">On iPhone or iPad, add Stock Tracker to the Home Screen to receive notifications.</p>
+            <p className="push-settings-detail">On iPhone or iPad, icon badges require iOS/iPadOS 16.4 or newer, opening Stock Tracker from its Home Screen icon, notification permission, and Badges enabled in Settings &gt; Notifications &gt; Stock Tracker. Enable Phone Notifications here to grant permission and receive background updates.</p>
           ) : null}
         </div>
         <button
@@ -276,6 +308,15 @@ export default function UserSettingsPage() {
         </button>
         {pushError ? <p className="status status-error">{pushError}</p> : null}
         {pushNotice ? <p className="status status-success">{pushNotice}</p> : null}
+        <div className="push-settings-detail">
+          <p>App icon badge API: {appBadgeSupported ? 'available' : 'unavailable in this browser context'}.</p>
+          <p>Notification permission: {pushPermission ?? (pushSupported ? 'checking' : 'unavailable')}.</p>
+          <button className="button" type="button" onClick={() => void onRefreshAppBadge()} disabled={badgeRefreshBusy}>
+            {badgeRefreshBusy ? 'Refreshing...' : 'Refresh App Icon Badge'}
+          </button>
+          {badgeRefreshStatus ? <p className="status status-success">{badgeRefreshStatus} If it is not visible, check the iPhone/iPad Badges setting.</p> : null}
+          {badgeRefreshError ? <p className="status status-error">{badgeRefreshError}</p> : null}
+        </div>
       </div>
 
       <div className="panel">

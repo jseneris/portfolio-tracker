@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { calculateRecommendedLotAmount, getLotPurchase } from '../src/services/recommended-lot-amount.js';
+import { calculateRecommendedLotAmount, getLotPurchase, MINIMUM_LOT_AMOUNT } from '../src/services/recommended-lot-amount.js';
 
 describe('recommended lot amount', () => {
   it('buys one share above X and the fewest whole shares reaching X below it', () => {
@@ -36,18 +36,38 @@ describe('recommended lot amount', () => {
     expect(calculateRecommendedLotAmount([{ ticker: 'A', closePrice: 10, displayLotCount: 5, baseSize: 3 }], 1000).nextSteps).toEqual([]);
     const short = calculateRecommendedLotAmount([{ ticker: 'A', closePrice: 10, displayLotCount: 3, baseSize: 3 }], 40);
     expect(short.lotAmount).toBeNull();
-    // Always five steps.
-    expect(short.nextSteps.map((step) => step.lotAmount)).toEqual([50, 100, 150, 200, 250]);
-    expect(short.nextSteps[0]).toEqual({ lotAmount: 50, totalCost: 50, shortfall: 10 });
+    expect(short.nextSteps.map((step) => step.lotAmount)).toEqual([250, 300, 350, 400, 450]);
+    expect(short.nextSteps[0]).toEqual({ lotAmount: 250, totalCost: 250, shortfall: 210 });
+  });
+
+  it('starts the recommended amount at $250 and counts only lots above +1 base', () => {
+    expect(MINIMUM_LOT_AMOUNT).toBe(250);
+    const result = calculateRecommendedLotAmount([
+      { ticker: 'TWO', closePrice: 10, displayLotCount: 5, baseSize: 3 },
+      { ticker: 'THREE', closePrice: 10, displayLotCount: 6, baseSize: 3 },
+      { ticker: 'ONE', closePrice: 10, displayLotCount: 4, baseSize: 3 },
+      { ticker: 'ZERO', closePrice: 10, displayLotCount: 3, baseSize: 3 },
+    ], 1000);
+    expect(result.lotAmount).toBe(1000);
+    expect(result.totalLotsAbovePlusOne).toBe(3);
+    expect(result.holdings.map(({ ticker, weight, lotsAbovePlusOne }) => [ticker, weight, lotsAbovePlusOne])).toEqual([
+      ['ZERO', 0, 0], ['ONE', 1, 0], ['TWO', 2, 1], ['THREE', 3, 2],
+    ]);
+  });
+
+  it('does not recommend amounts below $250 even when cash covers a smaller amount', () => {
+    const result = calculateRecommendedLotAmount([{ ticker: 'A', closePrice: 10, displayLotCount: 3, baseSize: 3 }], 200);
+    expect(result.lotAmount).toBeNull();
+    expect(result.nextSteps[0]).toEqual({ lotAmount: 250, totalCost: 250, shortfall: 50 });
   });
 
   it('reports unpriced holdings that need lots without blocking the others', () => {
     const result = calculateRecommendedLotAmount([
       { ticker: 'NOPRICE', closePrice: null, displayLotCount: 0, baseSize: 3 },
       { ticker: 'A', closePrice: 25, displayLotCount: 3, baseSize: 3 },
-    ], 100);
+    ], 300);
     expect(result.unpricedTickers).toEqual(['NOPRICE']);
-    expect(result.lotAmount).toBe(100);
+    expect(result.lotAmount).toBe(300);
     expect(result.holdings.find((holding) => holding.ticker === 'NOPRICE')?.totalCost).toBeNull();
   });
 });

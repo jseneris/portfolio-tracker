@@ -53,6 +53,7 @@ export function calculateTickerTargets(
       sell: Number((preference.buyOnDipPrice * 1.10).toFixed(8)),
     }
   }
+
   const buyPercent = displayLotCount < 3 ? settings.buyTargetPercentUnder3DisplayLots
     : displayLotCount === 3 ? settings.buyTargetPercentFor3DisplayLots
     : displayLotCount === 4 ? settings.buyTargetPercentFor4DisplayLots
@@ -62,4 +63,15 @@ export function calculateTickerTargets(
     buy: basePrice == null ? null : basePrice * (1 - buyPercent / 100),
     sell: basePrice == null ? null : basePrice * (1 + settings.saleTargetPercent / 100),
   }
+}
+
+export function getTargetPricePosition(
+  price: number | null | undefined,
+  buyTarget: number | null | undefined,
+  sellTarget: number | null | undefined
+): number | null {
+  if (price == null || buyTarget == null || sellTarget == null
+    || !Number.isFinite(price) || !Number.isFinite(buyTarget) || !Number.isFinite(sellTarget)
+    || price <= 0 || buyTarget <= 0 || sellTarget <= buyTarget) return null
+  return Math.min(100, Math.max(0, (price - buyTarget) / (sellTarget - buyTarget) * 100))
 }

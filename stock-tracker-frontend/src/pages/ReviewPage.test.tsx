@@ -1,12 +1,18 @@
 import { createElement } from 'react'
+import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { StaticRouter } from 'react-router-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { PortfolioInsightsReport, PortfolioReview } from '../api'
 import { buildFormattedReviewContent, formatDividendTiming, SavedReviewMessage } from '../reviewMessages'
-import ReviewPage, { LossTimingTable, RecommendedLotAmountSection, ReviewSections } from './ReviewPage'
+import ReviewPage, { getHoldingsWithLargeLots, LossTimingTable, RecommendedLotAmountSection, ReviewSections } from './ReviewPage'
+
+function renderWithRouter(element: ReactNode) {
+  return renderToStaticMarkup(createElement(StaticRouter, { location: '/review' }, element))
+}
 
 const holding: NonNullable<PortfolioReview['snapshot']['holdingReviewContext']>[number] = {
-  ticker: 'TEST', displayLotCount: 4, yearlyGainLoss: -10, matchesLossReviewFilter: true,
+  ticker: 'TEST', displayLotCount: 4, largestDisplayLot: 5, yearlyGainLoss: -10, matchesLossReviewFilter: true,
   qualifyingLossLots: [{
     acquisitionDate: '2025-02-03', quantity: 2, unitCost: 100, closePrice: 70,
     marketDate: '2026-10-06', costBasis: 200, estimatedValue: 140, estimatedLoss: 60, lossPercent: 30,
@@ -16,10 +22,13 @@ const holding: NonNullable<PortfolioReview['snapshot']['holdingReviewContext']>[
 }
 const recommendation: NonNullable<PortfolioReview['snapshot']['recommendedLotAmount']> = {
   increment: 50, targetWeight: 1, availableCash: 2000, unpricedTickers: [], lotAmount: 500, totalCost: 1000,
+  totalLotsAbovePlusOne: 3,
   nextSteps: [{ lotAmount: 550, totalCost: 2200, shortfall: 200 }],
   holdings: [
-    { ticker: 'MINUS', closePrice: 500, displayLotCount: 2, baseSize: 3, weight: -1, lotsNeeded: 2, sharesPerLot: 1, costPerLot: 500, totalCost: 1000 },
-    { ticker: 'OVER', closePrice: 10, displayLotCount: 4, baseSize: 3, weight: 1, lotsNeeded: 0, sharesPerLot: 50, costPerLot: 500, totalCost: 0 },
+    { ticker: 'MINUS', closePrice: 500, displayLotCount: 2, baseSize: 3, weight: -1, lotsNeeded: 2, lotsAbovePlusOne: 0, sharesPerLot: 1, costPerLot: 500, totalCost: 1000 },
+    { ticker: 'OVER', closePrice: 10, displayLotCount: 4, baseSize: 3, weight: 1, lotsNeeded: 0, lotsAbovePlusOne: 0, sharesPerLot: 50, costPerLot: 500, totalCost: 0 },
+    { ticker: 'TWO', closePrice: 10, displayLotCount: 5, baseSize: 3, weight: 2, lotsNeeded: 0, lotsAbovePlusOne: 1, sharesPerLot: 0, costPerLot: 0, totalCost: 0 },
+    { ticker: 'THREE', closePrice: 10, displayLotCount: 6, baseSize: 3, weight: 3, lotsNeeded: 0, lotsAbovePlusOne: 2, sharesPerLot: 0, costPerLot: 0, totalCost: 0 },
   ],
 }
 const review: PortfolioReview = {
@@ -33,7 +42,16 @@ const review: PortfolioReview = {
   limitations: ['Stored closes may be stale.'],
   snapshot: {
     generatedAt: '2026-10-06T20:00:00Z', valuationBasis: 'latest_stored_close', assumptions: null,
-    holdings: [], openLots: [], missingPriceTickers: ['NOQUOTE'],
+    holdings: [], openLots: [
+      { ticker: 'TEST', sourceType: 'buy', acquisitionDate: '2025-01-01', quantity: 10, unitCost: 100,
+        costBasis: 1000, closePrice: 200, marketValue: 2000, unrealizedGainLoss: 1000, marketDate: '2026-10-06', recentAcquisitionCount: 0 },
+      { ticker: 'TEST', sourceType: 'buy', acquisitionDate: '2025-02-01', quantity: 5, unitCost: 100,
+        costBasis: 500, closePrice: 200, marketValue: 1000, unrealizedGainLoss: 500, marketDate: '2026-10-06', recentAcquisitionCount: 0 },
+      { ticker: 'BELOW', sourceType: 'buy', acquisitionDate: '2025-01-01', quantity: 5, unitCost: 100,
+        costBasis: 500, closePrice: 299.8, marketValue: 1499, unrealizedGainLoss: 999, marketDate: '2026-10-06', recentAcquisitionCount: 0 },
+      { ticker: 'NOQUOTE', sourceType: 'buy', acquisitionDate: '2025-01-01', quantity: 5, unitCost: 100,
+        costBasis: 500, closePrice: null, marketValue: null, unrealizedGainLoss: null, marketDate: null, recentAcquisitionCount: 0 },
+    ], missingPriceTickers: ['NOQUOTE'],
     cash: { deposits: 0, withdrawals: 0, interest: 0, fees: 0, buys: 0, sells: 0, availableCash: 0, costBasis: 0, adjustments: 0 },
     totals: { holdingCount: 0, openLotCount: 0, equityCostBasis: 0, pricedEquityValue: 0, equityValue: 0, portfolioValue: null, unrealizedGainLoss: 0, cashPercentOfPortfolio: null },
     holdingReviewContext: [holding], recommendedLotAmount: recommendation,
@@ -41,33 +59,47 @@ const review: PortfolioReview = {
 }
 
 describe('calculated Review page', () => {
-  it('loads automatically and includes target distances without an AI or Messages action', () => {
+  it('loads automatically without an AI or Messages action', () => {
     const html = renderToStaticMarkup(createElement(ReviewPage))
     expect(html).toContain('Loading portfolio review...')
-    expect(html).toContain('Distance from buy and sell targets')
     expect(html).toContain('No AI required.')
     expect(html).not.toContain('Generate review')
     expect(html).not.toContain('Send to Messages')
     expect(html).not.toContain('<button')
     expect(html).toContain('As of page load; reload the page to update.')
+    expect(html).not.toContain('Refresh')
   })
 
   it('shows all standard sections even when saved AI assumptions are disabled', () => {
-    const html = renderToStaticMarkup(createElement(ReviewSections, { review }))
-    for (const text of ['Portfolio snapshot', 'Recommended lot amount', 'Largest concentrations',
-      'Unrealized loss items to review', 'Loss Timing Review', 'Holdings without a stored close', 'Important limitations']) {
+    const html = renderWithRouter(createElement(ReviewSections, { review }))
+    for (const text of ['Recommended lot amount', 'Largest concentrations',
+      'Loss Timing', 'Holdings without a stored close', 'Largest display-lot value at least 5× a $300 lot size ($1,500)']) {
       expect(html).toContain(text)
     }
+    expect(html).not.toContain('Portfolio snapshot')
+    expect(html).not.toContain('Unrealized loss items to review')
+    expect(html).not.toContain('Loss Timing Review')
+    expect(html).not.toContain('Important limitations')
+    expect(html).not.toContain('Stored closes may be stale.')
+    expect(html).not.toContain('Cash deployment')
+    expect(html).toContain('No largest individual display lot is valued at $1,500 or more.')
+    expect(html).not.toContain('href="/stocks/BELOW"')
+    expect(html.indexOf('<summary><h3>Largest concentrations</h3>'))
+      .toBeLessThan(html.indexOf('<summary><h3>Distance from buy and sell targets</h3>'))
+    expect(html).not.toContain('open="">')
     expect(html).toContain('50.00%')
-    expect(html).toContain('TEST qualifying buy lots')
+    expect(html).not.toContain('>TEST</a> qualifying buy lots')
+    expect(html).toContain('class="loss-timing-lots"')
     expect(html).toContain('NOQUOTE')
-    expect(html).toContain('Unavailable (missing prices)')
     expect(html).not.toContain('No additional model explanation')
     expect(html).not.toContain('Send to Messages')
+    for (const ticker of ['TEST', 'MINUS', 'TWO', 'THREE', 'NOQUOTE']) {
+      expect(html).toContain(`href="/stocks/${ticker}"`)
+    }
   })
 
   it('retains explicit empty-section messages', () => {
-    const html = renderToStaticMarkup(createElement(ReviewSections, {
+    const html = renderWithRouter(createElement(ReviewSections, {
       review: { ...review, facts: [], snapshot: { ...review.snapshot, holdingReviewContext: [] } },
     }))
     expect(html).toContain('No holding reached')
@@ -78,18 +110,19 @@ describe('calculated Review page', () => {
 
 describe('loss timing display', () => {
   it('preserves yearly losses, lot details and wait-day colors while excluding nonmatches', () => {
-    const html = renderToStaticMarkup(createElement(LossTimingTable, { holdings: [
+    const html = renderWithRouter(createElement(LossTimingTable, { holdings: [
       holding, { ...holding, ticker: 'WAIT', daysUntilPriorAcquisitionWindowClears: 12, yearlyGainLoss: -250 },
       { ...holding, ticker: 'UNKNOWN', daysUntilPriorAcquisitionWindowClears: null },
       { ...holding, ticker: 'EXCLUDED', matchesLossReviewFilter: false },
     ] }))
-    expect(html).toContain('class="value-positive"><strong>TEST</strong>')
-    expect(html).toContain('class="value-negative"><strong>WAIT</strong>')
-    expect(html).toContain('class=""><strong>UNKNOWN</strong>')
+    expect(html).toContain('class="value-positive"><strong><a class="link-button" href="/stocks/TEST">TEST</a></strong>')
+    expect(html).toContain('class="value-negative"><strong><a class="link-button" href="/stocks/WAIT">WAIT</a></strong>')
+    expect(html).toContain('class=""><strong><a class="link-button" href="/stocks/UNKNOWN">UNKNOWN</a></strong>')
     expect(html).toContain('-$250.00')
     expect(html).toContain('30.00%')
     expect(html).toContain('11 days since last tracked dividend')
     expect(html).not.toContain('EXCLUDED')
+    expect(html).not.toContain('table-scroll')
   })
 
   it('uses verified future dividend timing or elapsed days without treating unknown as zero', () => {
@@ -101,21 +134,55 @@ describe('loss timing display', () => {
 
 describe('recommended lot amount', () => {
   it('shows only holdings needing cash and retains next-step amounts', () => {
-    const html = renderToStaticMarkup(createElement(RecommendedLotAmountSection, { recommendation }))
+    const html = renderWithRouter(createElement(RecommendedLotAmountSection, { recommendation }))
     expect(html).toContain('$500.00')
-    expect(html).toContain('<strong>MINUS</strong>')
+    expect(html).toContain('<strong><a class="link-button" href="/stocks/MINUS">MINUS</a></strong>')
     expect(html).not.toContain('<strong>OVER</strong>')
+    expect(html).toContain('3 lots above +1 base across 2 tickers')
+    expect(html).toContain('<strong><a class="link-button" href="/stocks/TWO">TWO</a></strong>')
+    expect(html).toContain('<strong><a class="link-button" href="/stocks/THREE">THREE</a></strong>')
+    expect(html).toContain('href="/stocks/MINUS"')
+    expect(html).toContain('<td>1</td>')
+    expect(html).toContain('<td>2</td>')
+    expect(html).toContain('Recommended amounts start at $250')
     expect(html).toContain('Next steps')
     expect(html).toContain('$550.00')
     expect(html).not.toContain('Send to Messages')
   })
 
   it('explains insufficient cash and missing prices', () => {
-    const html = renderToStaticMarkup(createElement(RecommendedLotAmountSection, {
+    const html = renderWithRouter(createElement(RecommendedLotAmountSection, {
       recommendation: { ...recommendation, availableCash: 20, lotAmount: null, unpricedTickers: ['NOPRICE'] },
     }))
     expect(html).toContain('cannot cover')
     expect(html).toContain('NOPRICE')
+  })
+})
+
+describe('largest lots in concentrations review', () => {
+  it('uses the largest individual display lot times the stored close for the $1,500 threshold', () => {
+    const snapshot = {
+      ...review.snapshot,
+      holdings: [{
+        ticker: 'SNOW', quantity: 5, costBasis: 1500, closePrice: 334, marketDate: '2026-10-26',
+        marketValue: 1670, unrealizedGainLoss: 170, companyName: 'Snowflake Inc.', sector: null,
+        industry: null, sizeClassification: null, profileUpdatedAt: null,
+        percentOfPricedEquities: null, percentOfPortfolio: null,
+      }, {
+        ticker: 'BELOW', quantity: 4, costBasis: 1000, closePrice: 334, marketDate: '2026-10-26',
+        marketValue: 1336, unrealizedGainLoss: 336, companyName: null, sector: null,
+        industry: null, sizeClassification: null, profileUpdatedAt: null,
+        percentOfPricedEquities: null, percentOfPortfolio: null,
+      }],
+      holdingReviewContext: [
+        { ...holding, ticker: 'SNOW', displayLotCount: 3, largestDisplayLot: 5 },
+        { ...holding, ticker: 'BELOW', displayLotCount: 3, largestDisplayLot: 4 },
+      ],
+    }
+
+    expect(getHoldingsWithLargeLots(snapshot)).toEqual([
+      { ticker: 'SNOW', largestDisplayLot: 5, closePrice: 334, marketDate: '2026-10-26', marketValue: 1670 },
+    ])
   })
 })
 

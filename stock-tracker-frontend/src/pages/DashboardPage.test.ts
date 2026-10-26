@@ -7,6 +7,7 @@ import {
   formatLotCountDifference,
   getLotCountDifference,
   getLotCountDifferenceStyle,
+  getTickerInfoBadgeMessages,
   getSplitAdjustedTargetBasePrice,
   getTargetBaseMarker,
   getTargetBarPosition,
@@ -18,6 +19,18 @@ import {
 describe('dashboard daily stock counts', () => {
   it('counts positive and negative tickers, not the size of their changes', () => {
     expect(countDailyStockChanges([1, 5, -2, -0.01, 0.001])).toEqual({ positive: 3, negative: 2 })
+  })
+
+  describe('dashboard ticker info badges', () => {
+    it('explains non-default base sizes and buy-on-dip preferences only', () => {
+      expect(getTickerInfoBadgeMessages({ baseSize: 3, buyOnDip: false, buyOnDipPrice: null })).toEqual([])
+      expect(getTickerInfoBadgeMessages({ baseSize: 4, buyOnDip: false, buyOnDipPrice: null }))
+        .toEqual(['Custom base size: 4 display lots (default is 3).'])
+      expect(getTickerInfoBadgeMessages({ baseSize: 3, buyOnDip: true, buyOnDipPrice: 100 }))
+        .toEqual(['Buy on Dip is enabled with a base price of $100.0000.'])
+      expect(getTickerInfoBadgeMessages({ baseSize: 5, buyOnDip: true, buyOnDipPrice: 100 }))
+        .toEqual(['Custom base size: 5 display lots (default is 3).', 'Buy on Dip is enabled with a base price of $100.0000.'])
+    })
   })
 
   it('excludes unchanged, unavailable, and non-finite daily changes', () => {

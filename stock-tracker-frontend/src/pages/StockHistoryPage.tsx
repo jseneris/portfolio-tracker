@@ -10,6 +10,8 @@ import {
   StockTransaction,
   StockTransactionType,
   TickerSummary,
+  TickerPreference,
+  UserTargetSettings,
   createDisplayLot,
   createStockTransaction,
   deleteStockTransaction,
@@ -27,12 +29,14 @@ import {
   getStockSummaryByTicker,
   getStockTransactionsByTicker,
   getTickerPreference,
+  getUserTargetSettings,
   setInitialPurchaseFlag,
   updateTickerPreference,
   HistoricalPrice,
 } from '../api'
 import { formatCurrency2, formatStockPrice4, getLocalDateString } from '../formatters'
 import { createSplitMultiplierResolver } from '../portfolioSnapshot'
+import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, getTargetPricePosition, normalizeTargetSettings } from '../targetPrices'
 import TransactionDateEditor from './TransactionDateEditor'
 
 const ALLOCATION_TOLERANCE = 1e-6
@@ -104,6 +108,146 @@ function isOverOneYearOld(purchaseDate: string, referenceDate = new Date().toISO
 
 function toDateOnly(value: string): string {
   return typeof value === 'string' && value.length >= 10 ? value.slice(0, 10) : ''
+}
+
+export function getStockHeading(ticker: string, companyName?: string | null): string {
+  return companyName?.trim() ? `${companyName.trim()} (${ticker})` : ticker || 'Stock Tracker'
+}
+
+export function getStockDocumentTitle(ticker: string): string {
+  return ticker || 'Stock Tracker'
+}
+
+export type ThreeMonthChartPoint = {
+  priceDate: string
+  closePrice: number
+  movingAverage20: number | null
+  movingAverage50: number | null
+  movingAverage100: number | null
+  movingAverage200: number | null
+}
+
+export function buildThreeMonthChartPoints(
+  prices: HistoricalPrice[],
+  ticker: string,
+  asOfDate: string
+): ThreeMonthChartPoint[] {
+  const asOf = new Date(`${asOfDate}T00:00:00Z`)
+  const startDate = new Date(asOf)
+  const dayOfMonth = startDate.getUTCDate()
+  startDate.setUTCDate(1)
+  startDate.setUTCMonth(startDate.getUTCMonth() - 3)
+  const lastDayOfStartMonth = new Date(Date.UTC(
+    startDate.getUTCFullYear(), startDate.getUTCMonth() + 1, 0
+  )).getUTCDate()
+  startDate.setUTCDate(Math.min(dayOfMonth, lastDayOfStartMonth))
+  const start = startDate.toISOString().slice(0, 10)
+  const orderedPrices = prices
+    .filter((price) => price.ticker.toUpperCase() === ticker
+      && price.priceDate <= asOfDate
+      && Number.isFinite(price.closePrice))
+    .sort((first, second) => first.priceDate.localeCompare(second.priceDate))
+  const withAverages = orderedPrices.map((price, index) => {
+    const average = (period: number) => {
+      if (index + 1 < period) return null
+      const window = orderedPrices.slice(index + 1 - period, index + 1)
+      return window.reduce((sum, item) => sum + item.closePrice, 0) / period
+    }
+    return {
+      priceDate: price.priceDate,
+      closePrice: price.closePrice,
+      movingAverage20: average(20),
+      movingAverage50: average(50),
+      movingAverage100: average(100),
+      movingAverage200: average(200),
+    }
+  })
+  return withAverages.filter((point) => point.priceDate >= start)
+}
+
+export function getHoveredChartPointIndex(
+  pointerX: number,
+  plotLeft: number,
+  plotWidth: number,
+  pointCount: number
+): number | null {
+  if (pointCount === 0 || pointerX < plotLeft || pointerX > plotLeft + plotWidth) return null
+  if (pointCount === 1) return 0
+  return Math.round((pointerX - plotLeft) / plotWidth * (pointCount - 1))
+}
+
+function ThreeMonthPriceChart({ points, ticker }: { points: ThreeMonthChartPoint[]; ticker: string }) {
+  const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null)
+  if (!points.length) return <p>No stored prices are available for the past three months.</p>
+
+  const width = 800
+  const height = 300
+  const padding = { top: 16, right: 16, bottom: 34, left: 54 }
+  const values = points.flatMap((point) => [
+    point.closePrice, point.movingAverage20, point.movingAverage50,
+    point.movingAverage100, point.movingAverage200,
+  ].filter((value): value is number => value != null))
+  const minimum = Math.min(...values)
+  const maximum = Math.max(...values)
+  const spread = maximum - minimum || Math.max(maximum * 0.02, 1)
+  const minY = minimum - spread * 0.05
+  const maxY = maximum + spread * 0.05
+  const plotWidth = width - padding.left - padding.right
+  const plotHeight = height - padding.top - padding.bottom
+  const x = (index: number) => padding.left + (points.length === 1 ? plotWidth / 2 : index / (points.length - 1) * plotWidth)
+  const y = (value: number) => padding.top + (maxY - value) / (maxY - minY) * plotHeight
+  const hoveredPoint = hoveredPointIndex == null ? null : points[hoveredPointIndex]
+  const hoveredX = hoveredPointIndex == null ? null : x(hoveredPointIndex)
+  const line = (selector: (point: ThreeMonthChartPoint) => number | null) => points
+    .map((point, index) => ({ value: selector(point), index }))
+    .filter((point): point is { value: number; index: number } => point.value != null)
+    .map((point) => `${x(point.index)},${y(point.value)}`).join(' ')
+
+  return <div className="stock-price-chart-wrap">
+    <div className="stock-price-chart-legend">
+      <span><i className="stock-price-chart-key stock-price-chart-close" />Close</span>
+      <span><i className="stock-price-chart-key stock-price-chart-ma20" />20-day MA</span>
+      <span><i className="stock-price-chart-key stock-price-chart-ma50" />50-day MA</span>
+      <span><i className="stock-price-chart-key stock-price-chart-ma100" />100-day MA</span>
+      <span><i className="stock-price-chart-key stock-price-chart-ma200" />200-day MA</span>
+    </div>
+    {hoveredPoint ? (
+      <p className="stock-chart-hover-value" aria-live="polite">
+        {hoveredPoint.priceDate} close: {formatCurrency2(hoveredPoint.closePrice)}
+      </p>
+    ) : null}
+    <svg className="stock-price-chart stock-price-chart-daily" viewBox={`0 0 ${width} ${height}`} role="img"
+      aria-label={`${ticker} three-month closing price and 20, 50, 100, and 200 day moving averages`}
+      onMouseMove={(event) => {
+        const bounds = event.currentTarget.getBoundingClientRect()
+        if (bounds.width === 0) {
+          setHoveredPointIndex(null)
+          return
+        }
+        const pointerX = (event.clientX - bounds.left) / bounds.width * width
+        setHoveredPointIndex(getHoveredChartPointIndex(pointerX, padding.left, plotWidth, points.length))
+      }}
+      onMouseLeave={() => setHoveredPointIndex(null)}>
+      <line x1={padding.left} y1={padding.top} x2={padding.left} y2={height - padding.bottom} className="stock-price-chart-axis" />
+      <line x1={padding.left} y1={height - padding.bottom} x2={width - padding.right} y2={height - padding.bottom} className="stock-price-chart-axis" />
+      <text x={padding.left - 8} y={padding.top + 4} textAnchor="end" className="stock-price-chart-label">{formatCurrency2(maxY)}</text>
+      <text x={padding.left - 8} y={height - padding.bottom} textAnchor="end" className="stock-price-chart-label">{formatCurrency2(minY)}</text>
+      <text x={padding.left} y={height - 8} className="stock-price-chart-label">{points[0].priceDate}</text>
+      <text x={width - padding.right} y={height - 8} textAnchor="end" className="stock-price-chart-label">{points[points.length - 1].priceDate}</text>
+      <polyline points={line((point) => point.movingAverage200)} className="stock-price-chart-line stock-price-chart-ma200" />
+      <polyline points={line((point) => point.movingAverage100)} className="stock-price-chart-line stock-price-chart-ma100" />
+      <polyline points={line((point) => point.movingAverage50)} className="stock-price-chart-line stock-price-chart-ma50" />
+      <polyline points={line((point) => point.movingAverage20)} className="stock-price-chart-line stock-price-chart-ma20" />
+      <polyline points={line((point) => point.closePrice)} className="stock-price-chart-line stock-price-chart-close" />
+      {hoveredPoint && hoveredX != null ? (
+        <>
+          <line x1={hoveredX} y1={padding.top} x2={hoveredX} y2={height - padding.bottom}
+            className="stock-price-chart-hover-line" />
+          <circle cx={hoveredX} cy={y(hoveredPoint.closePrice)} r="4" className="stock-price-chart-hover-point" />
+        </>
+      ) : null}
+    </svg>
+  </div>
 }
 
 export function getWashSaleWindowTransactions(transactions: StockTransaction[], ticker: string, saleDate: string) {
@@ -455,6 +599,11 @@ function getBreakdownPerformanceClassName(value: number | null) {
 export default function StockHistoryPage() {
   const { ticker: tickerParam } = useParams<{ ticker: string }>()
   const ticker = useMemo(() => decodeURIComponent(tickerParam ?? '').trim().toUpperCase(), [tickerParam])
+  useEffect(() => {
+    const previousTitle = document.title
+    document.title = getStockDocumentTitle(ticker)
+    return () => { document.title = previousTitle }
+  }, [ticker])
   const [summary, setSummary] = useState<TickerSummary | null>(null)
   const [transactions, setTransactions] = useState<StockTransaction[]>([])
   const [allTickerTransactions, setAllTickerTransactions] = useState<StockTransaction[]>([])
@@ -483,6 +632,16 @@ export default function StockHistoryPage() {
   const [buyOnDip, setBuyOnDip] = useState(false)
   const [buyOnDipPrice, setBuyOnDipPrice] = useState<number | null>(null)
   const [baseSize, setBaseSize] = useState('3')
+  const [targetPreference, setTargetPreference] = useState<TickerPreference>()
+  const [targetSettings, setTargetSettings] = useState<UserTargetSettings>({
+    saleTargetPercent: 10,
+    buyTargetPercentUnder3DisplayLots: 5,
+    buyTargetPercentFor3DisplayLots: 10,
+    buyTargetPercentFor4DisplayLots: 15,
+    buyTargetPercentFor5DisplayLots: 20,
+    buyTargetPercentFor6OrMoreDisplayLots: 25,
+    buyOnDipBuyTargetPercent: 1,
+  })
   const [buyRestricted, setBuyRestricted] = useState(false)
   const [buyRestrictedUntil, setBuyRestrictedUntil] = useState('')
   const [savingTickerPreference, setSavingTickerPreference] = useState(false)
@@ -492,6 +651,7 @@ export default function StockHistoryPage() {
   const [livePrice, setLivePrice] = useState<number | null>(null)
   const [livePriceChangePercent, setLivePriceChangePercent] = useState<number | null>(null)
   const [historicalPrices, setHistoricalPrices] = useState<HistoricalPrice[]>([])
+  const [showThreeMonthChart, setShowThreeMonthChart] = useState(false)
   const [sellLotsSource, setSellLotsSource] = useState<PurchaseLot[]>([])
   const [loadingAllocations, setLoadingAllocations] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -588,6 +748,21 @@ export default function StockHistoryPage() {
       .filter((value) => Number.isFinite(value))
       .sort((a, b) => a - b)
   }, [displayLotEntries])
+  const latestTargetTransaction = useMemo(
+    () => buildLatestBuyOrSellByTicker(allTickerTransactions).get(ticker),
+    [allTickerTransactions, ticker]
+  )
+  const targetBasePrice = getSplitAdjustedTargetBasePrice(
+    latestTargetTransaction,
+    splitEvents,
+    new Date().toISOString().slice(0, 10)
+  )
+  const stockTargets = calculateTickerTargets(
+    targetBasePrice,
+    displayLotSummary.length,
+    targetSettings,
+    targetPreference
+  )
   const highlightedDisplayLotCount = Number.isSafeInteger(Number(baseSize))
     ? Math.max(0, Number(baseSize))
     : 0
@@ -630,6 +805,15 @@ export default function StockHistoryPage() {
   const displayLotsOutOfSync = Math.abs(displayLotShareDelta) > ALLOCATION_TOLERANCE
 
   const effectivePrice = livePrice ?? latestHistoricalPrice
+  const stockTargetPricePosition = getTargetPricePosition(
+    effectivePrice,
+    stockTargets.buy,
+    stockTargets.sell
+  )
+  const threeMonthChartPoints = useMemo(
+    () => buildThreeMonthChartPoints(historicalPrices, ticker, new Date().toISOString().slice(0, 10)),
+    [historicalPrices, ticker]
+  )
 
   const currentValue = useMemo(() => {
     if (!summary || effectivePrice == null) {
@@ -1053,7 +1237,7 @@ export default function StockHistoryPage() {
     setLoading(true)
     setError(null)
     try {
-      const [tickerSummaryData, txData, tickerLots, displayLotsData, cashSummaryData, splitEventsData, tickerPreference] = await Promise.all([
+      const [tickerSummaryData, txData, tickerLots, displayLotsData, cashSummaryData, splitEventsData, tickerPreference, userTargetSettings] = await Promise.all([
         getStockSummaryByTicker(ticker),
         getStockTransactionsByTicker(ticker),
         getPurchaseLotsByTicker(ticker),
@@ -1061,9 +1245,12 @@ export default function StockHistoryPage() {
         getCashSummary(),
         getStockSplitsByTicker(ticker),
         getTickerPreference(ticker),
+        getUserTargetSettings(),
       ])
       setSummary(tickerSummaryData)
       setSaleAllocations({})
+      setTargetPreference(tickerPreference)
+      setTargetSettings(normalizeTargetSettings(userTargetSettings))
       setBaseSize(String(tickerPreference.baseSize ?? 3))
       setBuyOnDip(tickerPreference.buyOnDip)
       setBuyOnDipPrice(tickerPreference.buyOnDipPrice)
@@ -1167,6 +1354,7 @@ export default function StockHistoryPage() {
     }
 
     let cancelled = false
+    setCompanyProfile(null)
 
     getStockProfileByTicker(ticker)
       .then((profile) => {
@@ -1582,6 +1770,7 @@ export default function StockHistoryPage() {
       setBuyOnDipPrice(preference.buyOnDipPrice)
       setBuyRestricted(preference.buyRestricted)
       setBuyRestrictedUntil(preference.buyRestrictedUntil ?? '')
+      setTargetPreference(preference)
       setSuccess(`${ticker} trading preferences saved.`)
       emitPortfolioUpdated()
     } catch (err: unknown) {
@@ -1595,13 +1784,17 @@ export default function StockHistoryPage() {
     <section>
       <div className="panel panel-tight row-between">
         <div>
-          <h2 style={{ margin: 0 }}>{ticker || 'Ticker'} Transactions</h2>
+          <div className="stock-title-row">
+            <h2 style={{ margin: 0 }}>{getStockHeading(ticker, companyProfile?.companyName)}</h2>
+            <button className="link-button stock-chart-toggle" type="button"
+              aria-expanded={showThreeMonthChart}
+              onClick={() => setShowThreeMonthChart((shown) => !shown)}>
+              {showThreeMonthChart ? 'Hide 3-month chart' : '3-month chart'}
+            </button>
+          </div>
           {companyProfile ? (
             <p className="hint">
-              {companyProfile.companyName ?? ticker}
-              {companyProfile.sector ? ` \u00b7 ${companyProfile.sector}` : ''}
-              {companyProfile.industry ? ` \u00b7 ${companyProfile.industry}` : ''}
-              {companyProfile.sizeClassification ? ` \u00b7 ${companyProfile.sizeClassification}` : ''}
+              {[companyProfile.sector, companyProfile.industry, companyProfile.sizeClassification].filter(Boolean).join(' \u00b7 ')}
             </p>
           ) : null}
         </div>
@@ -1609,92 +1802,107 @@ export default function StockHistoryPage() {
           <button className="button button-primary" type="button" onClick={openAddTransactionModal} disabled={!ticker}>
             Add Transaction
           </button>
-          <button className="button" type="button" onClick={openInitialPurchaseModal} disabled={!ticker || buyTransactionsAscending.length === 0}>
-            Mark Initial Purchases
-          </button>
           <Link className="button" to="/">
             Back to Dashboard
           </Link>
         </div>
       </div>
 
+      {showThreeMonthChart ? (
+        <div className="panel stock-price-chart-panel">
+          <div className="row-between">
+            <h3>3-month price chart</h3>
+          </div>
+          <p className="muted-text">Latest stored closing prices. Hover over the chart to see each day’s close.</p>
+          <ThreeMonthPriceChart points={threeMonthChartPoints} ticker={ticker} />
+        </div>
+      ) : null}
+
       {error ? <div className="panel status status-error">{error}</div> : null}
       {success ? <div className="panel status status-success">{success}</div> : null}
 
-      {!loading && !error ? (
-        <div className="panel panel-tight ticker-preferences-panel">
-          <div className="ticker-preferences-content">
-            <div>
-              <h3>Trading Preferences</h3>
-              <p className="hint">Set {ticker}&apos;s base display-lot size for the dashboard comparison; it defaults to 3.</p>
+      <details className="panel ticker-page-settings">
+        <summary>Settings</summary>
+        <div className="ticker-page-settings-content">
+          <button className="button" type="button" onClick={openInitialPurchaseModal} disabled={!ticker || buyTransactionsAscending.length === 0}>
+            Mark Initial Purchases
+          </button>
+          {!loading && !error ? (
+            <div className="panel panel-tight ticker-preferences-panel">
+              <div className="ticker-preferences-content">
+                <div>
+                  <h3>Trading Preferences</h3>
+                  <p className="hint">Set {ticker}&apos;s base display-lot size for the dashboard comparison; it defaults to 3.</p>
+                </div>
+                <form className="ticker-preferences-form" onSubmit={onSaveTickerPreference}>
+                  <label className="ticker-base-size">
+                    Base size
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={baseSize}
+                      onChange={(event) => setBaseSize(event.target.value)}
+                      disabled={savingTickerPreference}
+                      required
+                    />
+                  </label>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={buyOnDip}
+                      onChange={(event) => {
+                        const checked = event.target.checked
+                        if (checked && (effectivePrice == null || !Number.isFinite(effectivePrice) || effectivePrice <= 0)) {
+                          setTickerPreferenceError('A valid ticker price is required to set Buy on Dip targets.')
+                          return
+                        }
+                        setTickerPreferenceError(null)
+                        setBuyOnDip(checked)
+                        setBuyOnDipPrice(checked ? effectivePrice : null)
+                      }}
+                      disabled={savingTickerPreference}
+                    />
+                    Buy on Dip
+                  </label>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={buyRestricted}
+                      onChange={(event) => {
+                        const checked = event.target.checked
+                        setBuyRestricted(checked)
+                        if (!checked) {
+                          setBuyRestrictedUntil('')
+                        }
+                      }}
+                      disabled={savingTickerPreference}
+                    />
+                    Buy Restricted
+                  </label>
+                  {buyRestricted ? (
+                    <label className="ticker-restriction-date">
+                      Restricted until
+                      <input
+                        type="date"
+                        min={new Date().toISOString().slice(0, 10)}
+                        value={buyRestrictedUntil}
+                        onChange={(event) => setBuyRestrictedUntil(event.target.value)}
+                        disabled={savingTickerPreference}
+                        required
+                      />
+                    </label>
+                  ) : null}
+                  <button className="button button-primary" type="submit" disabled={savingTickerPreference || (buyRestricted && !buyRestrictedUntil)}>
+                    {savingTickerPreference ? 'Saving...' : 'Save Preferences'}
+                  </button>
+                </form>
+              </div>
+              {tickerPreferenceError ? <div className="status status-error">{tickerPreferenceError}</div> : null}
             </div>
-            <form className="ticker-preferences-form" onSubmit={onSaveTickerPreference}>
-              <label className="ticker-base-size">
-                Base size
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={baseSize}
-                  onChange={(event) => setBaseSize(event.target.value)}
-                  disabled={savingTickerPreference}
-                  required
-                />
-              </label>
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={buyOnDip}
-                  onChange={(event) => {
-                    const checked = event.target.checked
-                    if (checked && (effectivePrice == null || !Number.isFinite(effectivePrice) || effectivePrice <= 0)) {
-                      setTickerPreferenceError('A valid ticker price is required to set Buy on Dip targets.')
-                      return
-                    }
-                    setTickerPreferenceError(null)
-                    setBuyOnDip(checked)
-                    setBuyOnDipPrice(checked ? effectivePrice : null)
-                  }}
-                  disabled={savingTickerPreference}
-                />
-                Buy on Dip
-              </label>
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={buyRestricted}
-                  onChange={(event) => {
-                    const checked = event.target.checked
-                    setBuyRestricted(checked)
-                    if (!checked) {
-                      setBuyRestrictedUntil('')
-                    }
-                  }}
-                  disabled={savingTickerPreference}
-                />
-                Buy Restricted
-              </label>
-              {buyRestricted ? (
-                <label className="ticker-restriction-date">
-                  Restricted until
-                  <input
-                    type="date"
-                    min={new Date().toISOString().slice(0, 10)}
-                    value={buyRestrictedUntil}
-                    onChange={(event) => setBuyRestrictedUntil(event.target.value)}
-                    disabled={savingTickerPreference}
-                    required
-                  />
-                </label>
-              ) : null}
-              <button className="button button-primary" type="submit" disabled={savingTickerPreference || (buyRestricted && !buyRestrictedUntil)}>
-                {savingTickerPreference ? 'Saving...' : 'Save Preferences'}
-              </button>
-            </form>
-          </div>
-          {tickerPreferenceError ? <div className="status status-error">{tickerPreferenceError}</div> : null}
+          ) : null}
         </div>
-      ) : null}
+      </details>
 
       {loading ? (
         <>
@@ -1744,7 +1952,30 @@ export default function StockHistoryPage() {
               </div>
               <div className="hint">click to manage</div>
             </button>
-            <div className="stat"><div className="label">Performance</div><div className={getPerformanceClassName(summaryPerformance)}>{formatCurrency2(summaryPerformance)}</div></div>
+            <div className="stat stock-target-stat">
+              <div className="label">Target</div>
+              <div className="stock-target-current-price">
+                {livePrice != null ? 'Live' : 'Latest close'}: {formatStockPrice4(effectivePrice)}
+              </div>
+              {stockTargets.buy != null && stockTargets.sell != null ? (
+                <>
+                  <div className="stock-target-track"
+                    role="img"
+                    aria-label={`Price ${formatStockPrice4(effectivePrice)} between buy target ${formatStockPrice4(stockTargets.buy)} and sell target ${formatStockPrice4(stockTargets.sell)}`}>
+                    <span className="stock-target-track-fill"
+                      style={{ width: `${stockTargetPricePosition ?? 0}%` }} />
+                    {stockTargetPricePosition != null ? (
+                      <span className="stock-target-current-marker"
+                        style={{ left: `${stockTargetPricePosition}%` }} />
+                    ) : null}
+                  </div>
+                  <div className="stock-target-range">
+                    <span>Buy {formatStockPrice4(stockTargets.buy)}</span>
+                    <span>Sell {formatStockPrice4(stockTargets.sell)}</span>
+                  </div>
+                </>
+              ) : <span className="muted-text">Targets unavailable</span>}
+            </div>
           </div>
 
           {splitEvents.length > 0 ? (

@@ -44,12 +44,19 @@ describe('holding loss-review context', () => {
     ], [], [context], '2026-10-06', [qualifyingLot]);
     expect(rows[0]).toMatchObject({
       yearEndMarketValue: 100, netCurrentYearInvested: 30, yearlyGainLoss: -40,
-      displayLotCount: 4, matchesLossReviewFilter: true,
+      displayLotCount: 4, largestDisplayLot: 4, matchesLossReviewFilter: true,
       priorAcquisitionWindowClearsOn: '2026-10-26', daysUntilPriorAcquisitionWindowClears: 20,
       lastTrackedDividendDate: '2026-09-25', nextDeclaredDividendDate: null, daysUntilNextDividend: null,
       daysSinceLastDividend: 11,
     });
     expect(rows[0].washSaleEligibility).toContain('Cannot be established');
+  });
+
+  it('reports the largest individual display-lot share quantity, not the number of lots', () => {
+    const row = buildHoldingReviewContext([{ ticker: 'TEST', marketValue: 90 }], [purchase], [],
+      [{ ...context, lotsCsv: '3,4,5' }], '2026-10-06')[0];
+    expect(row.displayLotCount).toBe(3);
+    expect(row.largestDisplayLot).toBe(5);
   });
 
   it('requires strictly more than three display lots and strictly negative YTD, not a stock price loss', () => {

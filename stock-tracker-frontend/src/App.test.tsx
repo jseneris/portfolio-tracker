@@ -20,7 +20,7 @@ describe('Review navigation', () => {
     const html = renderToStaticMarkup(createElement(StaticRouter, { location: '/review' }, createElement(App)))
     expect(html).toContain('href="/review"')
     expect(html).toContain('Calculated portfolio review')
-    expect(html).toContain('Distance from buy and sell targets')
+    expect(html).toContain('Loading portfolio review...')
     expect(html).not.toContain('href="/insights"')
     expect(html).not.toContain('Send to Messages')
   })

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { StaticRouter } from 'react-router-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as api from '../api'
-import { calculateTickerTargets, normalizeTargetSettings } from '../targetPrices'
+import { calculateTickerTargets, getTargetPricePosition, normalizeTargetSettings } from '../targetPrices'
 import { getTargetDistanceRows, loadTargetDistances, TargetDistanceTable, type TargetDistanceInput } from './TargetDistanceSection'
 
 const input: TargetDistanceInput = { ticker: 'TEST', price: 100, buy: 80, sell: 160, priceLabel: 'Stored close 2026-10-23' }
@@ -23,7 +23,7 @@ describe('target-distance tiers', () => {
     [null, 'Unknown'],
   ])('shows prior-acquisition timing for %s days without applying loss-review filters', (days, label) => {
     const timing: NonNullable<api.PortfolioReview['snapshot']['holdingReviewContext']>[number] = {
-      ticker: 'test', displayLotCount: 1, yearlyGainLoss: 100, matchesLossReviewFilter: false,
+      ticker: 'test', displayLotCount: 1, largestDisplayLot: 1, yearlyGainLoss: 100, matchesLossReviewFilter: false,
       lastTrackedAcquisitionDate: '2026-10-05', priorAcquisitionWindowClearsOn: '2026-11-05',
       daysUntilPriorAcquisitionWindowClears: days,
       lastTrackedDividendDate: null, nextDeclaredDividendDate: null,
@@ -110,6 +110,13 @@ describe('shared dashboard targets', () => {
     }
     expect(calculateTickerTargets(null, 6, settings, preference)).toEqual({ buy: 98, sell: 110 })
     expect(calculateTickerTargets(null, 6, settings, undefined)).toEqual({ buy: null, sell: null })
+  })
+
+  it('positions the current price between the buy and sell targets like the dashboard', () => {
+    expect(getTargetPricePosition(100, 90, 110)).toBe(50)
+    expect(getTargetPricePosition(80, 90, 110)).toBe(0)
+    expect(getTargetPricePosition(120, 90, 110)).toBe(100)
+    expect(getTargetPricePosition(100, null, 110)).toBeNull()
   })
 
   it('preserves dashboard defaults for invalid settings', () => {
