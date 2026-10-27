@@ -125,8 +125,7 @@ async function enableBuyOnDipAtTrigger(
       MERGE UserTickerPreferences WITH (HOLDLOCK) AS target
       USING (SELECT @userId AS userId, @ticker AS ticker) AS source
         ON target.userId = source.userId AND target.ticker = source.ticker
-      WHEN MATCHED AND target.buyOnDip = 0
-        AND NOT (target.buyRestricted = 1 AND target.buyRestrictedUntil >= @today) THEN
+      WHEN MATCHED AND NOT (target.buyRestricted = 1 AND target.buyRestrictedUntil >= @today) THEN
         UPDATE SET buyOnDip = 1, buyOnDipPrice = @price, updatedAt = GETUTCDATE()
       WHEN NOT MATCHED THEN
         INSERT (id, userId, ticker, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil)
@@ -292,12 +291,11 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
     }
 
     if (sellTarget != null && price >= sellTarget) {
-      const enabledBuyOnDip = !preference?.buyOnDip
-        && (displayLotCounts.get(k) ?? 0) === (preference?.baseSize ?? 3)
+      const enabledBuyOnDip = (displayLotCounts.get(k) ?? 0) === (preference?.baseSize ?? 3)
         ? await enableBuyOnDipAtTrigger(pool, userId, ticker, price, today)
         : false;
       const body = `${ticker} hit its sell target of ${formatPrice(sellTarget)} (current price ${formatPrice(price)}).`
-        + (enabledBuyOnDip ? ` Buy on Dip was automatically enabled at ${formatPrice(price)} because this holding matches its base display-lot size.` : '');
+        + (enabledBuyOnDip ? ` Buy on Dip was set at ${formatPrice(price)} because this holding matches its base display-lot size.` : '');
       const inserted = await insertMessageIfNoUnread(pool, {
         userId,
         ticker,

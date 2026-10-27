@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom'
 import { useAppAuth } from './auth'
 import { getUnreadMessageCount, getUserProfile } from './api'
@@ -24,9 +24,12 @@ export default function App() {
   const [aiInsightsEnabled, setAiInsightsEnabled] = useState(false)
   const [unreadMessageCount, setUnreadMessageCount] = useState(0)
   const [openMenu, setOpenMenu] = useState<'transactions' | 'charts' | 'account' | null>(null)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const mobileNavButton = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
     setOpenMenu(null)
+    setMobileNavOpen(false)
   }, [location])
 
   useEffect(() => {
@@ -149,14 +152,31 @@ export default function App() {
           </p>
         </div>
         <div className="header-actions">
-          <nav aria-label="Main navigation" onKeyDown={(event) => {
+          <button ref={mobileNavButton} className="mobile-nav-toggle" type="button"
+            aria-label={mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'}
+            aria-expanded={mobileNavOpen} aria-controls="main-navigation"
+            onClick={() => {
+              setMobileNavOpen((open) => !open)
+              setOpenMenu(null)
+            }}>
+            <span aria-hidden="true">{'\u2630'}</span>
+            {unreadMessageCount > 0 ? <span className="nav-badge">{unreadMessageCount}</span> : null}
+          </button>
+          <nav id="main-navigation" className={mobileNavOpen ? 'mobile-nav-open' : undefined}
+            aria-label="Main navigation" onKeyDown={(event) => {
             if (event.key === 'Escape') {
               setOpenMenu(null)
-              event.currentTarget.querySelector<HTMLDetailsElement>('details[open]')?.querySelector('summary')?.focus()
+              if (window.matchMedia('(max-width: 640px)').matches) {
+                setMobileNavOpen(false)
+                mobileNavButton.current?.focus()
+              } else {
+                event.currentTarget.querySelector<HTMLDetailsElement>('details[open]')?.querySelector('summary')?.focus()
+              }
             }
           }} onClick={(event) => {
             if (event.target instanceof Element && event.target.closest('a')) {
               setOpenMenu(null)
+              setMobileNavOpen(false)
             }
           }}>
             <NavLink to="/" end>Dashboard</NavLink>
@@ -202,6 +222,7 @@ export default function App() {
                 {auth.isConfigured ? (
                   <button className="nav-logout" type="button" onClick={() => {
                     setOpenMenu(null)
+                    setMobileNavOpen(false)
                     auth.logout()
                   }}>Log out</button>
                 ) : null}
