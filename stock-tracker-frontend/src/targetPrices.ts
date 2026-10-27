@@ -5,6 +5,7 @@ export function normalizeTargetSettings(settings: UserTargetSettings): UserTarge
   const positive = (value: number, fallback: number) => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : fallback
   const dip = Number(settings.buyOnDipBuyTargetPercent)
   return {
+    basePurchaseSize: positive(settings.basePurchaseSize, 300),
     saleTargetPercent: positive(settings.saleTargetPercent, 10),
     buyTargetPercentUnder3DisplayLots: positive(settings.buyTargetPercentUnder3DisplayLots, 5),
     buyTargetPercentFor3DisplayLots: positive(settings.buyTargetPercentFor3DisplayLots, 10),

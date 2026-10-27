@@ -1,8 +1,10 @@
-import { CSSProperties, FormEvent, Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { CSSProperties, FormEvent, Fragment, ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { useAppAuth } from '../auth'
 import {
   CashTransaction,
+  DisplayLot,
   CreateStockInput,
   HistoricalPrice,
   SaleAllocation,
@@ -79,19 +81,82 @@ function formatDateOnlyLabel(value: string | null | undefined): string {
   return parsed.toLocaleDateString(undefined, { timeZone: 'UTC' })
 }
 
-export function getTickerInfoBadgeMessages(preference: Pick<TickerPreference, 'baseSize' | 'buyOnDip' | 'buyOnDipPrice'>): string[] {
-  const messages: string[] = []
-  if (preference.baseSize !== 3) messages.push(`Custom base size: ${preference.baseSize} display lots (default is 3).`)
-  if (preference.buyOnDip) messages.push(`Buy on Dip is enabled${preference.buyOnDipPrice != null ? ` with a base price of ${formatStockPrice4(preference.buyOnDipPrice)}` : ''}.`)
-  return messages
+export function getTickerInfoBadges(
+  preference: Pick<TickerPreference, 'baseSize' | 'buyOnDip' | 'buyOnDipPrice'>,
+  largestDisplayLotValue: number | null,
+  basePurchaseSize: number
+): { symbol: string; tone: 'green' | 'red'; message: string }[] {
+  const badges: ReturnType<typeof getTickerInfoBadges> = []
+  if (preference.buyOnDip) badges.push({ symbol: 'B', tone: 'green', message: `Buy on Dip is enabled${preference.buyOnDipPrice != null ? ` with a base price of ${formatStockPrice4(preference.buyOnDipPrice)}` : ''}.` })
+  if (preference.baseSize !== 3) badges.push({
+    symbol: preference.baseSize < 3 ? '\u2013' : '+',
+    tone: preference.baseSize < 3 ? 'red' : 'green',
+    message: `Base size: ${preference.baseSize} display lots (default is 3).`,
+  })
+  if (largestDisplayLotValue != null && Number.isFinite(largestDisplayLotValue) && basePurchaseSize > 0
+    && largestDisplayLotValue > basePurchaseSize * 5) {
+    badges.push({ symbol: '5', tone: 'red', message: `Largest display lot: ${formatCurrency2(largestDisplayLotValue)} at the latest stored close, greater than 5 times Base Purchase Size (${formatCurrency2(basePurchaseSize * 5)}).` })
+  }
+  return badges
 }
 
-function TickerInfoBadge({ messages }: { messages: string[] }) {
-  if (!messages.length) return null
-  return <details className="ticker-info-badge">
-    <summary aria-label="Ticker information" title={messages.join(' ')}>i</summary>
-    <span role="note">{messages.join(' ')}</span>
-  </details>
+export function getLargestDisplayLotValues(displayLots: DisplayLot[], historicalPrices: HistoricalPrice[], asOfDate: string): Record<string, number> {
+  const closes = new Map<string, HistoricalPrice>()
+  for (const price of historicalPrices) {
+    const ticker = normalizeTicker(price.ticker)
+    if (!price.priceDate || price.priceDate.slice(0, 10) > asOfDate || !Number.isFinite(price.closePrice) || price.closePrice <= 0) continue
+    const previous = closes.get(ticker)
+    if (!previous || price.priceDate > previous.priceDate) closes.set(ticker, price)
+  }
+  const values: Record<string, number> = {}
+  for (const row of displayLots) {
+    const ticker = normalizeTicker(row.ticker)
+    const close = closes.get(ticker)
+    if (!close) continue
+    for (const quantity of row.lots) {
+      if (Number.isFinite(quantity) && quantity > 0) values[ticker] = Math.max(values[ticker] ?? 0, quantity * close.closePrice)
+    }
+  }
+  return values
+}
+
+export function DashboardTooltip({ message, className, children }: { message: string; className: string; children: ReactNode }) {
+  const id = useId()
+  const trigger = useRef<HTMLButtonElement>(null)
+  const [position, setPosition] = useState<CSSProperties | null>(null)
+  function show() {
+    const rect = trigger.current?.getBoundingClientRect()
+    if (rect) setPosition({
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - Math.min(320, window.innerWidth - 16) - 8)),
+      top: rect.top >= 140 ? rect.top - 8 : rect.bottom + 8,
+      transform: rect.top >= 140 ? 'translateY(-100%)' : undefined,
+    })
+  }
+  useEffect(() => {
+    if (!position) return
+    const dismiss = () => setPosition(null)
+    const outside = (event: PointerEvent) => { if (!trigger.current?.contains(event.target as Node)) dismiss() }
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') dismiss() }
+    document.addEventListener('pointerdown', outside)
+    document.addEventListener('keydown', escape)
+    window.addEventListener('scroll', dismiss, true)
+    window.addEventListener('resize', dismiss)
+    return () => {
+      document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('keydown', escape)
+      window.removeEventListener('scroll', dismiss, true)
+      window.removeEventListener('resize', dismiss)
+    }
+  }, [position])
+  return <>
+    <button ref={trigger} type="button" className={`dashboard-tooltip-trigger ${className}`}
+      aria-label={message} aria-describedby={position ? id : undefined}
+      onMouseEnter={show} onMouseLeave={() => setPosition(null)} onFocus={show}
+      onBlur={() => setPosition(null)} onClick={show}>
+      {children}
+    </button>
+    {position && createPortal(<span id={id} role="tooltip" className="dashboard-tooltip" style={position}>{message}</span>, document.body)}
+  </>
 }
 
 type TargetDirection = 'buy' | 'sell' | null
@@ -436,6 +501,8 @@ export default function DashboardPage() {
   const [buyTargetsByTicker, setBuyTargetsByTicker] = useState<Record<string, number | null>>({})
   const [tickerPreferencesByTicker, setTickerPreferencesByTicker] = useState<Record<string, TickerPreference>>({})
   const [displayLotCountsByTicker, setDisplayLotCountsByTicker] = useState<Record<string, number>>({})
+  const [displayLots, setDisplayLots] = useState<DisplayLot[]>([])
+  const [basePurchaseSize, setBasePurchaseSize] = useState(300)
   const snapshotDate = new Date().toISOString().slice(0, 10)
   const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([])
   const [cashTransactions, setCashTransactions] = useState<CashTransaction[]>([])
@@ -818,6 +885,11 @@ export default function DashboardPage() {
     snapshotDate,
   })
 
+  const largestDisplayLotValues = useMemo(
+    () => getLargestDisplayLotValues(displayLots, historicalPrices, snapshotDate),
+    [displayLots, historicalPrices, snapshotDate]
+  )
+
   const sortedHoldingsRows = useMemo(() => {
     const directionMultiplier = holdingsSortDirection === 'asc' ? 1 : -1
 
@@ -973,6 +1045,8 @@ export default function DashboardPage() {
       setSplitEvents(splitEventsResult)
       setHistoricalLoadedEndDate(historicalEndDate)
       setDisplayLotCountsByTicker(displayLotCountsByTicker)
+      setDisplayLots(displayLotsResult)
+      setBasePurchaseSize(normalizedSettings.basePurchaseSize)
       setTickerPreferencesByTicker(preferencesByTicker)
       setSaleTargetsByTicker(calculateSaleTargetsByTicker(
         summary,
@@ -1422,10 +1496,14 @@ export default function DashboardPage() {
                       <Link className="link-button" to={`/stocks/${encodeURIComponent(row.ticker)}`}>
                         {row.ticker}
                       </Link>
-                      <TickerInfoBadge messages={getTickerInfoBadgeMessages({
+                      <sup className="ticker-info-badges">{getTickerInfoBadges({
                         baseSize: row.baseSize, buyOnDip: row.buyOnDip,
                         buyOnDipPrice: tickerPreferencesByTicker[row.ticker]?.buyOnDipPrice ?? null,
-                      })} />
+                      }, largestDisplayLotValues[row.ticker] ?? null, basePurchaseSize).map((badge) => (
+                        <DashboardTooltip key={badge.symbol} className={`ticker-info-badge ticker-info-badge-${badge.tone}`} message={badge.message}>
+                          <span className={badge.symbol === '\u2013' ? 'ticker-info-badge-dash' : undefined}>{badge.symbol}</span>
+                        </DashboardTooltip>
+                      ))}</sup>
                     </td>
                     <td>
                       {holdingsLoading && row.latestPrice == null ? (
@@ -1482,14 +1560,14 @@ export default function DashboardPage() {
                       ) : row.targetProximityPercent == null ? (
                         formatPercent2(null)
                       ) : (
-                        <div
+                        <DashboardTooltip
                           className={`target-proximity target-proximity-${row.targetDirection ?? 'neutral'}${row.targetProximityPercent >= 100 ? ' target-proximity-hit' : ''}`}
-                          title={row.buyOnDip ? 'Buy on Dip' : getTargetProximityLabel(
+                          message={(row.buyOnDip ? 'Buy on Dip. ' : '') + (getTargetProximityLabel(
                             row.targetDirection,
                             row.targetBasePrice,
                             buyTargetsByTicker[row.ticker],
                             saleTargetsByTicker[row.ticker]
-                          )}
+                          ) ?? 'Target proximity') + `. ${row.targetBaseMarker.label}`}
                         >
                           <span className="target-proximity-value">{formatPercent2(row.targetProximityPercent)}</span>
                           <span className="target-proximity-track">
@@ -1504,7 +1582,7 @@ export default function DashboardPage() {
                                 aria-label={row.targetBaseMarker.label} />
                             ) : null}
                           </span>
-                        </div>
+                        </DashboardTooltip>
                       )}
                     </td>
                     <td className="holdings-secondary-column">

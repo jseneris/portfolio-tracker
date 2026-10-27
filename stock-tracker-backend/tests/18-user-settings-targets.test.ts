@@ -65,6 +65,7 @@ describe('18. User Settings - Target Preferences', () => {
       .expect(200);
 
     expect(response.body).toEqual({
+      basePurchaseSize: 300,
       saleTargetPercent: 10,
       buyTargetPercentUnder3DisplayLots: 5,
       buyTargetPercentFor3DisplayLots: 10,
@@ -77,6 +78,7 @@ describe('18. User Settings - Target Preferences', () => {
 
   it('persists all target values and returns them on GET', async () => {
     const payload = {
+      basePurchaseSize: 450.25,
       saleTargetPercent: 12.5,
       buyTargetPercentUnder3DisplayLots: 4.5,
       buyTargetPercentFor3DisplayLots: 9.25,
@@ -111,6 +113,7 @@ describe('18. User Settings - Target Preferences', () => {
 
   it('updates the existing settings row instead of inserting a duplicate', async () => {
     const firstPayload = {
+      basePurchaseSize: 300,
       saleTargetPercent: 11,
       buyTargetPercentUnder3DisplayLots: 6,
       buyTargetPercentFor3DisplayLots: 11,
@@ -121,6 +124,7 @@ describe('18. User Settings - Target Preferences', () => {
     };
 
     const secondPayload = {
+      basePurchaseSize: 500,
       saleTargetPercent: 14,
       buyTargetPercentUnder3DisplayLots: 7,
       buyTargetPercentFor3DisplayLots: 12,
@@ -162,6 +166,7 @@ describe('18. User Settings - Target Preferences', () => {
       .put('/api/user-settings/targets')
       .set('x-user-id', TEST_USER_ID)
       .send({
+        basePurchaseSize: 300,
         saleTargetPercent: 0,
         buyTargetPercentUnder3DisplayLots: 5,
         buyTargetPercentFor3DisplayLots: 10,
@@ -176,6 +181,7 @@ describe('18. User Settings - Target Preferences', () => {
       .put('/api/user-settings/targets')
       .set('x-user-id', TEST_USER_ID)
       .send({
+        basePurchaseSize: 300,
         saleTargetPercent: 10,
         buyTargetPercentUnder3DisplayLots: 5,
         buyTargetPercentFor3DisplayLots: 10,
@@ -192,6 +198,7 @@ describe('18. User Settings - Target Preferences', () => {
       .put('/api/user-settings/targets')
       .set('x-user-id', TEST_USER_ID)
       .send({
+        basePurchaseSize: 300,
         saleTargetPercent: 10,
         buyTargetPercentUnder3DisplayLots: 5,
         buyTargetPercentFor3DisplayLots: 10,
@@ -199,6 +206,23 @@ describe('18. User Settings - Target Preferences', () => {
         buyTargetPercentFor5DisplayLots: 20,
         buyTargetPercentFor6OrMoreDisplayLots: 25,
         buyOnDipBuyTargetPercent: value,
+      })
+      .expect(400);
+  });
+
+  it.each([0, -1, 0.001, 300.123, 'abc', null, undefined])('rejects invalid Base Purchase Size %s', async (value) => {
+    await request(app)
+      .put('/api/user-settings/targets')
+      .set('x-user-id', TEST_USER_ID)
+      .send({
+        basePurchaseSize: value,
+        saleTargetPercent: 10,
+        buyTargetPercentUnder3DisplayLots: 5,
+        buyTargetPercentFor3DisplayLots: 10,
+        buyTargetPercentFor4DisplayLots: 15,
+        buyTargetPercentFor5DisplayLots: 20,
+        buyTargetPercentFor6OrMoreDisplayLots: 25,
+        buyOnDipBuyTargetPercent: 1,
       })
       .expect(400);
   });

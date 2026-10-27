@@ -42,6 +42,7 @@ function getSubscriptionPayload(subscription: PushSubscription): PushSubscriptio
 }
 
 export default function UserSettingsPage() {
+  const [basePurchaseSize, setBasePurchaseSize] = useState('300')
   const [saleTargetPercent, setSaleTargetPercent] = useState(String(DEFAULT_SALE_TARGET_PERCENT))
   const [buyTargetPercentUnder3DisplayLots, setBuyTargetPercentUnder3DisplayLots] = useState(String(DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS))
   const [buyTargetPercentFor3DisplayLots, setBuyTargetPercentFor3DisplayLots] = useState(String(DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS))
@@ -106,6 +107,7 @@ export default function UserSettingsPage() {
       try {
         const settings = await getUserTargetSettings()
         if (!cancelled) {
+          setBasePurchaseSize(String(settings.basePurchaseSize))
           setSaleTargetPercent(String(settings.saleTargetPercent))
           setBuyTargetPercentUnder3DisplayLots(String(settings.buyTargetPercentUnder3DisplayLots))
           setBuyTargetPercentFor3DisplayLots(String(settings.buyTargetPercentFor3DisplayLots))
@@ -136,6 +138,14 @@ export default function UserSettingsPage() {
     event.preventDefault()
     setError(null)
     setSuccess(null)
+
+    const parsedBasePurchaseSize = Number(basePurchaseSize)
+    if (!Number.isFinite(parsedBasePurchaseSize) || parsedBasePurchaseSize < 0.01
+      || parsedBasePurchaseSize > 9999999999.99
+      || Math.abs(parsedBasePurchaseSize * 100 - Math.round(parsedBasePurchaseSize * 100)) > 0.000001) {
+      setError('Base Purchase Size must be a positive dollar amount with at most 2 decimal places.')
+      return
+    }
 
     const parsedPercent = Number(saleTargetPercent)
     if (!Number.isFinite(parsedPercent) || parsedPercent <= 0) {
@@ -182,6 +192,7 @@ export default function UserSettingsPage() {
     setSaving(true)
     try {
       const updated = await updateUserTargetSettings({
+        basePurchaseSize: parsedBasePurchaseSize,
         saleTargetPercent: parsedPercent,
         buyTargetPercentUnder3DisplayLots: parsedBuyTargetPercentUnder3DisplayLots,
         buyTargetPercentFor3DisplayLots: parsedBuyTargetPercentFor3DisplayLots,
@@ -190,6 +201,7 @@ export default function UserSettingsPage() {
         buyTargetPercentFor6OrMoreDisplayLots: parsedBuyTargetPercentFor6OrMoreDisplayLots,
         buyOnDipBuyTargetPercent: parsedBuyOnDipBuyTargetPercent,
       })
+      setBasePurchaseSize(String(updated.basePurchaseSize))
       setSaleTargetPercent(String(updated.saleTargetPercent))
       setBuyTargetPercentUnder3DisplayLots(String(updated.buyTargetPercentUnder3DisplayLots))
       setBuyTargetPercentFor3DisplayLots(String(updated.buyTargetPercentFor3DisplayLots))
@@ -324,6 +336,23 @@ export default function UserSettingsPage() {
           <p>Loading user settings...</p>
         ) : (
           <form className="form-grid" onSubmit={onSubmit}>
+            <div className="target-settings-section">
+              <h3>Purchase Size</h3>
+              <label>
+                Base Purchase Size ($)
+                <input
+                  type="number"
+                  min="0.01"
+                  max="9999999999.99"
+                  step="0.01"
+                  required
+                  value={basePurchaseSize}
+                  onChange={(event) => setBasePurchaseSize(event.target.value)}
+                  disabled={saving}
+                />
+              </label>
+              <small>The dashboard's red 5 badge marks a largest display lot worth more than 5 times this amount, using the latest stored close.</small>
+            </div>
             <div className="target-settings-section">
               <h3>Sale Target</h3>
               <label>

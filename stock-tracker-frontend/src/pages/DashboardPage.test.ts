@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { CashTransaction, HistoricalPrice, StockSplitEvent, StockTransaction } from '../api'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { CashTransaction, DisplayLot, HistoricalPrice, StockSplitEvent, StockTransaction } from '../api'
 import { calculatePortfolioSnapshot } from '../portfolioSnapshot'
 import {
   calculateDashboardDailyChange,
@@ -7,7 +9,9 @@ import {
   formatLotCountDifference,
   getLotCountDifference,
   getLotCountDifferenceStyle,
-  getTickerInfoBadgeMessages,
+  DashboardTooltip,
+  getTickerInfoBadges,
+  getLargestDisplayLotValues,
   getSplitAdjustedTargetBasePrice,
   getTargetBaseMarker,
   getTargetBarPosition,
@@ -22,14 +26,52 @@ describe('dashboard daily stock counts', () => {
   })
 
   describe('dashboard ticker info badges', () => {
-    it('explains non-default base sizes and buy-on-dip preferences only', () => {
-      expect(getTickerInfoBadgeMessages({ baseSize: 3, buyOnDip: false, buyOnDipPrice: null })).toEqual([])
-      expect(getTickerInfoBadgeMessages({ baseSize: 4, buyOnDip: false, buyOnDipPrice: null }))
-        .toEqual(['Custom base size: 4 display lots (default is 3).'])
-      expect(getTickerInfoBadgeMessages({ baseSize: 3, buyOnDip: true, buyOnDipPrice: 100 }))
-        .toEqual(['Buy on Dip is enabled with a base price of $100.0000.'])
-      expect(getTickerInfoBadgeMessages({ baseSize: 5, buyOnDip: true, buyOnDipPrice: 100 }))
-        .toEqual(['Custom base size: 5 display lots (default is 3).', 'Buy on Dip is enabled with a base price of $100.0000.'])
+    const preference = { baseSize: 3, buyOnDip: false, buyOnDipPrice: null }
+
+    it('shows independent colored symbols, including multiple badges per ticker', () => {
+      expect(getTickerInfoBadges(preference, null, 300)).toEqual([])
+      expect(getTickerInfoBadges({ ...preference, baseSize: 2 }, null, 300))
+        .toEqual([{ symbol: '\u2013', tone: 'red', message: 'Base size: 2 display lots (default is 3).' }])
+      const badges = getTickerInfoBadges({ baseSize: 4, buyOnDip: true, buyOnDipPrice: 100 }, 1600, 300)
+      expect(badges.map(({ symbol, tone }) => ({ symbol, tone }))).toEqual([
+        { symbol: 'B', tone: 'green' }, { symbol: '+', tone: 'green' }, { symbol: '5', tone: 'red' },
+      ])
+      expect(badges[0].message).toContain('$100.0000')
+      expect(badges[2].message).toContain('$1,500.00')
+    })
+
+    it('uses a strict 5x threshold and the saved purchase size', () => {
+      for (const value of [null, 1499, 1500, NaN, Infinity]) {
+        expect(getTickerInfoBadges(preference, value, 300)).toEqual([])
+      }
+      expect(getTickerInfoBadges(preference, 1500.01, 300).map((badge) => badge.symbol)).toEqual(['5'])
+      expect(getTickerInfoBadges(preference, 1600, 400)).toEqual([])
+      expect(getTickerInfoBadges(preference, 2000.01, 400).map((badge) => badge.symbol)).toEqual(['5'])
+    })
+
+    it('values the largest individual lot at the latest valid stored close, not the sum or a future price', () => {
+      const lots: DisplayLot[] = [
+        { id: '1', userId: 'u', ticker: 'test', lots: [10, 20], lotCount: 2, totalQuantity: 30, createdAt: '', updatedAt: '' },
+        { id: '2', userId: 'u', ticker: 'TEST', lots: [15], lotCount: 1, totalQuantity: 15, createdAt: '', updatedAt: '' },
+        { id: '3', userId: 'u', ticker: 'MISSING', lots: [100], lotCount: 1, totalQuantity: 100, createdAt: '', updatedAt: '' },
+      ]
+      const prices: HistoricalPrice[] = [
+        { ticker: 'TEST', priceDate: '2026-10-25', marketDate: '2026-10-25', closePrice: 100, source: 'test' },
+        { ticker: 'TEST', priceDate: '2026-10-24', marketDate: '2026-10-24', closePrice: 200, source: 'test' },
+        { ticker: 'TEST', priceDate: '2026-10-28', marketDate: '2026-10-28', closePrice: 300, source: 'test' },
+        { ticker: 'TEST', priceDate: '2026-10-26', marketDate: '2026-10-26', closePrice: NaN, source: 'test' },
+      ]
+      expect(getLargestDisplayLotValues(lots, prices, '2026-10-27')).toEqual({ TEST: 2000 })
+      expect(getLargestDisplayLotValues(lots, [], '2026-10-27')).toEqual({})
+    })
+
+    it('renders a tooltip trigger without expandable inline content', () => {
+      const html = renderToStaticMarkup(createElement(DashboardTooltip, { message: 'Buy on Dip', className: 'ticker-info-badge', children: 'B' }))
+      expect(html).toContain('<button')
+      expect(html).toContain('aria-label="Buy on Dip"')
+      expect(html).toContain('>B</button>')
+      expect(html).not.toContain('<details')
+      expect(html).not.toContain('role="tooltip"')
     })
   })
 

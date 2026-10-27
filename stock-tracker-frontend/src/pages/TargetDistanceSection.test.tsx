@@ -8,6 +8,7 @@ import { getTargetDistanceRows, loadTargetDistances, TargetDistanceTable, type T
 
 const input: TargetDistanceInput = { ticker: 'TEST', price: 100, buy: 80, sell: 160, priceLabel: 'Stored close 2026-10-23' }
 const settings: api.UserTargetSettings = {
+  basePurchaseSize: 300,
   saleTargetPercent: 60, buyTargetPercentUnder3DisplayLots: 20, buyTargetPercentFor3DisplayLots: 25,
   buyTargetPercentFor4DisplayLots: 30, buyTargetPercentFor5DisplayLots: 35,
   buyTargetPercentFor6OrMoreDisplayLots: 40, buyOnDipBuyTargetPercent: 2,

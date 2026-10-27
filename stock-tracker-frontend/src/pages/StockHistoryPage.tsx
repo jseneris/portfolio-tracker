@@ -1,5 +1,5 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import {
   CompanyProfile,
   CreateStockInput,
@@ -612,6 +612,7 @@ export default function StockHistoryPage() {
   const [showAddTransactionModal, setShowAddTransactionModal] = useState(false)
   const [showLotsModal, setShowLotsModal] = useState(false)
   const [showInitialPurchaseModal, setShowInitialPurchaseModal] = useState(false)
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [initialPurchaseSelections, setInitialPurchaseSelections] = useState<Record<string, boolean>>({})
   const [savingInitialPurchases, setSavingInitialPurchases] = useState(false)
   const [initialPurchaseError, setInitialPurchaseError] = useState<string | null>(null)
@@ -634,6 +635,7 @@ export default function StockHistoryPage() {
   const [baseSize, setBaseSize] = useState('3')
   const [targetPreference, setTargetPreference] = useState<TickerPreference>()
   const [targetSettings, setTargetSettings] = useState<UserTargetSettings>({
+    basePurchaseSize: 300,
     saleTargetPercent: 10,
     buyTargetPercentUnder3DisplayLots: 5,
     buyTargetPercentFor3DisplayLots: 10,
@@ -662,6 +664,39 @@ export default function StockHistoryPage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const addTransactionFormRef = useRef<HTMLFormElement | null>(null)
+  const settingsButtonRef = useRef<HTMLButtonElement>(null)
+  const settingsModalRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!showSettingsModal) return
+    const modal = settingsModalRef.current
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    modal?.querySelector<HTMLButtonElement>('button')?.focus()
+    function onKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        modal?.querySelector<HTMLButtonElement>('button')?.click()
+      }
+      if (event.key !== 'Tab') return
+      const controls = modal?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)')
+      const first = controls?.[0]
+      const last = controls?.[controls.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last?.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first?.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', onKeyDown)
+      settingsButtonRef.current?.focus()
+    }
+  }, [showSettingsModal])
 
   const currentSaleDay = useMemo(() => toUtcDayTimestamp(new Date().toISOString().slice(0, 10)), [])
 
@@ -1802,9 +1837,11 @@ export default function StockHistoryPage() {
           <button className="button button-primary" type="button" onClick={openAddTransactionModal} disabled={!ticker}>
             Add Transaction
           </button>
-          <Link className="button" to="/">
-            Back to Dashboard
-          </Link>
+          <button ref={settingsButtonRef} className="button" type="button"
+            aria-label={`Open ${ticker} settings`} aria-haspopup="dialog"
+            onClick={() => setShowSettingsModal(true)} disabled={!ticker}>
+            ...
+          </button>
         </div>
       </div>
 
@@ -1821,10 +1858,23 @@ export default function StockHistoryPage() {
       {error ? <div className="panel status status-error">{error}</div> : null}
       {success ? <div className="panel status status-success">{success}</div> : null}
 
-      <details className="panel ticker-page-settings">
-        <summary>Settings</summary>
+      {showSettingsModal ? (
+      <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="ticker-settings-title"
+        onClick={(event) => {
+          if (event.target === event.currentTarget && !savingTickerPreference) setShowSettingsModal(false)
+        }}>
+        <div ref={settingsModalRef} className="modal-card modal-card-wide modal-card-scrollable">
+          <div className="row-between">
+            <h3 id="ticker-settings-title">Settings - {ticker}</h3>
+            <button className="button" type="button" onClick={() => setShowSettingsModal(false)} disabled={savingTickerPreference}>
+              Close
+            </button>
+          </div>
         <div className="ticker-page-settings-content">
-          <button className="button" type="button" onClick={openInitialPurchaseModal} disabled={!ticker || buyTransactionsAscending.length === 0}>
+          <button className="button" type="button" onClick={() => {
+            setShowSettingsModal(false)
+            openInitialPurchaseModal()
+          }} disabled={!ticker || buyTransactionsAscending.length === 0 || savingTickerPreference}>
             Mark Initial Purchases
           </button>
           {!loading && !error ? (
@@ -1893,16 +1943,21 @@ export default function StockHistoryPage() {
                       />
                     </label>
                   ) : null}
-                  <button className="button button-primary" type="submit" disabled={savingTickerPreference || (buyRestricted && !buyRestrictedUntil)}>
-                    {savingTickerPreference ? 'Saving...' : 'Save Preferences'}
-                  </button>
+                  <div className="form-actions">
+                    <button className="button button-primary" type="submit" disabled={savingTickerPreference || (buyRestricted && !buyRestrictedUntil)}>
+                      {savingTickerPreference ? 'Saving...' : 'Save Preferences'}
+                    </button>
+                  </div>
                 </form>
               </div>
               {tickerPreferenceError ? <div className="status status-error">{tickerPreferenceError}</div> : null}
+              {success ? <div className="status status-success">{success}</div> : null}
             </div>
           ) : null}
         </div>
-      </details>
+        </div>
+      </div>
+      ) : null}
 
       {loading ? (
         <>

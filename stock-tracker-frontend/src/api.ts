@@ -296,6 +296,7 @@ export type PortfolioComparisonResponse = {
 export type PortfolioComparisonAllResponse = PortfolioComparisonResponse
 
 export type UserTargetSettings = {
+  basePurchaseSize: number
   saleTargetPercent: number
   buyTargetPercentUnder3DisplayLots: number
   buyTargetPercentFor3DisplayLots: number

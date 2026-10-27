@@ -65,6 +65,7 @@ router.get('/targets', async (req: Request, res: Response) => {
       .input('userId', sql.NVarChar, userId)
       .query(`
         SELECT TOP 1
+          basePurchaseSize,
           saleTargetPercent,
           buyTargetPercentUnder3DisplayLots,
           buyTargetPercentFor3DisplayLots,
@@ -78,6 +79,7 @@ router.get('/targets', async (req: Request, res: Response) => {
 
     const row = result.recordset[0] ?? {};
     res.json({
+      basePurchaseSize: normalizeTargetPercent(row.basePurchaseSize, 300),
       saleTargetPercent: normalizeTargetPercent(row.saleTargetPercent, DEFAULT_SALE_TARGET_PERCENT),
       buyTargetPercentUnder3DisplayLots: normalizeTargetPercent(
         row.buyTargetPercentUnder3DisplayLots,
@@ -109,6 +111,7 @@ router.get('/targets', async (req: Request, res: Response) => {
 router.put('/targets', async (req: Request, res: Response) => {
   try {
     const userId = req.user?.id!;
+    const basePurchaseSize = Number(req.body?.basePurchaseSize);
     const saleTargetPercent = Number(req.body?.saleTargetPercent);
     const buyTargetPercentUnder3DisplayLots = Number(req.body?.buyTargetPercentUnder3DisplayLots);
     const buyTargetPercentFor3DisplayLots = Number(req.body?.buyTargetPercentFor3DisplayLots);
@@ -116,6 +119,11 @@ router.put('/targets', async (req: Request, res: Response) => {
     const buyTargetPercentFor5DisplayLots = Number(req.body?.buyTargetPercentFor5DisplayLots);
     const buyTargetPercentFor6OrMoreDisplayLots = Number(req.body?.buyTargetPercentFor6OrMoreDisplayLots);
     const buyOnDipBuyTargetPercent = Number(req.body?.buyOnDipBuyTargetPercent);
+
+    if (!Number.isFinite(basePurchaseSize) || basePurchaseSize < 0.01 || basePurchaseSize > 9999999999.99
+      || Math.abs(basePurchaseSize * 100 - Math.round(basePurchaseSize * 100)) > 0.000001) {
+      return res.status(400).json({ error: 'basePurchaseSize must be a positive dollar amount with at most 2 decimal places' });
+    }
 
     if (!Number.isFinite(saleTargetPercent) || saleTargetPercent <= 0) {
       return res.status(400).json({ error: 'saleTargetPercent must be a positive number' });
@@ -162,6 +170,7 @@ router.put('/targets', async (req: Request, res: Response) => {
 
     await getPool().request()
       .input('userId', sql.NVarChar, userId)
+      .input('basePurchaseSize', sql.Decimal(12, 2), basePurchaseSize)
       .input('saleTargetPercent', sql.Decimal(9, 4), saleTargetPercent)
       .input('buyTargetPercentUnder3DisplayLots', sql.Decimal(9, 4), buyTargetPercentUnder3DisplayLots)
       .input('buyTargetPercentFor3DisplayLots', sql.Decimal(9, 4), buyTargetPercentFor3DisplayLots)
@@ -174,7 +183,8 @@ router.put('/targets', async (req: Request, res: Response) => {
         USING (SELECT @userId AS userId) AS source
           ON target.userId = source.userId
         WHEN MATCHED THEN
-          UPDATE SET saleTargetPercent = @saleTargetPercent,
+          UPDATE SET basePurchaseSize = @basePurchaseSize,
+                     saleTargetPercent = @saleTargetPercent,
                      buyTargetPercentUnder3DisplayLots = @buyTargetPercentUnder3DisplayLots,
                      buyTargetPercentFor3DisplayLots = @buyTargetPercentFor3DisplayLots,
                      buyTargetPercentFor4DisplayLots = @buyTargetPercentFor4DisplayLots,
@@ -186,6 +196,7 @@ router.put('/targets', async (req: Request, res: Response) => {
           INSERT (
             id,
             userId,
+            basePurchaseSize,
             saleTargetPercent,
             buyTargetPercentUnder3DisplayLots,
             buyTargetPercentFor3DisplayLots,
@@ -197,6 +208,7 @@ router.put('/targets', async (req: Request, res: Response) => {
           VALUES (
             NEWID(),
             @userId,
+            @basePurchaseSize,
             @saleTargetPercent,
             @buyTargetPercentUnder3DisplayLots,
             @buyTargetPercentFor3DisplayLots,
@@ -208,6 +220,7 @@ router.put('/targets', async (req: Request, res: Response) => {
       `);
 
     res.json({
+      basePurchaseSize,
       saleTargetPercent,
       buyTargetPercentUnder3DisplayLots,
       buyTargetPercentFor3DisplayLots,
