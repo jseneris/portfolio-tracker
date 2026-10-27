@@ -149,7 +149,12 @@ export default function App() {
           </p>
         </div>
         <div className="header-actions">
-          <nav onClick={(event) => {
+          <nav aria-label="Main navigation" onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setOpenMenu(null)
+              event.currentTarget.querySelector<HTMLDetailsElement>('details[open]')?.querySelector('summary')?.focus()
+            }
+          }} onClick={(event) => {
             if (event.target instanceof Element && event.target.closest('a')) {
               setOpenMenu(null)
             }

@@ -65,6 +65,7 @@ body {
 
 .app-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
@@ -82,6 +83,7 @@ body {
 
 .app-header nav {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 0.75rem;
   min-width: 0;
@@ -1959,11 +1961,22 @@ body {
   .ticker-history-layout {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .holdings-table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+  }
 }
 
 @media (max-width: 640px) {
-  body {
-    overflow-x: hidden;
+  input,
+  select,
+  textarea {
+    min-width: 0;
+    max-width: 100%;
+    font-size: 16px;
   }
 
   .app-main {
@@ -1984,6 +1997,12 @@ body {
 
   .header-caption {
     font-size: 0.8rem;
+    overflow-wrap: anywhere;
+  }
+
+  .app-header > div {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .header-actions {
@@ -1994,13 +2013,19 @@ body {
   }
 
   .app-header nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
-    align-items: flex-start;
+    align-items: start;
     gap: 0.25rem;
-    overflow-x: auto;
-    overscroll-behavior-inline: contain;
-    scrollbar-width: thin;
-    padding-bottom: 0.25rem;
+  }
+
+  .nav-menu {
+    min-width: 0;
+  }
+
+  .nav-menu[open] {
+    grid-column: 1 / -1;
   }
 
   .app-header nav > a,
@@ -2013,13 +2038,14 @@ body {
   }
 
   .nav-submenu {
-    position: fixed;
-    top: auto;
-    left: auto;
+    position: static;
+    min-width: 0;
+    width: 100%;
     margin-top: 0.25rem;
   }
 
-  .nav-submenu a {
+  .nav-submenu a,
+  .nav-logout {
     min-height: 44px;
     display: flex;
     align-items: center;
@@ -2050,12 +2076,17 @@ body {
   .panel .table,
   .modal-card .table {
     display: block;
-    width: max-content;
+    width: 100%;
     min-width: 100%;
     max-width: 100%;
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .table-scroll .table {
+    display: table;
+    max-width: none;
   }
 
   .table-scroll {
@@ -2099,7 +2130,9 @@ body {
 
   .form-grid input,
   .form-grid select,
-  .stacked-label select {
+  .stacked-label select,
+  .ticker-base-size input,
+  .insights-chat-form textarea {
     min-height: 44px;
     font-size: 16px;
   }
@@ -2175,6 +2208,9 @@ body {
 
   .modal-card {
     width: 100%;
+    min-width: 0;
+    max-height: calc(100dvh - 1rem);
+    overflow-y: auto;
     padding: 0.75rem;
     border-radius: 0.55rem;
   }
@@ -2200,7 +2236,29 @@ body {
   }
 
   .allocation-table {
-    min-width: 560px;
+    min-width: 100%;
+  }
+
+  .insights-table {
+    min-width: 100%;
+  }
+
+  .messages-header,
+  .message-summary {
+    flex-wrap: wrap;
+  }
+
+  .messages-actions {
+    width: 100%;
+  }
+
+  .message-date {
+    white-space: normal;
+  }
+
+  .insights-chat-form {
+    min-width: 0;
+    width: 100%;
   }
 
   .allocation-input {
