@@ -1148,6 +1148,92 @@ export default function StockHistoryPage() {
     [preSplitLotValuesById]
   )
 
+  // Lots that sell at a profit (oldest first) lead; loss lots and dividends go into the collapsed section.
+  const { primarySellLots, collapsedSellLots } = useMemo(() => {
+    const hasSalePrice = salePriceValue != null && Number.isFinite(salePriceValue) && salePriceValue > 0
+    const primary: PurchaseLot[] = []
+    const collapsed: PurchaseLot[] = []
+    for (const lot of availableLots) {
+      const unitCost = preSplitLotValuesById[lot.id]?.unitCost ?? Number(lot.unitCost)
+      const isLoss = hasSalePrice && Number.isFinite(unitCost) && unitCost > (salePriceValue as number) + ALLOCATION_TOLERANCE
+      if (lot.sourceType === 'purchase' && !isLoss) {
+        primary.push(lot)
+      } else {
+        collapsed.push(lot)
+      }
+    }
+    const oldestFirst = (a: PurchaseLot, b: PurchaseLot) => new Date(a.purchaseDate).getTime() - new Date(b.purchaseDate).getTime()
+    primary.sort(oldestFirst)
+    collapsed.sort((a, b) => {
+      if (a.sourceType !== b.sourceType) {
+        return a.sourceType === 'purchase' ? -1 : 1
+      }
+      return oldestFirst(a, b)
+    })
+    return { primarySellLots: primary, collapsedSellLots: collapsed }
+  }, [availableLots, preSplitLotValuesById, salePriceValue])
+
+  function renderSellLotsTable(lots: PurchaseLot[]) {
+    return (
+      <div className="allocation-table-wrap">
+        <table className="table allocation-table">
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Date</th>
+              <th>Remaining</th>
+              <th>Unit Cost</th>
+              <th>Allocate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lots.map((lot) => {
+              const preSplitLot = preSplitLotValuesById[lot.id]
+              const displayRemaining = preSplitLot ? preSplitLot.remaining : Number(lot.remainingQuantity)
+              const displayUnitCost = preSplitLot ? preSplitLot.unitCost : Number(lot.unitCost)
+
+              return (
+                <tr key={lot.id}>
+                  <td>{lot.sourceType === 'purchase' ? 'Buy' : 'Dividend'}</td>
+                  <td>
+                    <div className="purchase-age-cell">
+                      <span>{formatDate(lot.purchaseDate)}</span>
+                      {lot.sourceType === 'purchase' && isOverOneYearOld(lot.purchaseDate, form.transactionDate) ? (
+                        <span className="pill pill-long-term" title="Purchase will be over one year old on the sale date">1y+</span>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td>{formatNumber(displayRemaining, 6)}</td>
+                  <td>
+                    <div className="sale-lot-cost-cell">
+                      <span>{formatStockPrice4(displayUnitCost)}</span>
+                      <span className={getSalePriceComparisonClassName(displayUnitCost, salePriceValue)}>
+                        {getSalePriceComparisonLabel(displayUnitCost, salePriceValue)}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="allocation-input-cell">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      pattern="[0-9]*[.]?[0-9]*"
+                      placeholder="0.00000000"
+                      value={allocations[lot.id] ?? ''}
+                      onChange={(event) => setAllocation(lot.id, event.target.value)}
+                      onKeyDown={onAllocationInputKeyDown}
+                      disabled={saving}
+                      className="allocation-input"
+                    />
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
   function toDateSafe(value: string): Date | null {
     const parsed = new Date(value)
     return Number.isNaN(parsed.getTime()) ? null : parsed
@@ -2602,65 +2688,13 @@ export default function StockHistoryPage() {
                         Allocation inputs use pre-split share quantities.
                       </div>
                     ) : null}
-                  <div className="allocation-table-wrap">
-                    <table className="table allocation-table">
-                      <thead>
-                        <tr>
-                          <th>Type</th>
-                          <th>Date</th>
-                          <th>Remaining</th>
-                          <th>Unit Cost</th>
-                          <th>Allocate</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {availableLots.map((lot) => {
-                        const preSplitLot = preSplitLotValuesById[lot.id]
-                        const displayRemaining = preSplitLot ? preSplitLot.remaining : Number(lot.remainingQuantity)
-                        const displayUnitCost = preSplitLot ? preSplitLot.unitCost : Number(lot.unitCost)
-                        const inputMax = Number.isFinite(displayRemaining)
-                          ? displayRemaining.toFixed(8)
-                          : Number(lot.remainingQuantity).toString()
-
-                        return (
-                          <tr key={lot.id}>
-                            <td>{lot.sourceType === 'purchase' ? 'Buy' : 'Dividend'}</td>
-                            <td>
-                              <div className="purchase-age-cell">
-                                <span>{formatDate(lot.purchaseDate)}</span>
-                                {lot.sourceType === 'purchase' && isOverOneYearOld(lot.purchaseDate, form.transactionDate) ? (
-                                  <span className="pill pill-long-term" title="Purchase will be over one year old on the sale date">1y+</span>
-                                ) : null}
-                              </div>
-                            </td>
-                            <td>{formatNumber(displayRemaining, 6)}</td>
-                            <td>
-                              <div className="sale-lot-cost-cell">
-                                <span>{formatStockPrice4(displayUnitCost)}</span>
-                                <span className={getSalePriceComparisonClassName(displayUnitCost, salePriceValue)}>
-                                  {getSalePriceComparisonLabel(displayUnitCost, salePriceValue)}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="allocation-input-cell">
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                pattern="[0-9]*[.]?[0-9]*"
-                                placeholder="0.00000000"
-                                value={allocations[lot.id] ?? ''}
-                                onChange={(event) => setAllocation(lot.id, event.target.value)}
-                                onKeyDown={onAllocationInputKeyDown}
-                                disabled={saving}
-                                className="allocation-input"
-                              />
-                            </td>
-                          </tr>
-                        )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                  {renderSellLotsTable(primarySellLots)}
+                  {collapsedSellLots.length > 0 ? (
+                    <details className="allocation-collapsed-lots">
+                      <summary>Loss lots and dividends ({collapsedSellLots.length})</summary>
+                      {renderSellLotsTable(collapsedSellLots)}
+                    </details>
+                  ) : null}
                   </>
                 ) : null}
               </div>

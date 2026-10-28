@@ -79,6 +79,16 @@ function countDisplayLots(lotsCsv: string | null): number {
     .length;
 }
 
+function parseDisplayLotQuantities(lotsCsv: string | null): number[] {
+  if (!lotsCsv || !lotsCsv.trim()) {
+    return [];
+  }
+  return lotsCsv
+    .split(',')
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value) && value > QUANTITY_TOLERANCE);
+}
+
 function formatPrice(value: number): string {
   return value.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
 }
@@ -145,7 +155,7 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
   const pool = getPool();
   const today = now.toISOString().slice(0, 10);
 
-  const [holdingsResult, settingsResult, preferencesResult, displayLotsResult, latestTxResult, splitsResult] = await Promise.all([
+  const [holdingsResult, settingsResult, preferencesResult, displayLotsResult, latestTxResult, splitsResult, purchaseLotsResult] = await Promise.all([
     pool.request().query(`
       SELECT DISTINCT userId, ticker
       FROM PurchaseLots
@@ -178,6 +188,11 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
       SELECT usa.userId, ss.ticker, ss.splitDate, ss.multiplier
       FROM UserSplitActivations usa
       INNER JOIN StockSplits ss ON ss.id = usa.splitId
+    `),
+    pool.request().query(`
+      SELECT userId, ticker, remainingQuantity, unitCost
+      FROM PurchaseLots
+      WHERE remainingQuantity > 0 AND sourceType = 'purchase'
     `),
   ]);
 
@@ -223,9 +238,21 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
   }
 
   const displayLotCounts = new Map<string, number>();
+  const smallestDisplayLot = new Map<string, number>();
   for (const row of displayLotsResult.recordset as any[]) {
     const k = key(String(row.userId), String(row.ticker).toUpperCase());
     displayLotCounts.set(k, (displayLotCounts.get(k) ?? 0) + countDisplayLots(row.lotsCsv));
+    for (const quantity of parseDisplayLotQuantities(row.lotsCsv)) {
+      smallestDisplayLot.set(k, Math.min(smallestDisplayLot.get(k) ?? Infinity, quantity));
+    }
+  }
+
+  const purchaseLotsByKey = new Map<string, Array<{ remainingQuantity: number; unitCost: number }>>();
+  for (const row of purchaseLotsResult.recordset as any[]) {
+    const k = key(String(row.userId), String(row.ticker).toUpperCase());
+    const list = purchaseLotsByKey.get(k) ?? [];
+    list.push({ remainingQuantity: Number(row.remainingQuantity), unitCost: Number(row.unitCost) });
+    purchaseLotsByKey.set(k, list);
   }
 
   const latestTx = new Map<string, { price: number; transactionDate: string }>();
@@ -291,11 +318,21 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
     }
 
     if (sellTarget != null && price >= sellTarget) {
-      const enabledBuyOnDip = (displayLotCounts.get(k) ?? 0) === (preference?.baseSize ?? 3)
+      const lotCount = displayLotCounts.get(k) ?? 0;
+      const withinBaseSize = lotCount <= (preference?.baseSize ?? 3);
+      const smallestLot = smallestDisplayLot.get(k);
+      const profitableQuantity = (purchaseLotsByKey.get(k) ?? [])
+        .filter((lot) => lot.unitCost < price)
+        .reduce((sum, lot) => sum + lot.remainingQuantity, 0);
+      const insufficientProfitableShares = smallestLot != null && profitableQuantity + QUANTITY_TOLERANCE < smallestLot;
+      const enabledBuyOnDip = !preference?.buyOnDip && (withinBaseSize || insufficientProfitableShares)
         ? await enableBuyOnDipAtTrigger(pool, userId, ticker, price, today)
         : false;
+      const reason = withinBaseSize
+        ? 'this holding is at or below its base display-lot size'
+        : 'there are not enough shares purchased below the current price to cover the smallest display lot';
       const body = `${ticker} hit its sell target of ${formatPrice(sellTarget)} (current price ${formatPrice(price)}).`
-        + (enabledBuyOnDip ? ` Buy on Dip was set at ${formatPrice(price)} because this holding matches its base display-lot size.` : '');
+        + (enabledBuyOnDip ? ` Buy on Dip was automatically enabled at ${formatPrice(price)} because ${reason}.` : '');
       const inserted = await insertMessageIfNoUnread(pool, {
         userId,
         ticker,

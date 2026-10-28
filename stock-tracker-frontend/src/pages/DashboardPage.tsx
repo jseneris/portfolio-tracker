@@ -1149,6 +1149,8 @@ export default function DashboardPage() {
   }
 
   updateCurrentPricesRef.current = updateCurrentPrices
+  const loadSummaryRef = useRef(loadSummary)
+  loadSummaryRef.current = loadSummary
 
   useEffect(() => {
     if (auth.isConfigured && !auth.isAuthenticated) {
@@ -1217,15 +1219,22 @@ export default function DashboardPage() {
       }
     }
 
+    // Returning to the tab does a full reload so backend-driven changes (e.g. automatic Buy on Dip) show up.
+    function reloadSummaryOnVisible() {
+      if (document.visibilityState === 'visible') {
+        void loadSummaryRef.current(true).catch(() => undefined)
+      }
+    }
+
     refreshPollingActiveStatus()
     const priceIntervalId = window.setInterval(maybeRefreshCurrentPrices, POLL_INTERVAL_MS)
     const statusIntervalId = window.setInterval(refreshPollingActiveStatus, POLLING_STATUS_CHECK_MS)
-    document.addEventListener('visibilitychange', maybeRefreshCurrentPrices)
+    document.addEventListener('visibilitychange', reloadSummaryOnVisible)
 
     return () => {
       window.clearInterval(priceIntervalId)
       window.clearInterval(statusIntervalId)
-      document.removeEventListener('visibilitychange', maybeRefreshCurrentPrices)
+      document.removeEventListener('visibilitychange', reloadSummaryOnVisible)
     }
   }, [])
 

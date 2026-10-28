@@ -90,7 +90,7 @@ describe('automatic Buy on Dip on sell-target hits', () => {
     expect((await preference()).buyOnDipPrice).toBe(111);
   });
 
-  it('uses the ticker-specific base size and requires an exact lot-count match', async () => {
+  it('uses the ticker-specific base size and enables when lots are at or below it', async () => {
     await seedPreference(false, null, null, 4);
     await setLots(4);
     await cycle(111);
@@ -101,7 +101,21 @@ describe('automatic Buy on Dip on sell-target hits', () => {
     await getPool().request().input('userId', sql.NVarChar, userId).query('DELETE FROM DisplayLots WHERE userId = @userId');
     await setLots(2);
     await cycle(111);
+    expect(await preference()).toMatchObject({ buyOnDip: true, buyOnDipPrice: 111 });
+  });
+
+  it('does not enable above the base size when profitable shares cover the smallest display lot', async () => {
+    await setLots(4);
+    await cycle(111);
     expect(await preference()).toBeUndefined();
+  });
+
+  it('enables above the base size when purchases below the price cannot cover the smallest display lot', async () => {
+    await getPool().request().input('userId', sql.NVarChar, userId)
+      .query('UPDATE PurchaseLots SET remainingQuantity = 0.5 WHERE userId = @userId');
+    await setLots(4);
+    await cycle(111);
+    expect(await preference()).toMatchObject({ buyOnDip: true, buyOnDipPrice: 111 });
   });
 
   it('does not enable unless the sell target is reached and a usable price is available', async () => {
