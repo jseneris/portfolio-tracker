@@ -73,7 +73,7 @@ describe('calculated Review page', () => {
   it('shows all standard sections even when saved AI assumptions are disabled', () => {
     const html = renderWithRouter(createElement(ReviewSections, { review }))
     for (const text of ['Recommended lot amount', 'Largest concentrations',
-      'Loss Timing', 'Holdings without a stored close', 'Largest display-lot value at least 5× a $300 lot size ($1,500)']) {
+      'Potential Sales', 'Distance from buy and sell targets', 'Large Losses', 'Holdings without a stored close', 'Largest display-lot value at least 5× a $300 lot size ($1,500)']) {
       expect(html).toContain(text)
     }
     expect(html).not.toContain('Portfolio snapshot')
@@ -84,12 +84,17 @@ describe('calculated Review page', () => {
     expect(html).not.toContain('Cash deployment')
     expect(html).toContain('No largest individual display lot is valued at $1,500 or more.')
     expect(html).not.toContain('href="/stocks/BELOW"')
-    expect(html.indexOf('<summary><h3>Largest concentrations</h3>'))
-      .toBeLessThan(html.indexOf('<summary><h3>Distance from buy and sell targets</h3>'))
+    expect(html.indexOf('<h3>Recommended lot amount</h3>'))
+      .toBeLessThan(html.indexOf('<h3>Largest concentrations</h3>'))
+    expect(html.indexOf('<h3>Largest concentrations</h3>'))
+      .toBeLessThan(html.indexOf('<h3>Potential Sales</h3>'))
+    expect(html.indexOf('<h4>Distance from buy and sell targets</h4>'))
+      .toBeLessThan(html.indexOf('<h4>Large Losses</h4>'))
+    expect(html).not.toContain('<h3>Loss Timing</h3>')
     expect(html).not.toContain('open="">')
     expect(html).toContain('50.00%')
     expect(html).not.toContain('>TEST</a> qualifying buy lots')
-    expect(html).toContain('class="loss-timing-lots"')
+    expect(html).not.toContain('class="loss-timing-lots"')
     expect(html).toContain('NOQUOTE')
     expect(html).not.toContain('No additional model explanation')
     expect(html).not.toContain('Send to Messages')
@@ -103,8 +108,8 @@ describe('calculated Review page', () => {
       review: { ...review, facts: [], snapshot: { ...review.snapshot, holdingReviewContext: [] } },
     }))
     expect(html).toContain('No holding reached')
-    expect(html).toContain('No open lots')
-    expect(html).toContain('No holdings match')
+    expect(html).toContain('Potential Sales')
+    expect(html).not.toContain('Loss Timing')
   })
 })
 

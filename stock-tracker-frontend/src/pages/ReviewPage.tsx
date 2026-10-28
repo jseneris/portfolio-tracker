@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { getPortfolioReview, type PortfolioReview } from '../api'
 import { formatCurrency2 } from '../formatters'
-import { formatDividendTiming, formatWeight, getWaitDayClass, LOSS_TIMING_CRITERIA, LOSS_TIMING_LOT_HEADERS, lossTimingLotValues } from '../reviewMessages'
+import { formatDividendTiming, formatWeight, getWaitDayClass, LOSS_TIMING_LOT_HEADERS, lossTimingLotValues } from '../reviewMessages'
 import TargetDistanceSection from './TargetDistanceSection'
 
 type ReviewHolding = NonNullable<PortfolioReview['snapshot']['holdingReviewContext']>[number]
@@ -107,11 +107,11 @@ export function LossTimingTable({ holdings }: { holdings: ReviewHolding[] }) {
 
 export function ReviewSections({ review }: { review: PortfolioReview }) {
   const concentrations = review.facts.filter((fact) => fact.type === 'concentration')
-  const losses = review.facts.filter((fact) => fact.type === 'unrealized_loss_lot')
   const missing = review.facts.filter((fact) => fact.type === 'missing_price')
   const largeLots = getHoldingsWithLargeLots(review.snapshot)
   return <>
     <p className="insights-timestamp">Updated {new Date(review.generatedAt).toLocaleString()}</p>
+    {review.snapshot.recommendedLotAmount ? <RecommendedLotAmountSection recommendation={review.snapshot.recommendedLotAmount} /> : null}
     <details className="panel review-collapsible">
       <summary><h3>Largest concentrations</h3></summary>
       <div className="review-section-content"><p className="muted-text">Holdings representing at least 20% of priced equities.</p>
@@ -133,29 +133,7 @@ export function ReviewSections({ review }: { review: PortfolioReview }) {
       </table></div> : <p>No largest individual display lot is valued at $1,500 or more.</p>}
       </div>
     </details>
-    <TargetDistanceSection acquisitionTiming={review.snapshot.holdingReviewContext} />
-    {review.snapshot.recommendedLotAmount ? <RecommendedLotAmountSection recommendation={review.snapshot.recommendedLotAmount} /> : null}
-    <details className="panel review-collapsible">
-      <summary><h3>Loss Timing</h3></summary>
-      <div className="review-section-content">
-      <p className="muted-text">Open-lot losses and timing information for tracked accounts. Up to eight open lots with the largest estimated losses are shown at the latest stored closes.</p>
-      {losses.length ? <table className="table">
-        <thead><tr><th>Ticker</th><th>Acquired</th><th>Shares</th><th>Cost basis</th><th>Estimated value</th><th>Estimated loss</th><th>Tracked acquisitions in prior 30 days</th></tr></thead>
-        <tbody>{losses.map((fact) => <tr key={fact.id}>
-          <td><TickerLink ticker={fact.ticker} /></td><td>{fact.acquisitionDate?.slice(0, 10) ?? '--'}</td>
-          <td>{fact.quantity?.toLocaleString(undefined, { maximumFractionDigits: 8 })}</td>
-          <td>{formatCurrency2(fact.costBasis)}</td><td>{formatCurrency2(fact.estimatedValue)}</td>
-          <td className="value-negative">{formatCurrency2(fact.unrealizedLoss)}</td><td>{fact.recentAcquisitionCount ?? 0}</td>
-        </tr>)}</tbody>
-      </table> : <p>No open lots with an estimated loss were found at the latest stored closes.</p>}
-      <p className="muted-text">{LOSS_TIMING_CRITERIA} Wait days are based on the latest tracked buy or dividend reinvestment:
-        the prior 30-day window clears on day 31. Zero means no remaining prior-window wait, not confirmed wash-sale eligibility.
-        Future purchases, outside accounts, and substantially identical securities remain unknown.
-        Dividend elapsed days use tracked payments, not a prediction.</p>
-      <LossTimingTable holdings={review.snapshot.holdingReviewContext ?? []} />
-      {!review.snapshot.holdingReviewContext?.some((holding) => holding.matchesLossReviewFilter === true) ? <p>No holdings match the review filter with available data.</p> : null}
-      </div>
-    </details>
+    <TargetDistanceSection acquisitionTiming={review.snapshot.holdingReviewContext} openLots={review.snapshot.openLots} />
     {missing.length ? <details className="panel review-collapsible"><summary><h3>Holdings without a stored close</h3></summary>
       <div className="review-section-content"><p>{missing.map((fact, index) =>
         <Fragment key={fact.id}>{index ? ', ' : ''}<TickerLink ticker={fact.ticker} /></Fragment>)}</p></div>
@@ -181,7 +159,7 @@ export default function ReviewPage() {
   }, [])
   return <div className="portfolio-insights-page">
     <header className="row-between insights-heading">
-      <div><p className="eyebrow">Calculated portfolio review</p><h2>Review</h2><p className="muted-text">Holdings, cash deployment, targets, and loss timing. No AI required. As of page load; reload the page to update.</p></div>
+      <div><p className="eyebrow">Calculated portfolio review</p><h2>Review</h2><p className="muted-text">Holdings, cash deployment, targets, and potential sales. No AI required. As of page load; reload the page to update.</p></div>
     </header>
     {error ? <p className="status status-error" role="alert">{error}</p> : null}
     {loading ? <p role="status">Loading portfolio review...</p> : null}

@@ -6,6 +6,7 @@ import {
   type PortfolioReview,
 } from '../api'
 import { formatStockPrice4 } from '../formatters'
+import { getWaitDayClass } from '../reviewMessages'
 import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, normalizeTargetSettings } from '../targetPrices'
 import { isUsMarketOpenNow } from './DashboardPage'
 
@@ -33,37 +34,77 @@ export function getTargetDistanceRows(inputs: TargetDistanceInput[]) {
 }
 
 type AcquisitionTiming = NonNullable<PortfolioReview['snapshot']['holdingReviewContext']>
+type OpenLots = PortfolioReview['snapshot']['openLots']
+type ComparisonInput = TargetDistanceInput & { acquisitionDate?: string; quantity?: number; unitCost?: number; lossPercent?: number }
+
+function ComparisonTable({ rows, acquisitionTiming, showLots = false }: {
+  rows: ComparisonInput[]; acquisitionTiming?: AcquisitionTiming; showLots?: boolean
+}) {
+  const timingByTicker = new Map(acquisitionTiming?.map((holding) => [holding.ticker.toUpperCase(), holding]))
+  function timingLabel(ticker: string) {
+    const days = timingByTicker.get(ticker.toUpperCase())?.daysUntilPriorAcquisitionWindowClears
+    if (days == null) return 'Unknown'
+    if (days === 0) return 'Clear'
+    return `${days} days`
+  }
+  return <div className="table-scroll"><table className="table">
+    <thead><tr><th>Ticker</th>
+      {showLots ? <><th>Acquired</th><th>Shares</th><th>Purchase price</th><th>Loss</th></> : null}
+      <th>Price</th><th>Buy target</th><th>Above buy target</th><th>Sell target</th><th>Below sell target</th><th>Prior acquisition window</th></tr></thead>
+    <tbody>{rows.map((row, index) => <tr key={`${row.ticker}-${index}`}>
+      <td><Link className="link-button" to={`/stocks/${encodeURIComponent(row.ticker)}`}>{row.ticker}</Link></td>
+      {showLots ? <><td>{row.acquisitionDate?.slice(0, 10)}</td><td>{row.quantity}</td>
+        <td>{formatStockPrice4(row.unitCost)}</td><td className="value-negative">{row.lossPercent?.toFixed(2)}%</td></> : null}
+      <td>{formatStockPrice4(row.price)}</td>
+      <td>{formatStockPrice4(row.buy)}</td><td>{row.price != null && row.buy != null && row.buy > 0
+        ? `${formatStockPrice4(row.price - row.buy)} (${((row.price - row.buy) / row.buy * 100).toFixed(2)}%)` : '--'}</td>
+      <td>{formatStockPrice4(row.sell)}</td><td>{row.price != null && row.sell != null && row.sell > 0
+        ? `${formatStockPrice4(row.sell - row.price)} (${((row.sell - row.price) / row.sell * 100).toFixed(2)}%)` : '--'}</td>
+      <td style={{ fontWeight: 600 }} className={getWaitDayClass(timingByTicker.get(row.ticker.toUpperCase())?.daysUntilPriorAcquisitionWindowClears ?? null)}>{timingLabel(row.ticker)}</td>
+    </tr>)}</tbody>
+  </table></div>
+}
 
 export function TargetDistanceTable({ inputs, acquisitionTiming }: { inputs: TargetDistanceInput[]; acquisitionTiming?: AcquisitionTiming }) {
   const rows = getTargetDistanceRows(inputs)
-  const timingByTicker = new Map(acquisitionTiming?.map((holding) => [holding.ticker.toUpperCase(), holding]))
-  function timingLabel(ticker: string) {
-    const holding = timingByTicker.get(ticker.toUpperCase())
-    const days = holding?.daysUntilPriorAcquisitionWindowClears
-    if (days == null) return 'Unknown'
-    if (days === 0) return 'Prior window clear (0 days remaining)'
-    return `Within prior acquisition window - ${days} ${days === 1 ? 'day' : 'days'} until clear${holding?.priorAcquisitionWindowClearsOn ? ` (${holding.priorAcquisitionWindowClearsOn})` : ''}`
-  }
   return <>
     {[30, 25, 20].map((tier) => {
       const group = rows.filter((row) => row.tier === tier)
       return <div key={tier}>
-        <h4>{tier === 30 ? '30% or more' : `${tier}% to under ${tier + 5}%`} from both targets ({group.length})</h4>
-        {group.length ? <div className="table-scroll">
-          <table className="table">
-            <thead><tr><th>Ticker</th><th>Price</th><th>Price as of</th><th>Buy target</th><th>Above buy target</th><th>Sell target</th><th>Below sell target</th><th>Prior acquisition window</th></tr></thead>
-            <tbody>{group.map((row) => <tr key={row.ticker}>
-              <td><Link to={`/stocks/${encodeURIComponent(row.ticker)}`}>{row.ticker}</Link></td>
-              <td>{formatStockPrice4(row.price)}</td><td>{row.priceLabel}</td>
-              <td>{formatStockPrice4(row.buy)}</td><td>{formatStockPrice4(row.aboveBuyAmount)} ({row.aboveBuy.toFixed(2)}%)</td>
-              <td>{formatStockPrice4(row.sell)}</td><td>{formatStockPrice4(row.belowSellAmount)} ({row.belowSell.toFixed(2)}%)</td>
-              <td>{timingLabel(row.ticker)}</td>
-            </tr>)}</tbody>
-          </table>
-        </div> : <p>No qualifying tickers in this tier.</p>}
+        <h5>{tier === 30 ? '30% or more' : `${tier}% to under ${tier + 5}%`} from both targets ({group.length})</h5>
+        {group.length ? <ComparisonTable rows={group} acquisitionTiming={acquisitionTiming} /> : <p>No qualifying tickers in this tier.</p>}
       </div>
     })}
   </>
+}
+
+export function getLargeLossRows(inputs: TargetDistanceInput[], openLots: OpenLots) {
+  const byTicker = new Map(inputs.map((input) => [input.ticker.toUpperCase(), input]))
+  return openLots.flatMap((lot) => {
+    const input = byTicker.get(lot.ticker.toUpperCase())
+    if (lot.sourceType !== 'purchase' || !Number.isFinite(lot.quantity) || lot.quantity <= 0
+      || !Number.isFinite(lot.unitCost) || lot.unitCost <= 0
+      || input?.price == null || !Number.isFinite(input.price) || input.price <= 0) return []
+    const lossPercent = (lot.unitCost - input.price) / lot.unitCost * 100
+    // Exactly 50% belongs to the lower band; losses of 40% or less are excluded.
+    const tier = lossPercent > 50 + 1e-10 ? 50 : lossPercent > 40 + 1e-10 ? 40 : null
+    return tier == null ? [] : [{ ...input, acquisitionDate: lot.acquisitionDate, quantity: lot.quantity, unitCost: lot.unitCost, lossPercent, tier }]
+  }).sort((a, b) => b.lossPercent - a.lossPercent || a.ticker.localeCompare(b.ticker) || a.acquisitionDate.localeCompare(b.acquisitionDate))
+}
+
+export function LargeLossTable({ inputs, openLots, acquisitionTiming }: {
+  inputs: TargetDistanceInput[]; openLots: OpenLots; acquisitionTiming?: AcquisitionTiming
+}) {
+  const rows = getLargeLossRows(inputs, openLots)
+  return <>{[50, 40].map((tier) => {
+    const group = rows.filter((row) => row.tier === tier)
+    return <div key={tier}>
+      <h5>{tier === 50 ? 'More than 50% below purchase price'
+        : 'More than 40% to 50% below purchase price'} ({group.length})</h5>
+      {group.length ? <ComparisonTable rows={group} acquisitionTiming={acquisitionTiming} showLots />
+        : <p>No qualifying purchase lots in this tier.</p>}
+    </div>
+  })}</>
 }
 
 export async function loadTargetDistances() {
@@ -123,7 +164,7 @@ export async function loadTargetDistances() {
   return { inputs, excluded, warning }
 }
 
-export default function TargetDistanceSection({ acquisitionTiming }: { acquisitionTiming?: AcquisitionTiming }) {
+export default function TargetDistanceSection({ acquisitionTiming, openLots = [] }: { acquisitionTiming?: AcquisitionTiming; openLots?: OpenLots }) {
   const [result, setResult] = useState<Awaited<ReturnType<typeof loadTargetDistances>> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -145,8 +186,9 @@ export default function TargetDistanceSection({ acquisitionTiming }: { acquisiti
     }
   }, [])
   return <details className="panel review-collapsible">
-    <summary><h3>Distance from buy and sell targets</h3></summary>
+    <summary><h3>Potential Sales</h3></summary>
     <div className="review-section-content">
+    <h4>Distance from buy and sell targets</h4>
     <p className="muted-text">Current holdings at least 20% above their buy target AND 20% below their sell target.
       Each percentage is measured from its target price. Each ticker appears once in its highest qualifying tier,
       based on the smaller of the two distances, largest first. Uses live prices during the regular US market session
@@ -157,8 +199,13 @@ export default function TargetDistanceSection({ acquisitionTiming }: { acquisiti
     {loading ? <p role="status">Loading target distances...</p> : null}
     {error ? <p className="status status-error" role="alert">{error}</p> : null}
     {result?.warning ? <p className="status status-warning" role="status">{result.warning}</p> : null}
-    {result?.excluded.length ? <p className="status status-warning">Excluded (missing price or valid targets): {result.excluded.join(', ')}.</p> : null}
+    {result?.excluded.length ? <p className="status status-warning">Excluded from distance tables (missing price or valid targets): {result.excluded.join(', ')}.</p> : null}
     {result ? <TargetDistanceTable inputs={result.inputs} acquisitionTiming={acquisitionTiming} /> : null}
+    <h4>Large Losses</h4>
+    <p className="muted-text">Remaining purchase lots more than 40% below their split-adjusted purchase price,
+      largest percentage loss first. Dividend lots and fully sold lots are excluded. Uses the same current prices
+      as the distance section; valid targets, holding yearly loss and display-lot counts are not required.</p>
+    {result ? <LargeLossTable inputs={result.inputs} openLots={openLots} acquisitionTiming={acquisitionTiming} /> : null}
     </div>
   </details>
 }

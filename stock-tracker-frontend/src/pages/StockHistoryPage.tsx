@@ -2715,10 +2715,11 @@ export default function StockHistoryPage() {
                 </div>
 
                 {loadingLots ? <p>Loading lots for {ticker}...</p> : null}
-                <WashSaleWindowNotice transactions={washSaleTransactions} saleDate={form.transactionDate} />
-
                 {!loadingLots && availableLots.length === 0 ? (
-                  <p>No open lots found for {ticker}. Create a buy/dividend lot first.</p>
+                  <>
+                    <WashSaleWindowNotice transactions={washSaleTransactions} saleDate={form.transactionDate} />
+                    <p>No open lots found for {ticker}. Create a buy/dividend lot first.</p>
+                  </>
                 ) : null}
 
                 {!loadingLots && availableLots.length > 0 ? (
@@ -2730,12 +2731,11 @@ export default function StockHistoryPage() {
                       </div>
                     ) : null}
                   {renderSellLotsTable(primarySellLots)}
-                  {collapsedSellLots.length > 0 ? (
-                    <details className="allocation-collapsed-lots">
-                      <summary>Loss lots and dividends ({collapsedSellLots.length})</summary>
-                      {renderSellLotsTable(collapsedSellLots)}
-                    </details>
-                  ) : null}
+                  <details className="allocation-collapsed-lots">
+                    <summary>Loss lots, dividends and wash-sale window ({collapsedSellLots.length} lots)</summary>
+                    <WashSaleWindowNotice transactions={washSaleTransactions} saleDate={form.transactionDate} />
+                    {collapsedSellLots.length > 0 ? renderSellLotsTable(collapsedSellLots) : null}
+                  </details>
                   </>
                 ) : null}
               </div>
