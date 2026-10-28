@@ -1171,7 +1171,7 @@ export default function StockHistoryPage() {
     [preSplitLotValuesById]
   )
 
-  // Lots that sell at a profit (oldest first) lead; loss lots and dividends go into the collapsed section.
+  // Lots that sell at a profit lead; loss lots and dividends go into the collapsed section.
   // Falls back to the current price until a sale price is entered.
   const groupingPrice = salePriceValue != null && Number.isFinite(salePriceValue) && salePriceValue > 0
     ? salePriceValue
@@ -1190,16 +1190,24 @@ export default function StockHistoryPage() {
         collapsed.push(lot)
       }
     }
-    const oldestFirst = (a: PurchaseLot, b: PurchaseLot) => new Date(a.purchaseDate).getTime() - new Date(b.purchaseDate).getTime()
-    primary.sort(oldestFirst)
+    const newestFirst = (a: PurchaseLot, b: PurchaseLot) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime()
+    // Long-term (held over a year) gain lots first, then short-term; newest first within each.
+    primary.sort((a, b) => {
+      const aLong = isOverOneYearOld(a.purchaseDate, form.transactionDate)
+      const bLong = isOverOneYearOld(b.purchaseDate, form.transactionDate)
+      if (aLong !== bLong) {
+        return aLong ? -1 : 1
+      }
+      return newestFirst(a, b)
+    })
     collapsed.sort((a, b) => {
       if (a.sourceType !== b.sourceType) {
         return a.sourceType === 'purchase' ? -1 : 1
       }
-      return oldestFirst(a, b)
+      return newestFirst(a, b)
     })
     return { primarySellLots: primary, collapsedSellLots: collapsed }
-  }, [availableLots, preSplitLotValuesById, groupingPrice])
+  }, [availableLots, preSplitLotValuesById, groupingPrice, form.transactionDate])
 
   function renderSellLotsTable(lots: PurchaseLot[]) {
     return (
