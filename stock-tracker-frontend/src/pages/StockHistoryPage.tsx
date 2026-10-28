@@ -664,6 +664,7 @@ export default function StockHistoryPage() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const addTransactionFormRef = useRef<HTMLFormElement | null>(null)
+  const quantityEditedRef = useRef(false)
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
   const settingsModalRef = useRef<HTMLDivElement>(null)
 
@@ -840,6 +841,28 @@ export default function StockHistoryPage() {
   const displayLotsOutOfSync = Math.abs(displayLotShareDelta) > ALLOCATION_TOLERANCE
 
   const effectivePrice = livePrice ?? latestHistoricalPrice
+
+  // Prefill Shares until the user edits it: whole shares to reach the base purchase size (buy) or the smallest display lot (sell).
+  useEffect(() => {
+    if (!showAddTransactionModal || quantityEditedRef.current) {
+      return
+    }
+    let suggested: string | null = null
+    if (form.type === 'buy') {
+      const basePurchaseSize = Number(targetSettings.basePurchaseSize)
+      if (effectivePrice != null && effectivePrice > 0 && Number.isFinite(basePurchaseSize) && basePurchaseSize > 0) {
+        suggested = String(Math.ceil(basePurchaseSize / effectivePrice))
+      }
+    } else if (form.type === 'sell') {
+      const quantities = displayLotEntries.map((lot) => lot.totalQuantity).filter((qty) => Number.isFinite(qty) && qty > 0)
+      if (quantities.length > 0) {
+        suggested = String(Math.min(...quantities))
+      }
+    }
+    if (suggested != null) {
+      setForm((prev) => (prev.type === form.type && prev.quantity !== suggested ? { ...prev, quantity: suggested as string } : prev))
+    }
+  }, [showAddTransactionModal, form.type, effectivePrice, targetSettings.basePurchaseSize, displayLotEntries])
   const stockTargetPricePosition = getTargetPricePosition(
     effectivePrice,
     stockTargets.buy,
@@ -1149,13 +1172,18 @@ export default function StockHistoryPage() {
   )
 
   // Lots that sell at a profit (oldest first) lead; loss lots and dividends go into the collapsed section.
+  // Falls back to the current price until a sale price is entered.
+  const groupingPrice = salePriceValue != null && Number.isFinite(salePriceValue) && salePriceValue > 0
+    ? salePriceValue
+    : effectivePrice
+
   const { primarySellLots, collapsedSellLots } = useMemo(() => {
-    const hasSalePrice = salePriceValue != null && Number.isFinite(salePriceValue) && salePriceValue > 0
+    const hasSalePrice = groupingPrice != null && Number.isFinite(groupingPrice) && groupingPrice > 0
     const primary: PurchaseLot[] = []
     const collapsed: PurchaseLot[] = []
     for (const lot of availableLots) {
       const unitCost = preSplitLotValuesById[lot.id]?.unitCost ?? Number(lot.unitCost)
-      const isLoss = hasSalePrice && Number.isFinite(unitCost) && unitCost > (salePriceValue as number) + ALLOCATION_TOLERANCE
+      const isLoss = hasSalePrice && Number.isFinite(unitCost) && unitCost > (groupingPrice as number) + ALLOCATION_TOLERANCE
       if (lot.sourceType === 'purchase' && !isLoss) {
         primary.push(lot)
       } else {
@@ -1171,7 +1199,7 @@ export default function StockHistoryPage() {
       return oldestFirst(a, b)
     })
     return { primarySellLots: primary, collapsedSellLots: collapsed }
-  }, [availableLots, preSplitLotValuesById, salePriceValue])
+  }, [availableLots, preSplitLotValuesById, groupingPrice])
 
   function renderSellLotsTable(lots: PurchaseLot[]) {
     return (
@@ -1310,6 +1338,7 @@ export default function StockHistoryPage() {
   }
 
   function resetForm() {
+    quantityEditedRef.current = false
     setForm(createEmptyStockForm())
     setAvailableLots([])
     setAllocations({})
@@ -2570,6 +2599,7 @@ export default function StockHistoryPage() {
                   onChange={(event) => {
                     const nextType = event.target.value as StockTransactionType
                     setForm((prev) => ({ ...prev, type: nextType }))
+                    quantityEditedRef.current = false
                     setError(null)
                     setSuccess(null)
                   }}
@@ -2590,7 +2620,10 @@ export default function StockHistoryPage() {
                   min="0.00000001"
                   step="0.00000001"
                   value={form.quantity}
-                  onChange={(event) => setForm((prev) => ({ ...prev, quantity: event.target.value }))}
+                  onChange={(event) => {
+                    quantityEditedRef.current = true
+                    setForm((prev) => ({ ...prev, quantity: event.target.value }))
+                  }}
                   disabled={saving}
                 />
               </label>
