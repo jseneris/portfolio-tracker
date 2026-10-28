@@ -1235,8 +1235,8 @@ export default function StockHistoryPage() {
                   <td>
                     <div className="sale-lot-cost-cell">
                       <span>{formatStockPrice4(displayUnitCost)}</span>
-                      <span className={getSalePriceComparisonClassName(displayUnitCost, salePriceValue)}>
-                        {getSalePriceComparisonLabel(displayUnitCost, salePriceValue)}
+                      <span className={getSalePriceComparisonClassName(displayUnitCost, groupingPrice)}>
+                        {getSalePriceComparisonLabel(displayUnitCost, groupingPrice)}
                       </span>
                     </div>
                   </td>
