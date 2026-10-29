@@ -65,6 +65,16 @@ describe('automatic buying restriction after lot loss sales', () => {
     const lot = await getPool().request().input('lotId', sql.UniqueIdentifier, lotId)
       .query('SELECT remainingQuantity FROM PurchaseLots WHERE id = @lotId');
     expect(lot.recordset[0].remainingQuantity).toBe(9);
+
+    const preferenceResponse = await request(app)
+      .get(`/api/ticker-preferences/${ticker}`)
+      .set('x-user-id', userId)
+      .expect(200);
+    expect(preferenceResponse.body).toMatchObject({
+      isBuyRestricted: true,
+      buyRestrictedUntil: '2026-11-06',
+      restrictionSalePrice: 90,
+    });
   });
 
   it.each([100, 110])('does not restrict a break-even/profitable sale at %i', async (price) => {

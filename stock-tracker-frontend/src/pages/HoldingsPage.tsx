@@ -14,6 +14,7 @@ import {
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
 import { calculatePortfolioSnapshot, calculatePortfolioValue } from '../portfolioSnapshot'
 import { buildStockPerformance } from '../stockPerformance'
+import { TickerInfoBadges } from '../tickerBadges'
 
 export type HoldingRow = {
   ticker: string
@@ -279,7 +280,7 @@ export default function HoldingsPage() {
                 <tbody>
                   {visibleHoldings.map((holding) => (
                     <tr key={holding.ticker}>
-                      <td><Link className="link-button" to={`/stocks/${encodeURIComponent(holding.ticker)}`}>{holding.ticker}</Link>{holding.closed ? ' (Closed)' : ''}</td>
+                      <td><Link className="link-button" to={`/stocks/${encodeURIComponent(holding.ticker)}`}>{holding.ticker}</Link><TickerInfoBadges ticker={holding.ticker} />{holding.closed ? ' (Closed)' : ''}</td>
                       <td>{formatShares(holding.shares)}</td>
                       <td>{formatStockPrice4(holding.price)}</td>
                       <td>{formatCurrency2(holding.value)}</td>

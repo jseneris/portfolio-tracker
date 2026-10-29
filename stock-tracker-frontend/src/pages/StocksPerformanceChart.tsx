@@ -3,6 +3,7 @@ import { CompanyProfile, getAllStockSplits, getHistoricalPrices, getStockProfile
 import { buildStockPerformance, getCombinedStockBasis, getCombinedStockGain, StockPerformancePoint, toGainPercent } from '../stockPerformance'
 import type { WatchlistLine } from '../watchlistPerformance'
 import WatchlistSection from './WatchlistSection'
+import { TickerInfoBadges } from '../tickerBadges'
 
 function formatPercent(value: number | null): string {
   return value == null || !Number.isFinite(value) ? '--' : `${value.toFixed(2)}%`
@@ -233,7 +234,7 @@ export function StocksGainLossChart({ tickers, points, hasInitialBuys = false, s
                     return next
                   })} />
                   <i className="legend-dot" style={{ backgroundColor: COLORS[tickers.indexOf(ticker) % COLORS.length] }} />
-                  {ticker}: {formatPercent(toGainPercent(lastPoint.gains[ticker], lastPoint.bases[ticker]))}
+                  {ticker}<TickerInfoBadges ticker={ticker} />: {formatPercent(toGainPercent(lastPoint.gains[ticker], lastPoint.bases[ticker]))}
                 </label>
               ))}
             </div>

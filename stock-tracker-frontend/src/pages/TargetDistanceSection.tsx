@@ -9,6 +9,7 @@ import { formatStockPrice4 } from '../formatters'
 import { getWaitDayClass } from '../reviewMessages'
 import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, normalizeTargetSettings } from '../targetPrices'
 import { isUsMarketOpenNow } from './DashboardPage'
+import { TickerInfoBadges } from '../tickerBadges'
 
 export type TargetDistanceInput = {
   ticker: string
@@ -37,6 +38,15 @@ type AcquisitionTiming = NonNullable<PortfolioReview['snapshot']['holdingReviewC
 type OpenLots = PortfolioReview['snapshot']['openLots']
 type ComparisonInput = TargetDistanceInput & { acquisitionDate?: string; quantity?: number; unitCost?: number; lossPercent?: number }
 
+function isOverOneYearOld(purchaseDate: string, referenceDate = new Date().toISOString().slice(0, 10)) {
+  const purchaseDay = Date.parse(`${purchaseDate.slice(0, 10)}T00:00:00Z`)
+  const referenceDay = Date.parse(`${referenceDate.slice(0, 10)}T00:00:00Z`)
+  if (!Number.isFinite(purchaseDay) || !Number.isFinite(referenceDay)) return false
+  const anniversary = new Date(purchaseDay)
+  anniversary.setUTCFullYear(anniversary.getUTCFullYear() + 1)
+  return referenceDay > anniversary.getTime()
+}
+
 function ComparisonTable({ rows, acquisitionTiming, showLots = false }: {
   rows: ComparisonInput[]; acquisitionTiming?: AcquisitionTiming; showLots?: boolean
 }) {
@@ -52,8 +62,10 @@ function ComparisonTable({ rows, acquisitionTiming, showLots = false }: {
       {showLots ? <><th>Acquired</th><th>Shares</th><th>Purchase price</th><th>Loss</th></> : null}
       <th>Price</th><th>Buy target</th><th>Above buy target</th><th>Sell target</th><th>Below sell target</th><th>Prior acquisition window</th></tr></thead>
     <tbody>{rows.map((row, index) => <tr key={`${row.ticker}-${index}`}>
-      <td><Link className="link-button" to={`/stocks/${encodeURIComponent(row.ticker)}`}>{row.ticker}</Link></td>
-      {showLots ? <><td>{row.acquisitionDate?.slice(0, 10)}</td><td>{row.quantity}</td>
+      <td><Link className="link-button" to={`/stocks/${encodeURIComponent(row.ticker)}`}>{row.ticker}</Link><TickerInfoBadges ticker={row.ticker} /></td>
+      {showLots ? <><td>{row.acquisitionDate?.slice(0, 10)}{row.acquisitionDate && isOverOneYearOld(row.acquisitionDate) ? (
+        <> <span className="pill pill-long-term" title="Purchase is over one year old">1y+</span></>
+      ) : null}</td><td>{row.quantity}</td>
         <td>{formatStockPrice4(row.unitCost)}</td><td className="value-negative">{row.lossPercent?.toFixed(2)}%</td></> : null}
       <td>{formatStockPrice4(row.price)}</td>
       <td>{formatStockPrice4(row.buy)}</td><td>{row.price != null && row.buy != null && row.buy > 0
@@ -89,7 +101,9 @@ export function getLargeLossRows(inputs: TargetDistanceInput[], openLots: OpenLo
     // Exactly 50% belongs to the lower band; losses of 40% or less are excluded.
     const tier = lossPercent > 50 + 1e-10 ? 50 : lossPercent > 40 + 1e-10 ? 40 : null
     return tier == null ? [] : [{ ...input, acquisitionDate: lot.acquisitionDate, quantity: lot.quantity, unitCost: lot.unitCost, lossPercent, tier }]
-  }).sort((a, b) => b.lossPercent - a.lossPercent || a.ticker.localeCompare(b.ticker) || a.acquisitionDate.localeCompare(b.acquisitionDate))
+  }).sort((a, b) => a.ticker.localeCompare(b.ticker)
+    || b.lossPercent - a.lossPercent
+    || a.acquisitionDate.localeCompare(b.acquisitionDate))
 }
 
 export function LargeLossTable({ inputs, openLots, acquisitionTiming }: {

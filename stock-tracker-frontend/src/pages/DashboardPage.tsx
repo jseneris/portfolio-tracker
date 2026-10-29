@@ -32,6 +32,7 @@ import {
 import { formatCurrency2, formatStockPrice4, getLocalDateString } from '../formatters'
 import { calculatePortfolioSnapshot, calculateTickerYearlyGainLoss, calculateYearlyGainLoss, createSplitMultiplierResolver } from '../portfolioSnapshot'
 import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, getTargetPricePosition, normalizeTargetSettings } from '../targetPrices'
+import { getLargestDisplayLotValues, getTickerInfoBadges } from '../tickerBadges'
 export { getSplitAdjustedTargetBasePrice } from '../targetPrices'
 
 type AddStockFormState = {
@@ -81,44 +82,7 @@ function formatDateOnlyLabel(value: string | null | undefined): string {
   return parsed.toLocaleDateString(undefined, { timeZone: 'UTC' })
 }
 
-export function getTickerInfoBadges(
-  preference: Pick<TickerPreference, 'baseSize' | 'buyOnDip' | 'buyOnDipPrice'>,
-  largestDisplayLotValue: number | null,
-  basePurchaseSize: number
-): { symbol: string; tone: 'green' | 'red'; message: string }[] {
-  const badges: ReturnType<typeof getTickerInfoBadges> = []
-  if (preference.buyOnDip) badges.push({ symbol: 'B', tone: 'green', message: `Buy on Dip is enabled${preference.buyOnDipPrice != null ? ` with a base price of ${formatStockPrice4(preference.buyOnDipPrice)}` : ''}.` })
-  if (preference.baseSize !== 3) badges.push({
-    symbol: preference.baseSize < 3 ? '\u2013' : '+',
-    tone: preference.baseSize < 3 ? 'red' : 'green',
-    message: `Base size: ${preference.baseSize} display lots (default is 3).`,
-  })
-  if (largestDisplayLotValue != null && Number.isFinite(largestDisplayLotValue) && basePurchaseSize > 0
-    && largestDisplayLotValue > basePurchaseSize * 5) {
-    badges.push({ symbol: '5', tone: 'red', message: `Largest display lot: ${formatCurrency2(largestDisplayLotValue)} at the latest stored close, greater than 5 times Base Purchase Size (${formatCurrency2(basePurchaseSize * 5)}).` })
-  }
-  return badges
-}
-
-export function getLargestDisplayLotValues(displayLots: DisplayLot[], historicalPrices: HistoricalPrice[], asOfDate: string): Record<string, number> {
-  const closes = new Map<string, HistoricalPrice>()
-  for (const price of historicalPrices) {
-    const ticker = normalizeTicker(price.ticker)
-    if (!price.priceDate || price.priceDate.slice(0, 10) > asOfDate || !Number.isFinite(price.closePrice) || price.closePrice <= 0) continue
-    const previous = closes.get(ticker)
-    if (!previous || price.priceDate > previous.priceDate) closes.set(ticker, price)
-  }
-  const values: Record<string, number> = {}
-  for (const row of displayLots) {
-    const ticker = normalizeTicker(row.ticker)
-    const close = closes.get(ticker)
-    if (!close) continue
-    for (const quantity of row.lots) {
-      if (Number.isFinite(quantity) && quantity > 0) values[ticker] = Math.max(values[ticker] ?? 0, quantity * close.closePrice)
-    }
-  }
-  return values
-}
+export { getLargestDisplayLotValues, getTickerInfoBadges } from '../tickerBadges'
 
 export function DashboardTooltip({ message, className, children }: { message: string; className: string; children: ReactNode }) {
   const id = useId()
@@ -1508,6 +1472,9 @@ export default function DashboardPage() {
                       <sup className="ticker-info-badges">{getTickerInfoBadges({
                         baseSize: row.baseSize, buyOnDip: row.buyOnDip,
                         buyOnDipPrice: tickerPreferencesByTicker[row.ticker]?.buyOnDipPrice ?? null,
+                        isBuyRestricted: row.isBuyRestricted,
+                        buyRestrictedUntil: row.buyRestrictedUntil,
+                        restrictionSalePrice: tickerPreferencesByTicker[row.ticker]?.restrictionSalePrice ?? null,
                       }, largestDisplayLotValues[row.ticker] ?? null, basePurchaseSize).map((badge) => (
                         <DashboardTooltip key={badge.symbol} className={`ticker-info-badge ticker-info-badge-${badge.tone}`} message={badge.message}>
                           <span className={badge.symbol === '\u2013' ? 'ticker-info-badge-dash' : undefined}>{badge.symbol}</span>

@@ -15,6 +15,7 @@ import {
 } from '../api'
 import { formatCurrency2 } from '../formatters'
 import { calculatePortfolioSnapshot } from '../portfolioSnapshot'
+import { TickerInfoBadges } from '../tickerBadges'
 
 export type AllocationGroupBy = 'ticker' | 'industry' | 'size'
 
@@ -509,8 +510,11 @@ export default function AllocationsPage() {
                       </td>
                       <td>
                         {slice.label}
+                        {groupBy === 'ticker' ? <TickerInfoBadges ticker={slice.label} /> : null}
                         {groupBy !== 'ticker' && !slice.isCash ? (
-                          <small className="allocation-slice-tickers">{slice.tickers.join(', ')}</small>
+                          <small className="allocation-slice-tickers">{slice.tickers.map((ticker, index) => (
+                            <span key={ticker}>{index > 0 ? ', ' : ''}{ticker}<TickerInfoBadges ticker={ticker} /></span>
+                          ))}</small>
                         ) : null}
                       </td>
                       <td>{formatCurrency2(slice.value)}</td>

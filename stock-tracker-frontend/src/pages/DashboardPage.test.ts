@@ -49,6 +49,20 @@ describe('dashboard daily stock counts', () => {
       expect(getTickerInfoBadges(preference, 2000.01, 400).map((badge) => badge.symbol)).toEqual(['5'])
     })
 
+    it('shows a restricted badge with the triggering sale price and restriction date', () => {
+      const badges = getTickerInfoBadges({
+        ...preference,
+        isBuyRestricted: true,
+        buyRestrictedUntil: '2026-11-06',
+        restrictionSalePrice: 90,
+      }, null, 300)
+      expect(badges).toEqual([{
+        symbol: 'R',
+        tone: 'red',
+        message: 'Buying is restricted through 2026-11-06. The triggering loss-sale price was $90.0000.',
+      }])
+    })
+
     it('values the largest individual lot at the latest valid stored close, not the sum or a future price', () => {
       const lots: DisplayLot[] = [
         { id: '1', userId: 'u', ticker: 'test', lots: [10, 20], lotCount: 2, totalQuantity: 30, createdAt: '', updatedAt: '' },

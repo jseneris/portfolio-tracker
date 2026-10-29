@@ -4,6 +4,7 @@ import { getPortfolioReview, type PortfolioReview } from '../api'
 import { formatCurrency2 } from '../formatters'
 import { formatDividendTiming, formatWeight, getWaitDayClass, LOSS_TIMING_LOT_HEADERS, lossTimingLotValues } from '../reviewMessages'
 import TargetDistanceSection from './TargetDistanceSection'
+import { TickerInfoBadges } from '../tickerBadges'
 
 type ReviewHolding = NonNullable<PortfolioReview['snapshot']['holdingReviewContext']>[number]
 type RecommendedLotAmount = NonNullable<PortfolioReview['snapshot']['recommendedLotAmount']>
@@ -33,7 +34,7 @@ export function getHoldingsWithLargeLots(snapshot: PortfolioReview['snapshot']) 
 }
 
 function TickerLink({ ticker }: { ticker: string }) {
-  return <Link className="link-button" to={`/stocks/${encodeURIComponent(ticker)}`}>{ticker}</Link>
+  return <><Link className="link-button" to={`/stocks/${encodeURIComponent(ticker)}`}>{ticker}</Link><TickerInfoBadges ticker={ticker} /></>
 }
 
 export function RecommendedLotAmountSection({ recommendation }: { recommendation: RecommendedLotAmount }) {

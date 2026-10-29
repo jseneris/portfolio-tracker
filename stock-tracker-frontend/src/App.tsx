@@ -15,6 +15,7 @@ import AllocationsPage from './pages/AllocationsPage'
 import PortfolioInsightsPage from './pages/PortfolioInsightsPage'
 import ReviewPage from './pages/ReviewPage'
 import MessagesPage, { MESSAGES_UPDATED_EVENT } from './pages/MessagesPage'
+import { TickerBadgeProvider } from './tickerBadges'
 
 const UNREAD_MESSAGES_POLL_MS = 5 * 60 * 1000
 
@@ -233,26 +234,28 @@ export default function App() {
       </header>
 
       <main className="app-main">
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/cash" element={<CashPage />} />
-          <Route path="/stocks" element={<StocksPage />} />
-          <Route path="/stocks/:ticker" element={<StockHistoryPage />} />
-          <Route path="/holdings" element={<HoldingsPage />} />
-          <Route path="/review" element={<ReviewPage />} />
-          <Route path="/allocations" element={<AllocationsPage />} />
-          <Route path="/splits" element={<StockSplitsPage />} />
-          <Route path="/comparison" element={<ComparisonPage />} />
-          <Route path="/comparison-all" element={<ComparisonPage />} />
-          <Route path="/stock-performance" element={<ComparisonPage graph="stocks" />} />
-          <Route path="/red-green" element={<ComparisonPage graph="redGreen" />} />
-          <Route
-            path="/insights"
-            element={window.location.hostname === 'localhost' && aiInsightsEnabled ? <PortfolioInsightsPage /> : <Navigate to="/" replace />}
-          />
-          <Route path="/messages" element={<MessagesPage />} />
-          <Route path="/user-settings" element={<UserSettingsPage />} />
-        </Routes>
+        <TickerBadgeProvider>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/cash" element={<CashPage />} />
+            <Route path="/stocks" element={<StocksPage />} />
+            <Route path="/stocks/:ticker" element={<StockHistoryPage />} />
+            <Route path="/holdings" element={<HoldingsPage />} />
+            <Route path="/review" element={<ReviewPage />} />
+            <Route path="/allocations" element={<AllocationsPage />} />
+            <Route path="/splits" element={<StockSplitsPage />} />
+            <Route path="/comparison" element={<ComparisonPage />} />
+            <Route path="/comparison-all" element={<ComparisonPage />} />
+            <Route path="/stock-performance" element={<ComparisonPage graph="stocks" />} />
+            <Route path="/red-green" element={<ComparisonPage graph="redGreen" />} />
+            <Route
+              path="/insights"
+              element={window.location.hostname === 'localhost' && aiInsightsEnabled ? <PortfolioInsightsPage /> : <Navigate to="/" replace />}
+            />
+            <Route path="/messages" element={<MessagesPage />} />
+            <Route path="/user-settings" element={<UserSettingsPage />} />
+          </Routes>
+        </TickerBadgeProvider>
       </main>
     </div>
   )

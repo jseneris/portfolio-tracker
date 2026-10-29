@@ -8,6 +8,7 @@ import {
 } from '../api'
 import { formatCurrency2, formatStockPrice4 } from '../formatters'
 import TransactionDateEditor from './TransactionDateEditor'
+import { TickerInfoBadges } from '../tickerBadges'
 
 const SHARE_TOLERANCE = 1e-6
 
@@ -221,6 +222,7 @@ export default function StocksPage() {
                     <Link className="link-button" to={`/stocks/${encodeURIComponent(holding.ticker)}`}>
                       {holding.ticker}
                     </Link>
+                    <TickerInfoBadges ticker={holding.ticker} />
                   </td>
                   <td>{holding.closingDate ? formatDate(holding.closingDate) : '--'}</td>
                   <td className={getPerformanceClassName(holding.salesPerformance)}>
@@ -260,6 +262,7 @@ export default function StocksPage() {
                     <Link className="link-button" to={`/stocks/${encodeURIComponent(transaction.ticker)}`}>
                       {transaction.ticker}
                     </Link>
+                    <TickerInfoBadges ticker={transaction.ticker} />
                   </td>
                   <td>{transaction.type}</td>
                   <td>{formatNumber(transaction.quantity, 6)}</td>

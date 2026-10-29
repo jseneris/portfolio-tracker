@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { addWatchlistItem, getStockProfileByTicker, getWatchlist, getWatchlistPrices, removeWatchlistItem, type WatchlistItem, type WatchlistPrice } from '../api'
 import { buildWatchlistPoints, type WatchlistLine } from '../watchlistPerformance'
+import { TickerInfoBadges } from '../tickerBadges'
 
 const COLORS = ['#0891b2', '#ea580c', '#4f46e5', '#db2777', '#65a30d', '#0d9488']
 
@@ -169,7 +170,7 @@ export default function WatchlistSection({ selectedYear, refreshKey, onItemsChan
                     else next.add(item.id)
                     return next
                   })} /></td>
-                <td><i className="legend-dot" style={{ backgroundColor: COLORS[index % COLORS.length] }} /> {item.ticker}</td>
+                <td><i className="legend-dot" style={{ backgroundColor: COLORS[index % COLORS.length] }} /> {item.ticker}<TickerInfoBadges ticker={item.ticker} /></td>
                 <td>
                   {names[item.ticker] || (nameErrors[item.ticker] ? 'Name unavailable' : 'Loading name...')}
                   {nameErrors[item.ticker] ? <p className="status status-error" role="alert">{nameErrors[item.ticker]}</p> : null}

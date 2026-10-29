@@ -3,6 +3,7 @@ import type { ReviewSectionTitle } from './reviewMessages'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
 export const PORTFOLIO_UPDATED_EVENT = 'portfolio:updated'
+export const TICKER_BADGES_UPDATED_EVENT = 'ticker-badges:updated'
 
 export function emitPortfolioUpdated() {
   window.dispatchEvent(new Event(PORTFOLIO_UPDATED_EVENT))
@@ -318,6 +319,7 @@ export type TickerPreference = {
   buyRestricted: boolean
   buyRestrictedUntil: string | null
   isBuyRestricted: boolean
+  restrictionSalePrice: number | null
 }
 
 export type UpdateTickerPreferenceInput = {
@@ -785,10 +787,12 @@ export async function getUserProfile(): Promise<UserProfile> {
 }
 
 export async function updateUserTargetSettings(payload: UserTargetSettings): Promise<UserTargetSettings> {
-  return requestApi<UserTargetSettings>('/api/user-settings/targets', {
+  const settings = await requestApi<UserTargetSettings>('/api/user-settings/targets', {
     method: 'PUT',
     body: payload,
   })
+  window.dispatchEvent(new Event(TICKER_BADGES_UPDATED_EVENT))
+  return settings
 }
 
 export async function getTickerPreferences(): Promise<TickerPreference[]> {
@@ -803,10 +807,12 @@ export async function updateTickerPreference(
   ticker: string,
   payload: UpdateTickerPreferenceInput
 ): Promise<TickerPreference> {
-  return requestApi<TickerPreference>(`/api/ticker-preferences/${encodeURIComponent(ticker)}`, {
+  const preference = await requestApi<TickerPreference>(`/api/ticker-preferences/${encodeURIComponent(ticker)}`, {
     method: 'PUT',
     body: payload,
   })
+  window.dispatchEvent(new Event(TICKER_BADGES_UPDATED_EVENT))
+  return preference
 }
 
 export async function generatePortfolioInsights(): Promise<PortfolioInsightsReport> {

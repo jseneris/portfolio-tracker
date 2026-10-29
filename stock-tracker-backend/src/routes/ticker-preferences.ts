@@ -11,6 +11,7 @@ type TickerPreferenceRow = {
   buyOnDipPrice: number | null;
   buyRestricted: boolean;
   buyRestrictedUntil: Date | string | null;
+  restrictionSalePrice: number | null;
 };
 
 function normalizeTicker(value: unknown): string {
@@ -53,8 +54,31 @@ function mapPreference(row: TickerPreferenceRow, today: string) {
     buyRestricted,
     buyRestrictedUntil,
     isBuyRestricted: buyRestricted && buyRestrictedUntil != null && today <= buyRestrictedUntil,
+    restrictionSalePrice: row.restrictionSalePrice == null ? null : Number(row.restrictionSalePrice),
   };
 }
+
+const preferenceSelect = `
+  SELECT preference.ticker, preference.baseSize, preference.buyOnDip, preference.buyOnDipPrice,
+    preference.buyRestricted, preference.buyRestrictedUntil, restrictionSale.price AS restrictionSalePrice
+  FROM UserTickerPreferences preference
+  OUTER APPLY (
+    SELECT TOP 1 sale.price
+    FROM StockTransactions sale
+    WHERE sale.userId = preference.userId
+      AND sale.ticker = preference.ticker
+      AND sale.type = 'sell'
+      AND DATEADD(day, 31, CONVERT(date, sale.transactionDate)) = preference.buyRestrictedUntil
+      AND EXISTS (
+        SELECT 1
+        FROM PurchaseLotAllocations allocation
+        INNER JOIN PurchaseLots lot ON lot.id = allocation.purchaseLotId AND lot.userId = preference.userId
+        WHERE allocation.saleTransactionId = sale.id AND allocation.userId = preference.userId
+          AND allocation.quantityConsumed > 0 AND lot.unitCost > sale.price
+      )
+    ORDER BY sale.transactionDate DESC, sale.createdAt DESC, sale.id DESC
+  ) restrictionSale
+`;
 
 router.get('/', async (req: Request, res: Response) => {
   try {
@@ -62,12 +86,7 @@ router.get('/', async (req: Request, res: Response) => {
     const today = new Date().toISOString().slice(0, 10);
     const result = await getPool().request()
       .input('userId', sql.NVarChar, userId)
-      .query(`
-        SELECT ticker, baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil
-        FROM UserTickerPreferences
-        WHERE userId = @userId
-        ORDER BY ticker
-      `);
+      .query(`${preferenceSelect} WHERE preference.userId = @userId ORDER BY preference.ticker`);
 
     res.json((result.recordset as TickerPreferenceRow[]).map((row) => mapPreference(row, today)));
   } catch (error) {
@@ -86,16 +105,12 @@ router.get('/:ticker', async (req: Request, res: Response) => {
     const result = await getPool().request()
       .input('userId', sql.NVarChar, userId)
       .input('ticker', sql.NVarChar, ticker)
-      .query(`
-        SELECT TOP 1 ticker, baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil
-        FROM UserTickerPreferences
-        WHERE userId = @userId AND ticker = @ticker
-      `);
+      .query(`${preferenceSelect} WHERE preference.userId = @userId AND preference.ticker = @ticker`);
 
     const row = result.recordset[0] as TickerPreferenceRow | undefined;
     res.json(row
       ? mapPreference(row, new Date().toISOString().slice(0, 10))
-      : { ticker, baseSize: 3, buyOnDip: false, buyOnDipPrice: null, buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false });
+      : { ticker, baseSize: 3, buyOnDip: false, buyOnDipPrice: null, buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
@@ -152,8 +167,9 @@ router.put('/:ticker', async (req: Request, res: Response) => {
                      updatedAt = GETUTCDATE()
         WHEN NOT MATCHED THEN
           INSERT (id, userId, ticker, baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil)
-          VALUES (NEWID(), @userId, @ticker, COALESCE(@baseSize, 3), @buyOnDip, CASE WHEN @buyOnDip = 1 THEN @buyOnDipPrice ELSE NULL END, @buyRestricted, @buyRestrictedUntil)
-        OUTPUT inserted.ticker, inserted.baseSize, inserted.buyOnDip, inserted.buyOnDipPrice, inserted.buyRestricted, inserted.buyRestrictedUntil;
+          VALUES (NEWID(), @userId, @ticker, COALESCE(@baseSize, 3), @buyOnDip, CASE WHEN @buyOnDip = 1 THEN @buyOnDipPrice ELSE NULL END, @buyRestricted, @buyRestrictedUntil);
+        ${preferenceSelect}
+        WHERE preference.userId = @userId AND preference.ticker = @ticker;
       `);
 
     res.json(mapPreference(result.recordset[0] as TickerPreferenceRow, new Date().toISOString().slice(0, 10)));

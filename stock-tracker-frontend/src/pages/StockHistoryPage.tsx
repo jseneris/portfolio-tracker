@@ -38,6 +38,7 @@ import { formatCurrency2, formatStockPrice4, getLocalDateString } from '../forma
 import { createSplitMultiplierResolver } from '../portfolioSnapshot'
 import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, getTargetPricePosition, normalizeTargetSettings } from '../targetPrices'
 import TransactionDateEditor from './TransactionDateEditor'
+import { TickerInfoBadges } from '../tickerBadges'
 
 const ALLOCATION_TOLERANCE = 1e-6
 const LOT_STATE_TOLERANCE = 1e-6
@@ -1943,7 +1944,7 @@ export default function StockHistoryPage() {
       <div className="panel panel-tight row-between">
         <div>
           <div className="stock-title-row">
-            <h2 style={{ margin: 0 }}>{getStockHeading(ticker, companyProfile?.companyName)}</h2>
+            <h2 style={{ margin: 0 }}>{getStockHeading(ticker, companyProfile?.companyName)} <TickerInfoBadges ticker={ticker} /></h2>
             <button className="link-button stock-chart-toggle" type="button"
               aria-expanded={showThreeMonthChart}
               onClick={() => setShowThreeMonthChart((shown) => !shown)}>

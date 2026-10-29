@@ -28,6 +28,7 @@ describe('22. User Ticker Preferences', () => {
       buyRestricted: false,
       buyRestrictedUntil: null,
       isBuyRestricted: false,
+      restrictionSalePrice: null,
     });
   });
 
@@ -46,6 +47,7 @@ describe('22. User Ticker Preferences', () => {
           buyRestricted: true,
           buyRestrictedUntil: '2099-12-31',
           isBuyRestricted: true,
+          restrictionSalePrice: null,
         });
       });
 
@@ -68,6 +70,7 @@ describe('22. User Ticker Preferences', () => {
       buyRestricted: false,
       buyRestrictedUntil: null,
       isBuyRestricted: false,
+      restrictionSalePrice: null,
     }]);
 
     const rowCount = await getPool().request()

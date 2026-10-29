@@ -49,6 +49,19 @@ describe('large purchase-lot losses', () => {
     expect(getLargeLossRows([{ ...input, price: null }], [purchaseLot])).toEqual([])
   })
 
+  it('orders losses by ticker, then greatest loss first within each ticker', () => {
+    const rows = getLargeLossRows([
+      { ...input, ticker: 'ZZZ', price: 90 },
+      { ...input, ticker: 'AAA', price: 90 },
+    ], [
+      { ...purchaseLot, ticker: 'ZZZ', acquisitionDate: '2025-01-03', unitCost: 200 },
+      { ...purchaseLot, ticker: 'AAA', acquisitionDate: '2025-01-02', unitCost: 200 },
+      { ...purchaseLot, ticker: 'AAA', acquisitionDate: '2025-01-01', unitCost: 300 },
+    ])
+    expect(rows.map(({ ticker }) => ticker)).toEqual(['AAA', 'AAA', 'ZZZ'])
+    expect(rows.map(({ lossPercent }) => lossPercent)).toEqual([70, expect.closeTo(55), expect.closeTo(55)])
+  })
+
   it('renders the same target details and timing, plus purchase-lot data, without distance filters', () => {
     const html = renderToStaticMarkup(createElement(StaticRouter, { location: '/review' },
       createElement(LargeLossTable, { inputs: [{ ...input, buy: 95 }], openLots: [purchaseLot] })))
@@ -61,6 +74,22 @@ describe('large purchase-lot losses', () => {
     expect(html).not.toContain('Price as of')
     expect(html).not.toContain('30% to 40% below purchase price')
     expect(html).not.toContain('Stored close 2026-10-23')
+  })
+
+  it('marks only lots held for more than one year with a 1y+ badge', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-29T12:00:00Z'))
+    const html = renderToStaticMarkup(createElement(StaticRouter, { location: '/review' },
+      createElement(LargeLossTable, {
+        inputs: [input],
+        openLots: [
+          { ...purchaseLot, acquisitionDate: '2025-10-28' },
+          { ...purchaseLot, acquisitionDate: '2025-10-29' },
+          { ...purchaseLot, acquisitionDate: '2025-10-30' },
+        ],
+      })))
+    expect(html.match(/1y\+/g)).toHaveLength(1)
+    expect(html).toContain('Purchase is over one year old')
   })
 
   it('retains loss lots with missing targets and explicitly renders unavailable target values', () => {
@@ -168,7 +197,7 @@ describe('shared dashboard targets', () => {
   it('uses buy-on-dip overrides even without a transaction base', () => {
     const preference: api.TickerPreference = {
       ticker: 'TEST', baseSize: 1, buyOnDip: true, buyOnDipPrice: 100,
-      buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false,
+      buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null,
     }
     expect(calculateTickerTargets(null, 6, settings, preference)).toEqual({ buy: 98, sell: 110 })
     expect(calculateTickerTargets(null, 6, settings, undefined)).toEqual({ buy: null, sell: null })

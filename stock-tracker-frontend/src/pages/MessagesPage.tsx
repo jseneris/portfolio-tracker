@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AppMessage, deleteMessages, getMessages, markSelectedMessagesRead, openMessage } from '../api'
 import { SavedReviewMessage } from '../reviewMessages'
+import { TickerInfoBadges } from '../tickerBadges'
 
 export const MESSAGES_UPDATED_EVENT = 'messages-updated'
 
@@ -150,6 +151,7 @@ export default function MessagesPage() {
                     <strong>{message.type === 'ai-chat'
                       ? message.body.startsWith('Review section: ') ? message.body.split('\n')[0].slice('Review section: '.length) : 'Portfolio Q&A'
                       : message.ticker}</strong>
+                    {message.type !== 'ai-chat' && message.ticker ? <TickerInfoBadges ticker={message.ticker} /> : null}
                     <span className="message-date">{new Date(message.createdAt).toLocaleString()}</span>
                   </button>
                 </div>

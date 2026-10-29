@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { TickerInfoBadges } from '../tickerBadges'
 import { activateStockSplit, getAllStockSplits, StockSplitEvent } from '../api'
 
 function formatDate(value: string) {
@@ -99,6 +100,7 @@ export default function StockSplitsPage() {
                     <Link className="link-button" to={`/stocks/${encodeURIComponent(split.ticker)}`}>
                       {split.ticker}
                     </Link>
+                    <TickerInfoBadges ticker={split.ticker} />
                   </td>
                   <td>{formatDate(split.splitDate)}</td>
                   <td>{split.ratioNumerator}:{split.ratioDenominator}</td>
