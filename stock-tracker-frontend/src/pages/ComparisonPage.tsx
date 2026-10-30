@@ -95,7 +95,6 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
   const [syncError, setSyncError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [missingPriceWarning, setMissingPriceWarning] = useState<string | null>(null)
-  const [startingReferencePoint, setStartingReferencePoint] = useState<{ date: string; portfolioValue: number } | null>(null)
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null)
 
   const availableYears = useMemo(() => {
@@ -124,30 +123,6 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
   const comparisonYears = useMemo(() => {
     return [...availableYears].sort((a, b) => b - a)
   }, [availableYears])
-
-  const allComparisonSyncYears = useMemo(() => {
-    const transactionYears = [...new Set([...stockTransactions, ...cashTransactions]
-      .map((transaction) => new Date(transaction.transactionDate).getUTCFullYear())
-      .filter(Number.isFinite))]
-    const depositYears = cashTransactions
-      .filter((transaction) => String(transaction.type || '').toLowerCase() === 'deposit')
-      .map((transaction) => new Date(transaction.transactionDate))
-      .filter((date) => !Number.isNaN(date.getTime()))
-      .map((date) => date.getUTCFullYear())
-
-    const firstYear = depositYears.length > 0
-      ? Math.min(...depositYears)
-      : (transactionYears.length > 0 ? Math.min(...transactionYears) : null)
-    const latestYear = transactionYears.length > 0
-      ? Math.min(new Date().getUTCFullYear(), Math.max(...transactionYears))
-      : null
-
-    if (firstYear == null || latestYear == null || latestYear < firstYear) {
-      return [] as number[]
-    }
-
-    return Array.from({ length: latestYear - firstYear + 1 }, (_, index) => firstYear + index)
-  }, [cashTransactions, stockTransactions])
 
   const yearlyStockTransactionSummary = useMemo(() => {
     const summary = {
@@ -208,23 +183,29 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
     return summary
   }, [cashTransactions, selectedYear])
 
-  const comparisonSummary = useMemo(() => {
-    if (points.length === 0) {
-      return null
+  const allComparisonSyncYears = useMemo(() => {
+    const transactionYears = [...new Set([...stockTransactions, ...cashTransactions]
+      .map((transaction) => new Date(transaction.transactionDate).getUTCFullYear())
+      .filter(Number.isFinite))]
+    const depositYears = cashTransactions
+      .filter((transaction) => String(transaction.type || '').toLowerCase() === 'deposit')
+      .map((transaction) => new Date(transaction.transactionDate))
+      .filter((date) => !Number.isNaN(date.getTime()))
+      .map((date) => date.getUTCFullYear())
+
+    const firstYear = depositYears.length > 0
+      ? Math.min(...depositYears)
+      : (transactionYears.length > 0 ? Math.min(...transactionYears) : null)
+    const latestYear = transactionYears.length > 0
+      ? Math.min(new Date().getUTCFullYear(), Math.max(...transactionYears))
+      : null
+
+    if (firstYear == null || latestYear == null || latestYear < firstYear) {
+      return [] as number[]
     }
 
-    const startPoint = points[0]
-    const endPoint = points[points.length - 1]
-    const startingPortfolioValue = startingReferencePoint?.portfolioValue ?? startPoint.portfolioValue
-    const startingPortfolioDate = startingReferencePoint?.date ?? startPoint.date
-
-    return {
-      startPoint,
-      endPoint,
-      startingPortfolioValue,
-      startingPortfolioDate,
-    }
-  }, [points, startingReferencePoint])
+    return Array.from({ length: latestYear - firstYear + 1 }, (_, index) => firstYear + index)
+  }, [cashTransactions, stockTransactions])
 
   const chart = useMemo(() => {
     if (points.length === 0) {
@@ -242,7 +223,7 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
     const maxY = Math.max(...values)
 
     const width = 920
-    const height = 360
+    const height = 300
     const margin = { top: 18, right: 16, bottom: 56, left: 80 }
     const plotWidth = width - margin.left - margin.right
     const plotHeight = height - margin.top - margin.bottom
@@ -343,7 +324,8 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
         const x = getXForIndex(index)
         return { date: point.date, x, index }
       })
-      .filter((tick) => tick.index % xTickStep === 0 || tick.index === points.length - 1)
+      .filter((tick) => tick.index === points.length - 1 ||
+        (tick.index % xTickStep === 0 && points.length - 1 - tick.index >= xTickStep * 0.75))
 
     const plottedPoints = points.map((point, index) => {
       const x = getXForIndex(index)
@@ -497,7 +479,6 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
         }
 
         setPoints(allPoints)
-        setStartingReferencePoint(null)
         if (missingDates.size > 0) {
           setMissingPriceWarning(
             `Missing historical prices across selected years: ${missingTickers.size} ticker(s) across ${missingDates.size} date(s). Run Recalculate by year to backfill gaps.`
@@ -514,7 +495,6 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
 
       const yearPoints = filterPointsByYear(allPoints, yearSelection)
       setPoints(yearPoints)
-      setStartingReferencePoint(null)
       updateMissingPriceWarning(yearSelection, yearPoints)
       if (yearPoints.length === 0) {
         const fallbackResponse = await getPortfolioComparisonByYear(yearSelection, signal)
@@ -694,6 +674,7 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
           <p>No chart data loaded yet.</p>
         ) : (
           <div className="comparison-chart-wrap">
+            <div className="line-chart-viewport" tabIndex={0} role="region" aria-label="Portfolio comparison plot; scroll horizontally on smaller screens">
             <svg
               className="comparison-chart"
               viewBox={`0 0 ${chart.width} ${chart.height}`}
@@ -754,7 +735,7 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
                   <text
                     x={tick.x}
                     y={chart.margin.top + chart.plotHeight + 20}
-                    textAnchor="middle"
+                    textAnchor={tick.index === points.length - 1 && points.length > 1 ? 'end' : 'middle'}
                     fontSize="11"
                     fill="#475569"
                   >
@@ -764,12 +745,12 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
               ))}
 
               {chart.cashBasisAreaPath ? (
-                <path d={chart.cashBasisAreaPath} fill="#0ea5e9" opacity="0.24" />
+                <path d={chart.cashBasisAreaPath} fill="#0ea5e9" opacity="0.1" />
               ) : null}
-              <path d={chart.nasdaqPath} fill="none" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
-              <path d={chart.sp500Path} fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
-              <path d={chart.dowPath} fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" opacity="0.55" />
-              <path d={chart.portfolioPath} fill="none" stroke="#16a34a" strokeWidth="3" strokeLinecap="round" />
+              <path d={chart.nasdaqPath} fill="none" stroke="#2563eb" strokeWidth="1.25" strokeLinecap="round" opacity="0.7" />
+              <path d={chart.sp500Path} fill="none" stroke="#ef4444" strokeWidth="1.25" strokeLinecap="round" opacity="0.7" />
+              <path d={chart.dowPath} fill="none" stroke="#f59e0b" strokeWidth="1.25" strokeLinecap="round" opacity="0.7" />
+              <path d={chart.portfolioPath} fill="none" stroke="#16a34a" strokeWidth="1.75" strokeLinecap="round" />
 
               {hoveredPoint ? (
                 <>
@@ -801,6 +782,7 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
                 </>
               ) : null}
             </svg>
+            </div>
             <div className="comparison-legend">
               <span><i className="legend-dot legend-dot-portfolio" />Portfolio Value</span>
               <span><i className="legend-dot legend-dot-basis" />Cash Cost Basis (deposit/withdrawal days)</span>
@@ -813,107 +795,33 @@ export default function ComparisonPage({ graph = 'indexes' }: { graph?: 'indexes
         )}
       </div>
 
-      <div className="panel">
-        <h3>{selectedYearLabel} Stock Transaction Summary</h3>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Count</th>
-              <th>Total Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Purchases</td>
-              <td>{yearlyStockTransactionSummary.buy.count}</td>
-              <td>{formatCurrency2(yearlyStockTransactionSummary.buy.amount)}</td>
-            </tr>
-            <tr>
-              <td>Sales</td>
-              <td>{yearlyStockTransactionSummary.sell.count}</td>
-              <td>{formatCurrency2(yearlyStockTransactionSummary.sell.amount)}</td>
-            </tr>
-            <tr>
-              <td>Dividends</td>
-              <td>{yearlyStockTransactionSummary.div.count}</td>
-              <td>{formatCurrency2(yearlyStockTransactionSummary.div.amount)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div className="panel">
-        <h3>{selectedYearLabel} Cash Transaction Summary</h3>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Count</th>
-              <th>Total Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Deposits</td>
-              <td>{yearlyCashTransactionSummary.deposit.count}</td>
-              <td>{formatCurrency2(yearlyCashTransactionSummary.deposit.amount)}</td>
-            </tr>
-            <tr>
-              <td>Withdrawals</td>
-              <td>{yearlyCashTransactionSummary.withdrawal.count}</td>
-              <td>{formatCurrency2(yearlyCashTransactionSummary.withdrawal.amount)}</td>
-            </tr>
-            <tr>
-              <td>Interest</td>
-              <td>{yearlyCashTransactionSummary.interest.count}</td>
-              <td>{formatCurrency2(yearlyCashTransactionSummary.interest.amount)}</td>
-            </tr>
-            <tr>
-              <td>Fees</td>
-              <td>{yearlyCashTransactionSummary.fee.count}</td>
-              <td>{formatCurrency2(yearlyCashTransactionSummary.fee.amount)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div className="panel">
-        {comparisonSummary == null ? (
-          <p>No comparison summary available yet.</p>
-        ) : (
+      {graph !== 'indexes' ? <>
+        <div className="panel">
+          <h3>{selectedYearLabel} Stock Transaction Summary</h3>
           <table className="table">
-            <thead>
-              <tr>
-                <th>Metric</th>
-                <th>Value</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Type</th><th>Count</th><th>Total Amount</th></tr></thead>
             <tbody>
-              <tr>
-                <td>Portfolio Starting Value (Prior Close: {formatDate(comparisonSummary.startingPortfolioDate)})</td>
-                <td>{formatCurrency2(comparisonSummary.startingPortfolioValue)}</td>
-              </tr>
-              <tr>
-                <td>Portfolio Ending Value ({formatDate(comparisonSummary.endPoint.date)})</td>
-                <td>{formatCurrency2(comparisonSummary.endPoint.portfolioValue)}</td>
-              </tr>
-              <tr>
-                <td>Cash Basis in DOW Benchmark ({formatDate(comparisonSummary.endPoint.date)})</td>
-                <td>{formatCurrency2(comparisonSummary.endPoint.dowBenchmarkValue)}</td>
-              </tr>
-              <tr>
-                <td>Cash Basis in Nasdaq Benchmark ({formatDate(comparisonSummary.endPoint.date)})</td>
-                <td>{formatCurrency2(comparisonSummary.endPoint.nasdaqBenchmarkValue)}</td>
-              </tr>
-              <tr>
-                <td>Cash Basis in S&amp;P 500 Benchmark ({formatDate(comparisonSummary.endPoint.date)})</td>
-                <td>{formatCurrency2(comparisonSummary.endPoint.sp500BenchmarkValue)}</td>
-              </tr>
+              <tr><td>Purchases</td><td>{yearlyStockTransactionSummary.buy.count}</td><td>{formatCurrency2(yearlyStockTransactionSummary.buy.amount)}</td></tr>
+              <tr><td>Sales</td><td>{yearlyStockTransactionSummary.sell.count}</td><td>{formatCurrency2(yearlyStockTransactionSummary.sell.amount)}</td></tr>
+              <tr><td>Dividends</td><td>{yearlyStockTransactionSummary.div.count}</td><td>{formatCurrency2(yearlyStockTransactionSummary.div.amount)}</td></tr>
             </tbody>
           </table>
-        )}
-      </div>
+        </div>
+
+        <div className="panel">
+          <h3>{selectedYearLabel} Cash Transaction Summary</h3>
+          <table className="table">
+            <thead><tr><th>Type</th><th>Count</th><th>Total Amount</th></tr></thead>
+            <tbody>
+              <tr><td>Deposits</td><td>{yearlyCashTransactionSummary.deposit.count}</td><td>{formatCurrency2(yearlyCashTransactionSummary.deposit.amount)}</td></tr>
+              <tr><td>Withdrawals</td><td>{yearlyCashTransactionSummary.withdrawal.count}</td><td>{formatCurrency2(yearlyCashTransactionSummary.withdrawal.amount)}</td></tr>
+              <tr><td>Interest</td><td>{yearlyCashTransactionSummary.interest.count}</td><td>{formatCurrency2(yearlyCashTransactionSummary.interest.amount)}</td></tr>
+              <tr><td>Fees</td><td>{yearlyCashTransactionSummary.fee.count}</td><td>{formatCurrency2(yearlyCashTransactionSummary.fee.amount)}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </> : null}
+
     </section>
   )
 }

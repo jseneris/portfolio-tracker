@@ -2083,16 +2083,20 @@ function buildDateRangeInclusive(startDate: string, endDate: string): string[] {
   return range;
 }
 
-function resolveClosestHistoricalCloseOnOrBefore(quotes: IHistoricalClosePoint[], requestedDate: string): IHistoricalClosePoint | null {
-  const requested = parseDateOnly(requestedDate).getTime();
+// Comparison histories are sorted by ISO priceDate before lookups.
+export function resolveClosestHistoricalCloseOnOrBefore(quotes: IHistoricalClosePoint[], requestedDate: string): IHistoricalClosePoint | null {
+  let low = 0;
+  let high = quotes.length - 1;
   let best: IHistoricalClosePoint | null = null;
 
-  for (const quote of quotes) {
-    const quoteTs = parseDateOnly(quote.priceDate).getTime();
-    if (quoteTs <= requested) {
-      if (!best || quoteTs > parseDateOnly(best.priceDate).getTime()) {
-        best = quote;
-      }
+  while (low <= high) {
+    const middle = low + Math.floor((high - low) / 2);
+    const quote = quotes[middle];
+    if (quote.priceDate <= requestedDate) {
+      best = quote;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
     }
   }
 

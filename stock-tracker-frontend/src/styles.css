@@ -470,20 +470,17 @@ body {
 
 .review-collapsible > summary {
   cursor: pointer;
-}
-
-.review-collapsible > .review-section-summary {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   list-style: none;
 }
 
-.review-collapsible > .review-section-summary::-webkit-details-marker {
+.review-collapsible > summary::-webkit-details-marker {
   display: none;
 }
 
-.review-collapsible > .review-section-summary::before {
+.review-collapsible > summary::before {
   content: '\25b6';
   flex: 0 0 auto;
   font-size: 0.75rem;
@@ -491,11 +488,12 @@ body {
   transition: transform 120ms ease;
 }
 
-.review-collapsible[open] > .review-section-summary::before {
+.review-collapsible[open] > summary::before {
   transform: rotate(90deg);
 }
 
-.review-collapsible > summary h3 {
+.review-collapsible > summary h3,
+.review-collapsible > summary h4 {
   display: inline;
   margin: 0;
 }
@@ -506,6 +504,10 @@ body {
 
 .review-section-content {
   min-width: 0;
+}
+
+.review-performance-period + .review-performance-period {
+  margin-top: 0.75rem;
 }
 
 .dashboard-tooltip-trigger {
@@ -608,6 +610,10 @@ body {
   display: grid;
   gap: 0.5rem;
   margin-top: 1rem;
+  width: 100%;
+  max-width: 1040px;
+  margin-inline: auto;
+  min-width: 0;
 }
 
 .stock-price-chart-legend {
@@ -637,14 +643,14 @@ body {
 .stock-price-chart {
   display: block;
   height: auto;
-  min-height: 220px;
-  overflow: visible;
   cursor: crosshair;
 }
 
 .stock-price-chart-line {
   fill: none;
-  stroke-width: 2.5;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
@@ -652,8 +658,8 @@ body {
 .stock-price-chart-daily .stock-price-chart-line.stock-price-chart-ma50,
 .stock-price-chart-daily .stock-price-chart-line.stock-price-chart-ma100,
 .stock-price-chart-daily .stock-price-chart-line.stock-price-chart-ma200 {
-  stroke-width: 1.5;
-  opacity: 0.45;
+  stroke-width: 1;
+  opacity: 0.55;
 }
 
 .stock-price-chart-close {
@@ -1339,16 +1345,46 @@ body {
 .comparison-chart-wrap {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.75rem;
+  width: 100%;
+  max-width: 1040px;
+  margin-inline: auto;
+  min-width: 0;
+}
+
+.line-chart-viewport {
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  background: #ffffff;
+}
+
+.line-chart-viewport:focus-visible {
+  outline: 2px solid #0891b2;
+  outline-offset: 2px;
+}
+
+.line-chart-viewport > svg {
+  display: block;
+  width: 100%;
+  min-width: 640px;
+  height: auto;
+}
+
+.line-chart-viewport :is(path, line, polyline, circle) {
+  vector-effect: non-scaling-stroke;
 }
 
 .comparison-chart {
   width: 100%;
   height: auto;
-  border: 1px solid #d9e2ec;
-  border-radius: 0.6rem;
-  background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
   cursor: crosshair;
+}
+
+.comparison-chart > path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .comparison-hover-crosshair {
@@ -1401,9 +1437,9 @@ body {
 .comparison-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.8rem;
-  font-size: 0.85rem;
-  color: #334155;
+  gap: 0.5rem 1rem;
+  font-size: 0.8rem;
+  color: #475569;
 }
 
 .comparison-legend span {
@@ -1709,7 +1745,6 @@ body {
 }
 
 .comparison-chart-panel {
-  min-height: 420px;
   display: flex;
   flex-direction: column;
 }
@@ -2288,14 +2323,6 @@ body {
 
   .allocation-input {
     min-height: 44px;
-  }
-
-  .comparison-chart-panel {
-    min-height: 260px;
-  }
-
-  .comparison-chart {
-    min-height: 220px;
   }
 
   .comparison-legend {

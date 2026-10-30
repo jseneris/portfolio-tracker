@@ -11,7 +11,7 @@ function formatPercent(value: number | null): string {
 
 const COLORS = ['#2563eb', '#dc2626', '#15803d', '#9333ea', '#c2410c', '#0e7490', '#be185d', '#4d7c0f']
 const WIDTH = 920
-const HEIGHT = 360
+const HEIGHT = 300
 const LEFT = 85
 const TOP = 18
 const PLOT_WIDTH = WIDTH - LEFT - 16
@@ -130,6 +130,7 @@ export function StocksGainLossChart({ tickers, points, hasInitialBuys = false, s
 
   return (
     <div className="comparison-chart-wrap">
+      <div className="line-chart-viewport" tabIndex={0} role="region" aria-label="Stock performance plot; scroll horizontally on smaller screens">
       <svg className="comparison-chart" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img"
         aria-label="Combined percentage gain/loss with optional individual stock lines, relative to value at the start of the period"
         onMouseLeave={() => setHoveredIndex(null)}
@@ -151,8 +152,11 @@ export function StocksGainLossChart({ tickers, points, hasInitialBuys = false, s
           </g>
         })}
         <line x1={LEFT} x2={LEFT + PLOT_WIDTH} y1={chart.y(0)} y2={chart.y(0)} stroke="#64748b" strokeDasharray="4 3" />
-        {axisDates.filter((_, index) => index % tickStep === 0 || index === axisDates.length - 1).map((date) => (
-          <text key={date} x={chart.x(date)} y={TOP + PLOT_HEIGHT + 22} textAnchor="middle" fontSize="11" fill="#475569">{date}</text>
+        {axisDates.filter((_, index) => index === axisDates.length - 1 ||
+          (index % tickStep === 0 && axisDates.length - 1 - index >= tickStep * 0.75)).map((date) => (
+          <text key={date} x={chart.x(date)} y={TOP + PLOT_HEIGHT + 22}
+            textAnchor={date === axisDates[axisDates.length - 1] && axisDates.length > 1 ? 'end' : 'middle'}
+            fontSize="11" fill="#475569">{date}</text>
         ))}
         {series.map((line) => {
           let connected = false
@@ -169,6 +173,7 @@ export function StocksGainLossChart({ tickers, points, hasInitialBuys = false, s
         })}
         {hovered ? <line x1={chart.x(hovered.date)} x2={chart.x(hovered.date)} y1={TOP} y2={TOP + PLOT_HEIGHT} className="comparison-hover-crosshair" /> : null}
       </svg>
+      </div>
       {watchlistLines.some((line) => line.points.length) ? <p className="hint">Dotted lines show selected watchlist price returns since their saved watch dates. They are not included in holding or group returns.</p> : null}
       {tickers.length ? <>
       <p className="hint">Percentages below show gain/loss over the full selected period, relative to value at start of period (plus buys during the period). Select tickers to show or hide their lines.</p>

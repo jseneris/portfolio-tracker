@@ -182,7 +182,7 @@ function ThreeMonthPriceChart({ points, ticker }: { points: ThreeMonthChartPoint
   if (!points.length) return <p>No stored prices are available for the past three months.</p>
 
   const width = 800
-  const height = 300
+  const height = 260
   const padding = { top: 16, right: 16, bottom: 34, left: 54 }
   const values = points.flatMap((point) => [
     point.closePrice, point.movingAverage20, point.movingAverage50,
@@ -217,6 +217,7 @@ function ThreeMonthPriceChart({ points, ticker }: { points: ThreeMonthChartPoint
         {hoveredPoint.priceDate} close: {formatCurrency2(hoveredPoint.closePrice)}
       </p>
     ) : null}
+    <div className="line-chart-viewport" tabIndex={0} role="region" aria-label={`${ticker} price plot; scroll horizontally on smaller screens`}>
     <svg className="stock-price-chart stock-price-chart-daily" viewBox={`0 0 ${width} ${height}`} role="img"
       aria-label={`${ticker} three-month closing price and 20, 50, 100, and 200 day moving averages`}
       onMouseMove={(event) => {
@@ -248,6 +249,7 @@ function ThreeMonthPriceChart({ points, ticker }: { points: ThreeMonthChartPoint
         </>
       ) : null}
     </svg>
+    </div>
   </div>
 }
 

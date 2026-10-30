@@ -2,6 +2,10 @@
 
 Node.js/Express backend for the Stock Tracker application with SQL Server database connectivity.
 
+## Portfolio comparison performance
+
+The Review page's Performance summaries and index chart share the portfolio comparison API. Historical closes are sorted by ISO date once per comparison and resolved with binary search, avoiding full-history scans for every holding on every comparison date.
+
 ## Stocks chart watchlist
 
 Authenticated `/api/watchlist` routes provide per-user list, add, and remove operations, plus `GET /api/watchlist/:id/prices` for on-demand daily price history. Items require a ticker and valid non-future start date; one entry per ticker per user is supported.

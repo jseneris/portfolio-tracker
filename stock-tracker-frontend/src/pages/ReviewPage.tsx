@@ -1,7 +1,17 @@
 import { Fragment, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { getPortfolioReview, type PortfolioReview } from '../api'
+import {
+  getCashTransactions,
+  getPortfolioComparisonAll,
+  getPortfolioReview,
+  getStockTransactions,
+  type CashTransaction,
+  type PortfolioComparisonPoint,
+  type PortfolioReview,
+  type StockTransaction,
+} from '../api'
 import { formatCurrency2 } from '../formatters'
+import { calculatePortfolioValue } from '../portfolioSnapshot'
 import { formatDividendTiming, formatWeight, getWaitDayClass, LOSS_TIMING_LOT_HEADERS, lossTimingLotValues } from '../reviewMessages'
 import TargetDistanceSection from './TargetDistanceSection'
 import { TickerInfoBadges } from '../tickerBadges'
@@ -106,12 +116,164 @@ export function LossTimingTable({ holdings }: { holdings: ReviewHolding[] }) {
   </table>
 }
 
-export function ReviewSections({ review }: { review: PortfolioReview }) {
+type TransactionSummary = Record<string, { count: number; amount: number }>
+type PerformanceTransactions = Array<{ type: string; amount: number | null; transactionDate: string }>
+
+function summarizeTransactions(transactions: PerformanceTransactions, year: number | null, types: string[]): TransactionSummary {
+  const summary: TransactionSummary = Object.fromEntries(types.map((type) => [type, { count: 0, amount: 0 }]))
+
+  for (const transaction of transactions) {
+    const date = new Date(transaction.transactionDate)
+    if (Number.isNaN(date.getTime()) || (year != null && date.getUTCFullYear() !== year)) {
+      continue
+    }
+
+    const type = String(transaction.type || '').toLowerCase()
+    if (!Object.prototype.hasOwnProperty.call(summary, type)) {
+      continue
+    }
+
+    const amount = Number(transaction.amount)
+    summary[type].count += 1
+    summary[type].amount += Number.isFinite(amount) ? amount : 0
+  }
+
+  return summary
+}
+
+function formatComparisonDate(value: string) {
+  const date = new Date(`${value}T00:00:00Z`)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { timeZone: 'UTC' })
+}
+
+function PerformancePeriod({
+  label,
+  year,
+  stockTransactions,
+  cashTransactions,
+  points,
+}: {
+  label: string
+  year: number | null
+  stockTransactions: StockTransaction[]
+  cashTransactions: CashTransaction[]
+  points: PortfolioComparisonPoint[]
+}) {
+  const stockSummary = summarizeTransactions(stockTransactions, year, ['buy', 'sell', 'div'])
+  const cashSummary = summarizeTransactions(cashTransactions, year, ['deposit', 'withdrawal', 'interest', 'fee'])
+  const comparisonPoints = points
+    .filter((point) => year == null || point.date.startsWith(`${year}-`))
+    .sort((a, b) => a.date.localeCompare(b.date))
+
+  return <>
+    <h4>{label} Stock Transaction Summary</h4>
+    <div className="table-scroll"><table className="table">
+      <thead><tr><th>Type</th><th>Count</th><th>Total Amount</th></tr></thead>
+      <tbody>
+        <tr><td>Purchases</td><td>{stockSummary.buy.count}</td><td>{formatCurrency2(stockSummary.buy.amount)}</td></tr>
+        <tr><td>Sales</td><td>{stockSummary.sell.count}</td><td>{formatCurrency2(stockSummary.sell.amount)}</td></tr>
+        <tr><td>Dividends</td><td>{stockSummary.div.count}</td><td>{formatCurrency2(stockSummary.div.amount)}</td></tr>
+      </tbody>
+    </table></div>
+    <h4>{label} Cash Transaction Summary</h4>
+    <div className="table-scroll"><table className="table">
+      <thead><tr><th>Type</th><th>Count</th><th>Total Amount</th></tr></thead>
+      <tbody>
+        <tr><td>Deposits</td><td>{cashSummary.deposit.count}</td><td>{formatCurrency2(cashSummary.deposit.amount)}</td></tr>
+        <tr><td>Withdrawals</td><td>{cashSummary.withdrawal.count}</td><td>{formatCurrency2(cashSummary.withdrawal.amount)}</td></tr>
+        <tr><td>Interest</td><td>{cashSummary.interest.count}</td><td>{formatCurrency2(cashSummary.interest.amount)}</td></tr>
+        <tr><td>Fees</td><td>{cashSummary.fee.count}</td><td>{formatCurrency2(cashSummary.fee.amount)}</td></tr>
+      </tbody>
+    </table></div>
+    {comparisonPoints.length === 0 ? <p>No comparison summary available yet.</p> : (() => {
+      const startPoint = comparisonPoints[0]
+      const endPoint = comparisonPoints[comparisonPoints.length - 1]
+      return <div className="table-scroll"><table className="table">
+        <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Portfolio Starting Value (Prior Close: {formatComparisonDate(startPoint.date)})</td>
+            <td>{formatCurrency2(startPoint.portfolioValue)}</td>
+          </tr>
+          <tr><td>Portfolio Ending Value ({formatComparisonDate(endPoint.date)})</td><td>{formatCurrency2(endPoint.portfolioValue)}</td></tr>
+          <tr><td>Cash Basis in DOW Benchmark ({formatComparisonDate(endPoint.date)})</td><td>{formatCurrency2(endPoint.dowBenchmarkValue)}</td></tr>
+          <tr><td>Cash Basis in Nasdaq Benchmark ({formatComparisonDate(endPoint.date)})</td><td>{formatCurrency2(endPoint.nasdaqBenchmarkValue)}</td></tr>
+          <tr><td>Cash Basis in S&amp;P 500 Benchmark ({formatComparisonDate(endPoint.date)})</td><td>{formatCurrency2(endPoint.sp500BenchmarkValue)}</td></tr>
+        </tbody>
+      </table></div>
+    })()}
+  </>
+}
+
+export function PerformanceSection({
+  stockTransactions,
+  cashTransactions,
+  comparisonPoints,
+}: {
+  stockTransactions: StockTransaction[]
+  cashTransactions: CashTransaction[]
+  comparisonPoints: PortfolioComparisonPoint[]
+}) {
+  const alignedPoints = comparisonPoints.map((point) => ({
+    ...point,
+    portfolioValue: calculatePortfolioValue(point.availableCash, point.stockValue) ?? 0,
+  }))
+  const transactionYears = [...stockTransactions, ...cashTransactions]
+    .map((transaction) => new Date(transaction.transactionDate))
+    .filter((date) => !Number.isNaN(date.getTime()))
+    .map((date) => date.getUTCFullYear())
+  const firstYear = transactionYears.length > 0
+    ? transactionYears.reduce((earliest, year) => Math.min(earliest, year))
+    : null
+  const currentYear = new Date().getUTCFullYear()
+  const years = firstYear == null || firstYear > currentYear
+    ? []
+    : Array.from({ length: currentYear - firstYear + 1 }, (_, index) => currentYear - index)
+
+  return <details className="panel review-collapsible">
+    <summary className="review-section-summary"><h3>Performance</h3></summary>
+    <div className="review-section-content">
+      <details className="review-collapsible review-performance-period">
+        <summary><h4>All Time</h4></summary>
+        <PerformancePeriod
+          label="All Time"
+          year={null}
+          stockTransactions={stockTransactions}
+          cashTransactions={cashTransactions}
+          points={alignedPoints}
+        />
+      </details>
+      {years.map((year) => <details className="review-collapsible review-performance-period" key={year}>
+        <summary><h4>{year}</h4></summary>
+        <PerformancePeriod
+          label={String(year)}
+          year={year}
+          stockTransactions={stockTransactions}
+          cashTransactions={cashTransactions}
+          points={alignedPoints}
+        />
+      </details>)}
+    </div>
+  </details>
+}
+
+export function ReviewSections({
+  review,
+  performanceData,
+}: {
+  review: PortfolioReview
+  performanceData?: {
+    stockTransactions: StockTransaction[]
+    cashTransactions: CashTransaction[]
+    comparisonPoints: PortfolioComparisonPoint[]
+  }
+}) {
   const concentrations = review.facts.filter((fact) => fact.type === 'concentration')
   const missing = review.facts.filter((fact) => fact.type === 'missing_price')
   const largeLots = getHoldingsWithLargeLots(review.snapshot)
   return <>
     <p className="insights-timestamp">Updated {new Date(review.generatedAt).toLocaleString()}</p>
+    {performanceData ? <PerformanceSection {...performanceData} /> : null}
     {review.snapshot.recommendedLotAmount ? <RecommendedLotAmountSection recommendation={review.snapshot.recommendedLotAmount} /> : null}
     <details className="panel review-collapsible">
       <summary><h3>Largest concentrations</h3></summary>
@@ -146,6 +308,13 @@ export default function ReviewPage() {
   const [review, setReview] = useState<PortfolioReview | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [performanceData, setPerformanceData] = useState<{
+    stockTransactions: StockTransaction[]
+    cashTransactions: CashTransaction[]
+    comparisonPoints: PortfolioComparisonPoint[]
+  } | null>(null)
+  const [performanceLoading, setPerformanceLoading] = useState(true)
+  const [performanceError, setPerformanceError] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -158,12 +327,38 @@ export default function ReviewPage() {
     })
     return () => { cancelled = true }
   }, [])
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([getStockTransactions(), getCashTransactions(), getPortfolioComparisonAll()])
+      .then(([stockTransactions, cashTransactions, comparison]) => {
+        if (!cancelled) {
+          setPerformanceData({
+            stockTransactions,
+            cashTransactions,
+            comparisonPoints: comparison.points ?? [],
+          })
+          setPerformanceError(null)
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setPerformanceError(err instanceof Error ? err.message : 'Unable to load performance summaries.')
+      })
+      .finally(() => {
+        if (!cancelled) setPerformanceLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [])
   return <div className="portfolio-insights-page">
     <header className="row-between insights-heading">
-      <div><p className="eyebrow">Calculated portfolio review</p><h2>Review</h2><p className="muted-text">Holdings, cash deployment, targets, and potential sales. No AI required. As of page load; reload the page to update.</p></div>
+      <div><p className="eyebrow">Calculated portfolio review</p><h2>Review</h2><p className="muted-text">Performance, holdings, cash deployment, targets, and potential sales. No AI required. As of page load; reload the page to update.</p></div>
     </header>
     {error ? <p className="status status-error" role="alert">{error}</p> : null}
     {loading ? <p role="status">Loading portfolio review...</p> : null}
-    {review ? <ReviewSections review={review} /> : null}
+    {review ? <>
+      {performanceLoading ? <p role="status">Loading performance summaries...</p>
+        : performanceError ? <p className="status status-error" role="alert">{performanceError}</p>
+          : null}
+      <ReviewSections review={review} performanceData={performanceData ?? undefined} />
+    </> : null}
   </div>
 }

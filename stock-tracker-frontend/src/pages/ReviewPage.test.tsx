@@ -3,9 +3,9 @@ import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { StaticRouter } from 'react-router-dom/server'
 import { describe, expect, it } from 'vitest'
-import type { PortfolioInsightsReport, PortfolioReview } from '../api'
+import type { CashTransaction, PortfolioComparisonPoint, PortfolioInsightsReport, PortfolioReview, StockTransaction } from '../api'
 import { buildFormattedReviewContent, formatDividendTiming, SavedReviewMessage } from '../reviewMessages'
-import ReviewPage, { getHoldingsWithLargeLots, LossTimingTable, RecommendedLotAmountSection, ReviewSections } from './ReviewPage'
+import ReviewPage, { getHoldingsWithLargeLots, LossTimingTable, PerformanceSection, RecommendedLotAmountSection, ReviewSections } from './ReviewPage'
 
 function renderWithRouter(element: ReactNode) {
   return renderToStaticMarkup(createElement(StaticRouter, { location: '/review' }, element))
@@ -71,7 +71,10 @@ describe('calculated Review page', () => {
   })
 
   it('shows all standard sections even when saved AI assumptions are disabled', () => {
-    const html = renderWithRouter(createElement(ReviewSections, { review }))
+    const html = renderWithRouter(createElement(ReviewSections, {
+      review,
+      performanceData: { stockTransactions: [], cashTransactions: [], comparisonPoints: [] },
+    }))
     for (const text of ['Recommended lot amount', 'Largest concentrations',
       'Potential Sales', 'Distance from buy and sell targets', 'Large Losses', 'Holdings without a stored close', 'Largest display-lot value at least 5× a $300 lot size ($1,500)']) {
       expect(html).toContain(text)
@@ -86,6 +89,8 @@ describe('calculated Review page', () => {
     expect(html).not.toContain('href="/stocks/BELOW"')
     expect(html.indexOf('<h3>Recommended lot amount</h3>'))
       .toBeLessThan(html.indexOf('<h3>Largest concentrations</h3>'))
+    expect(html.indexOf('<h3>Performance</h3>'))
+      .toBeLessThan(html.indexOf('<h3>Recommended lot amount</h3>'))
     expect(html.indexOf('<h3>Largest concentrations</h3>'))
       .toBeLessThan(html.indexOf('<h3>Potential Sales</h3>'))
     expect(html.indexOf('<h4>Distance from buy and sell targets</h4>'))
@@ -110,6 +115,51 @@ describe('calculated Review page', () => {
     expect(html).toContain('No holding reached')
     expect(html).toContain('Potential Sales')
     expect(html).not.toContain('Loss Timing')
+  })
+})
+
+describe('Review performance summaries', () => {
+  it('shows All Time first and yearly summaries from the current year back to the earliest transaction year', () => {
+    const currentYear = new Date().getUTCFullYear()
+    const stockTransactions: StockTransaction[] = [
+      { id: 'buy-now', userId: 'user', ticker: 'TEST', type: 'buy', quantity: 1, price: 100, amount: 100, transactionDate: `${currentYear}-02-01` },
+      { id: 'buy-old', userId: 'user', ticker: 'TEST', type: 'buy', quantity: 3, price: 100, amount: 300, transactionDate: `${currentYear - 2}-02-01` },
+    ]
+    const cashTransactions: CashTransaction[] = [
+      { id: 'deposit-now', userId: 'user', type: 'deposit', amount: 1000, transactionDate: `${currentYear}-01-01` },
+      { id: 'fee-old', userId: 'user', type: 'fee', amount: 10, transactionDate: `${currentYear - 2}-03-01` },
+    ]
+    const comparisonPoints: PortfolioComparisonPoint[] = [
+      {
+        date: `${currentYear - 2}-12-31`, hasCashFlowEvent: false, availableCash: 100, cashCostBasis: 100,
+        stockValue: 200, portfolioValue: 0, initialBuysValue: 0, dowBenchmarkValue: 300, dowBenchmarkShares: 1,
+        nasdaqBenchmarkValue: 400, nasdaqBenchmarkShares: 1, sp500BenchmarkValue: 500, sp500BenchmarkShares: 1,
+        missingTickers: [],
+      },
+      {
+        date: `${currentYear}-12-31`, hasCashFlowEvent: false, availableCash: 200, cashCostBasis: 200,
+        stockValue: 400, portfolioValue: 0, initialBuysValue: 0, dowBenchmarkValue: 500, dowBenchmarkShares: 1,
+        nasdaqBenchmarkValue: 600, nasdaqBenchmarkShares: 1, sp500BenchmarkValue: 700, sp500BenchmarkShares: 1,
+        missingTickers: [],
+      },
+    ]
+    const html = renderToStaticMarkup(createElement(PerformanceSection, {
+      stockTransactions, cashTransactions, comparisonPoints,
+    }))
+
+    const allTimeIndex = html.indexOf('<summary><h4>All Time</h4></summary>')
+    const currentYearIndex = html.indexOf(`<summary><h4>${currentYear}</h4></summary>`)
+    const previousYearIndex = html.indexOf(`<summary><h4>${currentYear - 1}</h4></summary>`)
+    const firstTransactionYearIndex = html.indexOf(`<summary><h4>${currentYear - 2}</h4></summary>`)
+    expect(html).toContain('<h3>Performance</h3>')
+    expect(allTimeIndex).toBeGreaterThan(-1)
+    expect(allTimeIndex).toBeLessThan(currentYearIndex)
+    expect(currentYearIndex).toBeLessThan(previousYearIndex)
+    expect(previousYearIndex).toBeLessThan(firstTransactionYearIndex)
+    expect(html.match(/<details class="review-collapsible review-performance-period">/g)).toHaveLength(4)
+    expect(html).not.toContain('open=""')
+    expect(html).toContain('Portfolio Starting Value')
+    expect(html).toContain('Cash Basis in S&amp;P 500 Benchmark')
   })
 })
 

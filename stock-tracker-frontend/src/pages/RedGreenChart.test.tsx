@@ -12,7 +12,7 @@ const points = [
 describe('red/green chart', () => {
   it('plots green counts above and red counts below a shared zero midline', () => {
     const geometry = buildRedGreenGeometry(points)
-    const midY = 18 + (360 - 18 - 56) / 2
+    const midY = 18 + (300 - 18 - 56) / 2
     expect(geometry.maxCount).toBe(4)
     expect(geometry.greenY(points[0])).toBeCloseTo(18)
     expect(geometry.redY(points[1])).toBeCloseTo(midY + 3 * geometry.scale)
@@ -23,8 +23,8 @@ describe('red/green chart', () => {
   it('closes each fill area back to the midline at both ends', () => {
     const { green, red } = buildRedGreenGeometry(points)
     for (const area of [green.area, red.area]) {
-      expect(area).toMatch(/^M 60\.00 161\.00 L /)
-      expect(area).toMatch(/L 904\.00 161\.00 Z$/)
+      expect(area).toMatch(/^M 60\.00 131\.00 L /)
+      expect(area).toMatch(/L 904\.00 131\.00 Z$/)
     }
     expect(green.line.startsWith('M 60.00 18.00')).toBe(true)
   })
@@ -37,7 +37,7 @@ describe('red/green chart', () => {
 
   it('plots the net difference (up minus down) on the same scale', () => {
     const geometry = buildRedGreenGeometry(points)
-    const midY = 18 + (360 - 18 - 56) / 2
+    const midY = 18 + (300 - 18 - 56) / 2
     expect(geometry.netY(points[0])).toBeCloseTo(midY - 3 * geometry.scale)
     expect(geometry.netY(points[1])).toBeCloseTo(midY + 2 * geometry.scale)
     expect(geometry.netY(points[2])).toBeCloseTo(midY)
@@ -49,8 +49,10 @@ describe('red/green chart', () => {
 
   it('renders light green and light red fills with green and red lines', () => {
     const html = renderToStaticMarkup(createElement(RedGreenChartView, { points }))
-    expect(html).toContain('fill="#16a34a" fill-opacity="0.18"')
-    expect(html).toContain('fill="#dc2626" fill-opacity="0.18"')
+    expect(html).toContain('fill="#16a34a" fill-opacity="0.08"')
+    expect(html).toContain('fill="#dc2626" fill-opacity="0.08"')
+    expect(html).toContain('viewBox="0 0 920 300"')
+    expect(html).toContain('class="line-chart-viewport" tabindex="0" role="region"')
     expect(html).toContain('<title>Stocks up</title>')
     expect(html).toContain('<title>Stocks down</title>')
     expect(html).toContain('<title>Net (up minus down)</title>')

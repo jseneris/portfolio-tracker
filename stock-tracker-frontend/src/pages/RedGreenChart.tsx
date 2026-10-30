@@ -3,7 +3,7 @@ import { getAllStockSplits, getHistoricalPrices, StockTransaction } from '../api
 import { buildRedGreenPoints, RedGreenPoint } from '../redGreen'
 
 const WIDTH = 920
-const HEIGHT = 360
+const HEIGHT = 300
 const LEFT = 60
 const RIGHT = 16
 const TOP = 18
@@ -60,6 +60,7 @@ export function RedGreenChartView({ points }: { points: RedGreenPoint[] }) {
 
   return (
     <div className="comparison-chart-wrap">
+      <div className="line-chart-viewport" tabIndex={0} role="region" aria-label="Red and green plot; scroll horizontally on smaller screens">
       <svg className="comparison-chart" viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img"
         aria-label="Daily count of held stocks closing up (green, above zero), down (red, below zero), and the net difference (blue)"
         onMouseLeave={() => setHoveredIndex(null)}
@@ -84,12 +85,12 @@ export function RedGreenChartView({ points }: { points: RedGreenPoint[] }) {
           if (!isLast && (index % tickStep !== 0 || points.length - 1 - index < tickStep * 0.75)) return null
           return <text key={point.date} x={geometry.x(index)} y={TOP + PLOT_HEIGHT + 22} textAnchor={isLast && points.length > 1 ? 'end' : 'middle'} fontSize="11" fill="#475569">{point.date}</text>
         })}
-        <path d={geometry.green.area} fill={GREEN} fillOpacity="0.18" stroke="none" />
-        <path d={geometry.red.area} fill={RED} fillOpacity="0.18" stroke="none" />
-        <line x1={LEFT} x2={LEFT + PLOT_WIDTH} y1={MID_Y} y2={MID_Y} stroke="#475569" strokeWidth="1.5" />
-        <path d={geometry.green.line} fill="none" stroke={GREEN} strokeWidth="1.5" strokeLinejoin="round"><title>Stocks up</title></path>
-        <path d={geometry.red.line} fill="none" stroke={RED} strokeWidth="1.5" strokeLinejoin="round"><title>Stocks down</title></path>
-        <path d={geometry.net.line} fill="none" stroke={NET} strokeWidth="2" strokeLinejoin="round"><title>Net (up minus down)</title></path>
+        <path d={geometry.green.area} fill={GREEN} fillOpacity="0.08" stroke="none" />
+        <path d={geometry.red.area} fill={RED} fillOpacity="0.08" stroke="none" />
+        <line x1={LEFT} x2={LEFT + PLOT_WIDTH} y1={MID_Y} y2={MID_Y} stroke="#94a3b8" strokeWidth="1" />
+        <path d={geometry.green.line} fill="none" stroke={GREEN} strokeWidth="1.25" strokeLinejoin="round"><title>Stocks up</title></path>
+        <path d={geometry.red.line} fill="none" stroke={RED} strokeWidth="1.25" strokeLinejoin="round"><title>Stocks down</title></path>
+        <path d={geometry.net.line} fill="none" stroke={NET} strokeWidth="1.5" strokeLinejoin="round"><title>Net (up minus down)</title></path>
         {hovered ? <>
           <line className="comparison-hover-crosshair" x1={geometry.x(hoveredIndex!)} x2={geometry.x(hoveredIndex!)} y1={TOP} y2={TOP + PLOT_HEIGHT} />
           <circle cx={geometry.x(hoveredIndex!)} cy={geometry.greenY(hovered)} r="3.5" fill={GREEN} />
@@ -105,6 +106,7 @@ export function RedGreenChartView({ points }: { points: RedGreenPoint[] }) {
           </g>
         </> : null}
       </svg>
+      </div>
       <div className="comparison-legend">
         <span><i className="legend-dot" style={{ backgroundColor: GREEN }} />Stocks up (above 0)</span>
         <span><i className="legend-dot" style={{ backgroundColor: RED }} />Stocks down (below 0)</span>

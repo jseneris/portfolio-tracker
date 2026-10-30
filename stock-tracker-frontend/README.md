@@ -32,6 +32,8 @@ Create `.env` or use Replit Secrets:
 
 ## Recent MVP Updates
 
+- Line charts use a compact, centered layout capped at 1040px, with lighter fills and strokes that stay thin as the chart resizes. On small screens, only the plot scrolls horizontally to keep axis labels readable; legends and controls remain within the page.
+
 - **Charts > Stocks** includes a saved **Watchlist** section. Add a ticker and watch start date; items persist per user independently of portfolio holdings. Check a row to plot its dotted price-performance line on the same chart; uncheck it to hide the line. New and reloaded items start unchecked. Watching uses the first available close on or after the saved date as the baseline, retains that baseline across year changes, and clips the line to the displayed period. Watchlist years are available even without portfolio transactions. The All chart expands to include selected watchlist histories. Return labels stay fixed during hover. Watchlist returns do not affect combined/group holding performance.
 - Watchlist prices are Yahoo split-adjusted daily closes (mutual-fund NAVs when supported), not distribution-reinvested total returns. Prices load only for selected rows and successful histories are cached daily. The last available close is carried across dates without new prices. Market-data and save/remove failures are shown explicitly. Remove and re-add a ticker to change its watch date.
 - The Watchlist add form previews the company or fund name after ticker entry, and saved rows include a Name column. Names use the existing cached company-profile lookup; lookup failures are displayed without preventing watchlist management.
