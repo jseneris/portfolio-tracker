@@ -912,6 +912,44 @@ body {
   padding-top: 0.9rem;
 }
 
+.buy-target-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.buy-target-presets input[type="range"] {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  accent-color: #2563eb;
+}
+
+.buy-target-preset-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.buy-target-preset-labels button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0.3rem 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.buy-target-preset-labels button[aria-pressed="true"] {
+  font-weight: 700;
+}
+
+.buy-target-preset-labels button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .push-settings-panel {
   display: flex;
   align-items: center;

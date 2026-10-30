@@ -83,6 +83,7 @@ This document reflects the schema currently created by [stock-tracker-backend/sr
 
 ### UserSettings
 - Purpose: per-user target settings and thresholds.
+- Buy target percents are relative to each ticker's base size: `buyTargetPercentAtBaseSize` (default 10), `buyTargetPercentBasePlus1` (default 15), `buyTargetPercentBasePlus2` (default 20), and `buyTargetPercentBasePlus3OrMore` (default 25). Startup renames the legacy `buyTargetPercentFor3/4/5/6OrMoreDisplayLots` columns in place (preserving values) and drops `buyTargetPercentUnder3DisplayLots`; holdings below their base size are treated as Buy on Dip instead.
 - `buyOnDipBuyTargetPercent` (`DECIMAL(9,4) NOT NULL DEFAULT 1`): percent below the captured Buy on Dip price used for the buy target. Startup adds the column to existing databases.
 
 ### UserTickerPreferences

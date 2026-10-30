@@ -5,11 +5,10 @@ import { loadAiPreferences, SEEDED_AI_ASSUMPTIONS } from '../services/ai-prefere
 
 const router = Router();
 const DEFAULT_SALE_TARGET_PERCENT = 10;
-const DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS = 5;
-const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10;
-const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15;
-const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20;
-const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25;
+const DEFAULT_BUY_TARGET_PERCENT_AT_BASE_SIZE = 10;
+const DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_1 = 15;
+const DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_2 = 20;
+const DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_3_OR_MORE = 25;
 const DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT = 1;
 
 router.get('/ai-assumptions', async (req: Request, res: Response) => {
@@ -67,11 +66,10 @@ router.get('/targets', async (req: Request, res: Response) => {
         SELECT TOP 1
           basePurchaseSize,
           saleTargetPercent,
-          buyTargetPercentUnder3DisplayLots,
-          buyTargetPercentFor3DisplayLots,
-          buyTargetPercentFor4DisplayLots,
-          buyTargetPercentFor5DisplayLots,
-          buyTargetPercentFor6OrMoreDisplayLots,
+          buyTargetPercentAtBaseSize,
+          buyTargetPercentBasePlus1,
+          buyTargetPercentBasePlus2,
+          buyTargetPercentBasePlus3OrMore,
           buyOnDipBuyTargetPercent
         FROM UserSettings
         WHERE userId = @userId
@@ -81,25 +79,21 @@ router.get('/targets', async (req: Request, res: Response) => {
     res.json({
       basePurchaseSize: normalizeTargetPercent(row.basePurchaseSize, 300),
       saleTargetPercent: normalizeTargetPercent(row.saleTargetPercent, DEFAULT_SALE_TARGET_PERCENT),
-      buyTargetPercentUnder3DisplayLots: normalizeTargetPercent(
-        row.buyTargetPercentUnder3DisplayLots,
-        DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS
+      buyTargetPercentAtBaseSize: normalizeTargetPercent(
+        row.buyTargetPercentAtBaseSize,
+        DEFAULT_BUY_TARGET_PERCENT_AT_BASE_SIZE
       ),
-      buyTargetPercentFor3DisplayLots: normalizeTargetPercent(
-        row.buyTargetPercentFor3DisplayLots,
-        DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS
+      buyTargetPercentBasePlus1: normalizeTargetPercent(
+        row.buyTargetPercentBasePlus1,
+        DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_1
       ),
-      buyTargetPercentFor4DisplayLots: normalizeTargetPercent(
-        row.buyTargetPercentFor4DisplayLots,
-        DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS
+      buyTargetPercentBasePlus2: normalizeTargetPercent(
+        row.buyTargetPercentBasePlus2,
+        DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_2
       ),
-      buyTargetPercentFor5DisplayLots: normalizeTargetPercent(
-        row.buyTargetPercentFor5DisplayLots,
-        DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS
-      ),
-      buyTargetPercentFor6OrMoreDisplayLots: normalizeTargetPercent(
-        row.buyTargetPercentFor6OrMoreDisplayLots,
-        DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS
+      buyTargetPercentBasePlus3OrMore: normalizeTargetPercent(
+        row.buyTargetPercentBasePlus3OrMore,
+        DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_3_OR_MORE
       ),
       buyOnDipBuyTargetPercent: normalizeBuyOnDipBuyTargetPercent(row.buyOnDipBuyTargetPercent),
     });
@@ -113,11 +107,10 @@ router.put('/targets', async (req: Request, res: Response) => {
     const userId = req.user?.id!;
     const basePurchaseSize = Number(req.body?.basePurchaseSize);
     const saleTargetPercent = Number(req.body?.saleTargetPercent);
-    const buyTargetPercentUnder3DisplayLots = Number(req.body?.buyTargetPercentUnder3DisplayLots);
-    const buyTargetPercentFor3DisplayLots = Number(req.body?.buyTargetPercentFor3DisplayLots);
-    const buyTargetPercentFor4DisplayLots = Number(req.body?.buyTargetPercentFor4DisplayLots);
-    const buyTargetPercentFor5DisplayLots = Number(req.body?.buyTargetPercentFor5DisplayLots);
-    const buyTargetPercentFor6OrMoreDisplayLots = Number(req.body?.buyTargetPercentFor6OrMoreDisplayLots);
+    const buyTargetPercentAtBaseSize = Number(req.body?.buyTargetPercentAtBaseSize);
+    const buyTargetPercentBasePlus1 = Number(req.body?.buyTargetPercentBasePlus1);
+    const buyTargetPercentBasePlus2 = Number(req.body?.buyTargetPercentBasePlus2);
+    const buyTargetPercentBasePlus3OrMore = Number(req.body?.buyTargetPercentBasePlus3OrMore);
     const buyOnDipBuyTargetPercent = Number(req.body?.buyOnDipBuyTargetPercent);
 
     if (!Number.isFinite(basePurchaseSize) || basePurchaseSize < 0.01 || basePurchaseSize > 9999999999.99
@@ -129,20 +122,17 @@ router.put('/targets', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'saleTargetPercent must be a positive number' });
     }
 
-    if (!Number.isFinite(buyTargetPercentUnder3DisplayLots) || buyTargetPercentUnder3DisplayLots <= 0) {
-      return res.status(400).json({ error: 'buyTargetPercentUnder3DisplayLots must be a positive number' });
+    if (!Number.isFinite(buyTargetPercentAtBaseSize) || buyTargetPercentAtBaseSize <= 0) {
+      return res.status(400).json({ error: 'buyTargetPercentAtBaseSize must be a positive number' });
     }
-    if (!Number.isFinite(buyTargetPercentFor3DisplayLots) || buyTargetPercentFor3DisplayLots <= 0) {
-      return res.status(400).json({ error: 'buyTargetPercentFor3DisplayLots must be a positive number' });
+    if (!Number.isFinite(buyTargetPercentBasePlus1) || buyTargetPercentBasePlus1 <= 0) {
+      return res.status(400).json({ error: 'buyTargetPercentBasePlus1 must be a positive number' });
     }
-    if (!Number.isFinite(buyTargetPercentFor4DisplayLots) || buyTargetPercentFor4DisplayLots <= 0) {
-      return res.status(400).json({ error: 'buyTargetPercentFor4DisplayLots must be a positive number' });
+    if (!Number.isFinite(buyTargetPercentBasePlus2) || buyTargetPercentBasePlus2 <= 0) {
+      return res.status(400).json({ error: 'buyTargetPercentBasePlus2 must be a positive number' });
     }
-    if (!Number.isFinite(buyTargetPercentFor5DisplayLots) || buyTargetPercentFor5DisplayLots <= 0) {
-      return res.status(400).json({ error: 'buyTargetPercentFor5DisplayLots must be a positive number' });
-    }
-    if (!Number.isFinite(buyTargetPercentFor6OrMoreDisplayLots) || buyTargetPercentFor6OrMoreDisplayLots <= 0) {
-      return res.status(400).json({ error: 'buyTargetPercentFor6OrMoreDisplayLots must be a positive number' });
+    if (!Number.isFinite(buyTargetPercentBasePlus3OrMore) || buyTargetPercentBasePlus3OrMore <= 0) {
+      return res.status(400).json({ error: 'buyTargetPercentBasePlus3OrMore must be a positive number' });
     }
 
     if (!Number.isFinite(buyOnDipBuyTargetPercent) || buyOnDipBuyTargetPercent <= 0 || buyOnDipBuyTargetPercent >= 100) {
@@ -152,31 +142,27 @@ router.put('/targets', async (req: Request, res: Response) => {
     if (saleTargetPercent > 1000) {
       return res.status(400).json({ error: 'saleTargetPercent is too large' });
     }
-    if (buyTargetPercentUnder3DisplayLots > 1000) {
-      return res.status(400).json({ error: 'buyTargetPercentUnder3DisplayLots is too large' });
+    if (buyTargetPercentAtBaseSize > 1000) {
+      return res.status(400).json({ error: 'buyTargetPercentAtBaseSize is too large' });
     }
-    if (buyTargetPercentFor3DisplayLots > 1000) {
-      return res.status(400).json({ error: 'buyTargetPercentFor3DisplayLots is too large' });
+    if (buyTargetPercentBasePlus1 > 1000) {
+      return res.status(400).json({ error: 'buyTargetPercentBasePlus1 is too large' });
     }
-    if (buyTargetPercentFor4DisplayLots > 1000) {
-      return res.status(400).json({ error: 'buyTargetPercentFor4DisplayLots is too large' });
+    if (buyTargetPercentBasePlus2 > 1000) {
+      return res.status(400).json({ error: 'buyTargetPercentBasePlus2 is too large' });
     }
-    if (buyTargetPercentFor5DisplayLots > 1000) {
-      return res.status(400).json({ error: 'buyTargetPercentFor5DisplayLots is too large' });
-    }
-    if (buyTargetPercentFor6OrMoreDisplayLots > 1000) {
-      return res.status(400).json({ error: 'buyTargetPercentFor6OrMoreDisplayLots is too large' });
+    if (buyTargetPercentBasePlus3OrMore > 1000) {
+      return res.status(400).json({ error: 'buyTargetPercentBasePlus3OrMore is too large' });
     }
 
     await getPool().request()
       .input('userId', sql.NVarChar, userId)
       .input('basePurchaseSize', sql.Decimal(12, 2), basePurchaseSize)
       .input('saleTargetPercent', sql.Decimal(9, 4), saleTargetPercent)
-      .input('buyTargetPercentUnder3DisplayLots', sql.Decimal(9, 4), buyTargetPercentUnder3DisplayLots)
-      .input('buyTargetPercentFor3DisplayLots', sql.Decimal(9, 4), buyTargetPercentFor3DisplayLots)
-      .input('buyTargetPercentFor4DisplayLots', sql.Decimal(9, 4), buyTargetPercentFor4DisplayLots)
-      .input('buyTargetPercentFor5DisplayLots', sql.Decimal(9, 4), buyTargetPercentFor5DisplayLots)
-      .input('buyTargetPercentFor6OrMoreDisplayLots', sql.Decimal(9, 4), buyTargetPercentFor6OrMoreDisplayLots)
+      .input('buyTargetPercentAtBaseSize', sql.Decimal(9, 4), buyTargetPercentAtBaseSize)
+      .input('buyTargetPercentBasePlus1', sql.Decimal(9, 4), buyTargetPercentBasePlus1)
+      .input('buyTargetPercentBasePlus2', sql.Decimal(9, 4), buyTargetPercentBasePlus2)
+      .input('buyTargetPercentBasePlus3OrMore', sql.Decimal(9, 4), buyTargetPercentBasePlus3OrMore)
       .input('buyOnDipBuyTargetPercent', sql.Decimal(9, 4), buyOnDipBuyTargetPercent)
       .query(`
         MERGE UserSettings AS target
@@ -185,11 +171,10 @@ router.put('/targets', async (req: Request, res: Response) => {
         WHEN MATCHED THEN
           UPDATE SET basePurchaseSize = @basePurchaseSize,
                      saleTargetPercent = @saleTargetPercent,
-                     buyTargetPercentUnder3DisplayLots = @buyTargetPercentUnder3DisplayLots,
-                     buyTargetPercentFor3DisplayLots = @buyTargetPercentFor3DisplayLots,
-                     buyTargetPercentFor4DisplayLots = @buyTargetPercentFor4DisplayLots,
-                     buyTargetPercentFor5DisplayLots = @buyTargetPercentFor5DisplayLots,
-                     buyTargetPercentFor6OrMoreDisplayLots = @buyTargetPercentFor6OrMoreDisplayLots,
+                     buyTargetPercentAtBaseSize = @buyTargetPercentAtBaseSize,
+                     buyTargetPercentBasePlus1 = @buyTargetPercentBasePlus1,
+                     buyTargetPercentBasePlus2 = @buyTargetPercentBasePlus2,
+                     buyTargetPercentBasePlus3OrMore = @buyTargetPercentBasePlus3OrMore,
                      buyOnDipBuyTargetPercent = @buyOnDipBuyTargetPercent,
                      updatedAt = GETUTCDATE()
         WHEN NOT MATCHED THEN
@@ -198,11 +183,10 @@ router.put('/targets', async (req: Request, res: Response) => {
             userId,
             basePurchaseSize,
             saleTargetPercent,
-            buyTargetPercentUnder3DisplayLots,
-            buyTargetPercentFor3DisplayLots,
-            buyTargetPercentFor4DisplayLots,
-            buyTargetPercentFor5DisplayLots,
-            buyTargetPercentFor6OrMoreDisplayLots,
+            buyTargetPercentAtBaseSize,
+            buyTargetPercentBasePlus1,
+            buyTargetPercentBasePlus2,
+            buyTargetPercentBasePlus3OrMore,
             buyOnDipBuyTargetPercent
           )
           VALUES (
@@ -210,11 +194,10 @@ router.put('/targets', async (req: Request, res: Response) => {
             @userId,
             @basePurchaseSize,
             @saleTargetPercent,
-            @buyTargetPercentUnder3DisplayLots,
-            @buyTargetPercentFor3DisplayLots,
-            @buyTargetPercentFor4DisplayLots,
-            @buyTargetPercentFor5DisplayLots,
-            @buyTargetPercentFor6OrMoreDisplayLots,
+            @buyTargetPercentAtBaseSize,
+            @buyTargetPercentBasePlus1,
+            @buyTargetPercentBasePlus2,
+            @buyTargetPercentBasePlus3OrMore,
             @buyOnDipBuyTargetPercent
           );
       `);
@@ -222,11 +205,10 @@ router.put('/targets', async (req: Request, res: Response) => {
     res.json({
       basePurchaseSize,
       saleTargetPercent,
-      buyTargetPercentUnder3DisplayLots,
-      buyTargetPercentFor3DisplayLots,
-      buyTargetPercentFor4DisplayLots,
-      buyTargetPercentFor5DisplayLots,
-      buyTargetPercentFor6OrMoreDisplayLots,
+      buyTargetPercentAtBaseSize,
+      buyTargetPercentBasePlus1,
+      buyTargetPercentBasePlus2,
+      buyTargetPercentBasePlus3OrMore,
       buyOnDipBuyTargetPercent,
     });
   } catch (error) {

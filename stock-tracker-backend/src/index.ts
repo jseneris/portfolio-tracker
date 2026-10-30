@@ -16,6 +16,7 @@ import portfolioInsightsRoutes, { reviewRouter } from './routes/portfolio-insigh
 import messagesRoutes from './routes/messages.js';
 import pushRoutes from './routes/push.js';
 import watchlistRoutes from './routes/watchlist.js';
+import simulationRoutes from './routes/simulation.js';
 
 
 const app: Express = express();
@@ -51,6 +52,7 @@ app.use('/api/portfolio-review', reviewRouter);
 app.use('/api/messages', messagesRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/watchlist', watchlistRoutes);
+app.use('/api/simulation', simulationRoutes);
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {

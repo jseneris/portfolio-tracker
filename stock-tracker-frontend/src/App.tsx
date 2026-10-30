@@ -16,6 +16,7 @@ import PortfolioInsightsPage from './pages/PortfolioInsightsPage'
 import ReviewPage from './pages/ReviewPage'
 import MessagesPage, { MESSAGES_UPDATED_EVENT } from './pages/MessagesPage'
 import { TickerBadgeProvider } from './tickerBadges'
+import SimulationPage from './pages/SimulationPage'
 
 const UNREAD_MESSAGES_POLL_MS = 5 * 60 * 1000
 
@@ -203,6 +204,7 @@ export default function App() {
                 <NavLink to="/stock-performance">Stocks</NavLink>
                 <NavLink to="/red-green">Red/Green</NavLink>
                 <NavLink to="/allocations">Allocations</NavLink>
+                <NavLink to="/simulation">Simulation</NavLink>
               </div>
             </details>
             <NavLink to="/review">Review</NavLink>
@@ -248,6 +250,7 @@ export default function App() {
             <Route path="/comparison-all" element={<ComparisonPage />} />
             <Route path="/stock-performance" element={<ComparisonPage graph="stocks" />} />
             <Route path="/red-green" element={<ComparisonPage graph="redGreen" />} />
+            <Route path="/simulation" element={<SimulationPage />} />
             <Route
               path="/insights"
               element={window.location.hostname === 'localhost' && aiInsightsEnabled ? <PortfolioInsightsPage /> : <Navigate to="/" replace />}

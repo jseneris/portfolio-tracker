@@ -107,7 +107,9 @@ describe('23. Price Target Messages', () => {
       const messages = await listMessages();
       expect(messages).toHaveLength(1);
       expect(messages[0].type).toBe('buy-target-hit');
-      expect(messages[0].targetPrice).toBeCloseTo(95, 6);
+      // No display lots means the holding is below its base size, so it is
+      // automatically treated as Buy on Dip anchored at the last buy price.
+      expect(messages[0].targetPrice).toBeCloseTo(99, 6);
     });
 
     it('waits for the previous message to be read before sending again', async () => {
@@ -186,12 +188,12 @@ describe('23. Price Target Messages', () => {
         .put('/api/user-settings/targets')
         .set('x-user-id', TEST_USER_ID)
         .send({
+          basePurchaseSize: 300,
           saleTargetPercent: 10,
-          buyTargetPercentUnder3DisplayLots: 5,
-          buyTargetPercentFor3DisplayLots: 10,
-          buyTargetPercentFor4DisplayLots: 15,
-          buyTargetPercentFor5DisplayLots: 20,
-          buyTargetPercentFor6OrMoreDisplayLots: 25,
+          buyTargetPercentAtBaseSize: 10,
+          buyTargetPercentBasePlus1: 15,
+          buyTargetPercentBasePlus2: 20,
+          buyTargetPercentBasePlus3OrMore: 25,
           buyOnDipBuyTargetPercent: 2.5,
         })
         .expect(200);

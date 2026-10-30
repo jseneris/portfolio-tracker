@@ -19,11 +19,10 @@ app.use('/settings', router);
 const settings = {
   basePurchaseSize: 450.25,
   saleTargetPercent: 10,
-  buyTargetPercentUnder3DisplayLots: 5,
-  buyTargetPercentFor3DisplayLots: 10,
-  buyTargetPercentFor4DisplayLots: 15,
-  buyTargetPercentFor5DisplayLots: 20,
-  buyTargetPercentFor6OrMoreDisplayLots: 25,
+  buyTargetPercentAtBaseSize: 10,
+  buyTargetPercentBasePlus1: 15,
+  buyTargetPercentBasePlus2: 20,
+  buyTargetPercentBasePlus3OrMore: 25,
   buyOnDipBuyTargetPercent: 1,
 };
 

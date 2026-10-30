@@ -21,7 +21,7 @@ describe('Review navigation', () => {
     const nav = html.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/)?.[0]
     expect(nav).toContain('aria-label="Main navigation"')
     for (const path of ['/', '/holdings', '/cash', '/stocks', '/splits', '/comparison',
-      '/stock-performance', '/red-green', '/allocations', '/review', '/user-settings', '/messages']) {
+      '/stock-performance', '/red-green', '/allocations', '/simulation', '/review', '/user-settings', '/messages']) {
       expect(nav).toContain(`href="${path}"`)
     }
     expect(nav).toContain('Account')

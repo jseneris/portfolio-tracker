@@ -51,6 +51,16 @@ Authentication and scoping notes:
 - Ownership is checked before requesting market data. Returns `404` for missing/other-user items, `502` for provider errors, `422` for no usable closes.
 - Uses split-adjusted closing prices, not dividend/capital-gain-adjusted total returns. Does not create stock transactions or apply portfolio splits.
 
+## Simulation
+
+### POST /api/simulation/prices
+- Authenticated read-only market-data endpoint; no database access or writes.
+- Body: `{ tickers: string[], startDate: "YYYY-MM-DD", endDate: "YYYY-MM-DD" }`. Requires 1-200 uppercase ticker strings (letters, digits, dot, caret, equals, or hyphen; at most 20 characters each), real dates, ordered range no longer than 400 days, and end strictly before today UTC. Invalid input returns `400` before provider calls.
+- Returns `{ bars: { ticker, date, open, high, low, close }[], marketSplits: { ticker, date, multiplier }[], warnings: string[] }`.
+- Yahoo Finance daily USD OHLC includes up to 14 days of seed prices before start, and ends at the requested end. Restores nominal day prices from split-adjusted quotes using later split events through the present; metadata includes only splits after start and through end.
+- Duplicate symbols are fetched once. Unsupported currencies, unavailable usable histories, and provider errors are logged and return `502`; no partial-success response. Invalid individual OHLC bars are omitted with warnings.
+- Frontend Charts > Simulation validates active recorded split consistency, reconstructs actual snapshots, and runs all presets without modifying settings/transactions/preferences. Missing starting or actual prices fail comparison; intraperiod exchanges are explicitly unsupported.
+
 ## Stocks
 
 ### PATCH /api/stocks/:id/date
@@ -293,7 +303,7 @@ Request body:
 
 ### GET /api/user-settings/targets
 - Returns user target settings with defaults if row is missing.
-- Fields include sale target percent, buy target thresholds by display-lot count bands, and `buyOnDipBuyTargetPercent` (default 1).
+- Fields include sale target percent, buy target percents relative to the ticker's base size (`buyTargetPercentAtBaseSize`, `buyTargetPercentBasePlus1`, `buyTargetPercentBasePlus2`, `buyTargetPercentBasePlus3OrMore`), and `buyOnDipBuyTargetPercent` (default 1). Holdings with fewer display lots than their base size are automatically treated as Buy on Dip rather than using a buy target percent.
 
 ### PUT /api/user-settings/targets
 - Upserts user target settings.

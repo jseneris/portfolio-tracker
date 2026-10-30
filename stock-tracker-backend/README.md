@@ -6,6 +6,14 @@ Node.js/Express backend for the Stock Tracker application with SQL Server databa
 
 The Review page's Performance summaries and index chart share the portfolio comparison API. Historical closes are sorted by ISO date once per comparison and resolved with binary search, avoiding full-history scans for every holding on every comparison date.
 
+## Read-only portfolio simulation prices
+
+Authenticated `POST /api/simulation/prices` accepts `{ tickers, startDate, endDate }` and returns `{ bars, marketSplits, warnings }` for Charts > Simulation. Supply 1-200 uppercase tickers, real ISO dates, a range of at most 400 days, and an end before today UTC. It reads Yahoo Finance daily OHLC directly without database access, persistence, price-alert changes, or a schema migration.
+
+Quotes must be USD. Fourteen extra days provide initial valuation closes; newly listed tickers may lack a starting quote, which the frontend rejects only if required for a starting holding. Yahoo split-adjusted OHLC is restored to nominal historical prices using later splits through the present, including splits after the requested end. In-period split metadata lets the frontend verify recorded splits before replay. Invalid bars are omitted with explicit warnings; empty usable histories and provider failures return logged `502` errors instead of a partial-success portfolio.
+
+The frontend reconstructs initial holdings/cash, replays corporate actions and recorded cashflows, and runs all four buy-target presets in memory. Simulation tests mock market data and import the router directly; they do not initialize or contact the database. Starting the normal backend still runs existing startup migrations, so this endpoint's read-only design does not make startup against an older deployment's shared database safe.
+
 ## Stocks chart watchlist
 
 Authenticated `/api/watchlist` routes provide per-user list, add, and remove operations, plus `GET /api/watchlist/:id/prices` for on-demand daily price history. Items require a ticker and valid non-future start date; one entry per ticker per user is supported.
@@ -73,7 +81,7 @@ For Railway, deploy the API with build command `npm run build` and start command
 
 ## Phone Notifications
 
-During scheduled market-hour price-target checks, reaching or falling below a buy target automatically saves **Buy on Dip** when the holding has three or fewer display lots (including zero). The trigger quote is captured as `buyOnDipPrice`; subsequent targets use the configurable Buy on Dip buy percent (`UserSettings.buyOnDipBuyTargetPercent`, default 1% below) and the 10%-above sell rule. Active buying restrictions suppress this change. Already-enabled preferences retain their captured price. The change is independent of unread-message deduplication, so an existing unread alert does not prevent it. New buy alerts mention automatic activation. This requires the scheduler to be running; it does not execute a trade.
+During scheduled market-hour price-target checks, **Buy on Dip** is saved automatically in two cases: any holding with fewer display lots than its base size is enabled with the split-adjusted last buy/sell price captured as `buyOnDipPrice`, and a holding at its base size (or without enough profitably-purchased shares to cover its smallest display lot) that reaches its sell target is enabled at the trigger quote. Subsequent targets use the configurable Buy on Dip buy percent (`UserSettings.buyOnDipBuyTargetPercent`, default 1% below) and the 10%-above sell rule. Active buying restrictions suppress this change. Already-enabled preferences retain their captured price. The change is independent of unread-message deduplication, so an existing unread alert does not prevent it. Sell alerts mention trigger-time automatic activation. This requires the scheduler to be running; it does not execute a trade.
 
 Web Push uses the browser's service worker and sends alerts only after a new price-target message is inserted. Generate a VAPID key pair once with `npx web-push generate-vapid-keys`, then configure these secrets on both the API and scheduler Railway services:
 

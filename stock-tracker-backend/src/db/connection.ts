@@ -250,14 +250,37 @@ async function createTablesIfNotExist() {
         id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
         userId NVARCHAR(255) NOT NULL,
         saleTargetPercent DECIMAL(9, 4) NOT NULL DEFAULT 10,
-        buyTargetPercentUnder3DisplayLots DECIMAL(9, 4) NOT NULL DEFAULT 5,
-        buyTargetPercentFor3DisplayLots DECIMAL(9, 4) NOT NULL DEFAULT 10,
-        buyTargetPercentFor4DisplayLots DECIMAL(9, 4) NOT NULL DEFAULT 15,
-        buyTargetPercentFor5DisplayLots DECIMAL(9, 4) NOT NULL DEFAULT 20,
-        buyTargetPercentFor6OrMoreDisplayLots DECIMAL(9, 4) NOT NULL DEFAULT 25,
+        buyTargetPercentAtBaseSize DECIMAL(9, 4) NOT NULL DEFAULT 10,
+        buyTargetPercentBasePlus1 DECIMAL(9, 4) NOT NULL DEFAULT 15,
+        buyTargetPercentBasePlus2 DECIMAL(9, 4) NOT NULL DEFAULT 20,
+        buyTargetPercentBasePlus3OrMore DECIMAL(9, 4) NOT NULL DEFAULT 25,
         createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
         updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
       );
+
+    IF COL_LENGTH('UserSettings', 'buyTargetPercentFor3DisplayLots') IS NOT NULL
+       AND COL_LENGTH('UserSettings', 'buyTargetPercentAtBaseSize') IS NULL
+      EXEC sp_rename 'UserSettings.buyTargetPercentFor3DisplayLots', 'buyTargetPercentAtBaseSize', 'COLUMN';
+    IF COL_LENGTH('UserSettings', 'buyTargetPercentFor4DisplayLots') IS NOT NULL
+       AND COL_LENGTH('UserSettings', 'buyTargetPercentBasePlus1') IS NULL
+      EXEC sp_rename 'UserSettings.buyTargetPercentFor4DisplayLots', 'buyTargetPercentBasePlus1', 'COLUMN';
+    IF COL_LENGTH('UserSettings', 'buyTargetPercentFor5DisplayLots') IS NOT NULL
+       AND COL_LENGTH('UserSettings', 'buyTargetPercentBasePlus2') IS NULL
+      EXEC sp_rename 'UserSettings.buyTargetPercentFor5DisplayLots', 'buyTargetPercentBasePlus2', 'COLUMN';
+    IF COL_LENGTH('UserSettings', 'buyTargetPercentFor6OrMoreDisplayLots') IS NOT NULL
+       AND COL_LENGTH('UserSettings', 'buyTargetPercentBasePlus3OrMore') IS NULL
+      EXEC sp_rename 'UserSettings.buyTargetPercentFor6OrMoreDisplayLots', 'buyTargetPercentBasePlus3OrMore', 'COLUMN';
+
+    IF COL_LENGTH('UserSettings', 'buyTargetPercentUnder3DisplayLots') IS NOT NULL
+    BEGIN
+      DECLARE @dropUnder3DefaultSql NVARCHAR(MAX);
+      SELECT @dropUnder3DefaultSql = N'ALTER TABLE UserSettings DROP CONSTRAINT ' + QUOTENAME(dc.name) + N';'
+      FROM sys.default_constraints dc
+      WHERE dc.parent_object_id = OBJECT_ID('UserSettings')
+        AND dc.parent_column_id = COLUMNPROPERTY(OBJECT_ID('UserSettings'), 'buyTargetPercentUnder3DisplayLots', 'ColumnId');
+      IF @dropUnder3DefaultSql IS NOT NULL EXEC sp_executesql @dropUnder3DefaultSql;
+      EXEC sp_executesql N'ALTER TABLE UserSettings DROP COLUMN buyTargetPercentUnder3DisplayLots;';
+    END
 
     IF COL_LENGTH('UserSettings', 'buyOnDipBuyTargetPercent') IS NULL
       ALTER TABLE UserSettings ADD buyOnDipBuyTargetPercent DECIMAL(9, 4) NOT NULL CONSTRAINT DF_UserSettings_BuyOnDipBuyTargetPercent DEFAULT 1;

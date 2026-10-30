@@ -299,12 +299,32 @@ export type PortfolioComparisonAllResponse = PortfolioComparisonResponse
 export type UserTargetSettings = {
   basePurchaseSize: number
   saleTargetPercent: number
-  buyTargetPercentUnder3DisplayLots: number
-  buyTargetPercentFor3DisplayLots: number
-  buyTargetPercentFor4DisplayLots: number
-  buyTargetPercentFor5DisplayLots: number
-  buyTargetPercentFor6OrMoreDisplayLots: number
+  buyTargetPercentAtBaseSize: number
+  buyTargetPercentBasePlus1: number
+  buyTargetPercentBasePlus2: number
+  buyTargetPercentBasePlus3OrMore: number
   buyOnDipBuyTargetPercent: number
+}
+
+export type SimulationBar = {
+  ticker: string
+  date: string
+  open: number
+  high: number
+  low: number
+  close: number
+}
+
+export type SimulationPriceHistory = {
+  bars: SimulationBar[]
+  marketSplits: Array<{ ticker: string; date: string; multiplier: number }>
+  warnings: string[]
+}
+
+export async function getSimulationPrices(tickers: string[], startDate: string, endDate: string): Promise<SimulationPriceHistory> {
+  return requestApi<SimulationPriceHistory>('/api/simulation/prices', {
+    method: 'POST', body: { tickers, startDate, endDate },
+  })
 }
 
 export type UserProfile = {

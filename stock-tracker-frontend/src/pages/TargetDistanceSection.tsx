@@ -8,7 +8,7 @@ import {
 import { formatStockPrice4 } from '../formatters'
 import { getWaitDayClass } from '../reviewMessages'
 import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, normalizeTargetSettings } from '../targetPrices'
-import { isUsMarketOpenNow } from './DashboardPage'
+import { getTargetBaseMarker, isUsMarketOpenNow, TargetPercentGraph } from './DashboardPage'
 import { TickerInfoBadges } from '../tickerBadges'
 
 export type TargetDistanceInput = {
@@ -17,6 +17,9 @@ export type TargetDistanceInput = {
   buy: number | null
   sell: number | null
   priceLabel: string
+  targetBasePrice?: number | null
+  targetBaseMarker?: ReturnType<typeof getTargetBaseMarker>
+  buyOnDip?: boolean
 }
 
 export function getTargetDistanceRows(inputs: TargetDistanceInput[]) {
@@ -60,7 +63,8 @@ function ComparisonTable({ rows, acquisitionTiming, showLots = false }: {
   return <div className="table-scroll"><table className="table">
     <thead><tr><th>Ticker</th>
       {showLots ? <><th>Acquired</th><th>Shares</th><th>Purchase price</th><th>Loss</th></> : null}
-      <th>Price</th><th>Buy target</th><th>Above buy target</th><th>Sell target</th><th>Below sell target</th><th>Prior acquisition window</th></tr></thead>
+      <th>Price</th>{showLots ? <th>Target %</th> : <><th>Buy target</th><th>Above buy target</th><th>Sell target</th><th>Below sell target</th></>}
+      <th>Prior acquisition window</th></tr></thead>
     <tbody>{rows.map((row, index) => <tr key={`${row.ticker}-${index}`}>
       <td><Link className="link-button" to={`/stocks/${encodeURIComponent(row.ticker)}`}>{row.ticker}</Link><TickerInfoBadges ticker={row.ticker} /></td>
       {showLots ? <><td>{row.acquisitionDate?.slice(0, 10)}{row.acquisitionDate && isOverOneYearOld(row.acquisitionDate) ? (
@@ -68,10 +72,12 @@ function ComparisonTable({ rows, acquisitionTiming, showLots = false }: {
       ) : null}</td><td>{row.quantity}</td>
         <td>{formatStockPrice4(row.unitCost)}</td><td className="value-negative">{row.lossPercent?.toFixed(2)}%</td></> : null}
       <td>{formatStockPrice4(row.price)}</td>
-      <td>{formatStockPrice4(row.buy)}</td><td>{row.price != null && row.buy != null && row.buy > 0
+      {showLots ? <td><TargetPercentGraph price={row.price} buy={row.buy} sell={row.sell}
+        basePrice={row.targetBasePrice} baseMarker={row.targetBaseMarker} buyOnDip={row.buyOnDip} /></td>
+        : <><td>{formatStockPrice4(row.buy)}</td><td>{row.price != null && row.buy != null && row.buy > 0
         ? `${formatStockPrice4(row.price - row.buy)} (${((row.price - row.buy) / row.buy * 100).toFixed(2)}%)` : '--'}</td>
       <td>{formatStockPrice4(row.sell)}</td><td>{row.price != null && row.sell != null && row.sell > 0
-        ? `${formatStockPrice4(row.sell - row.price)} (${((row.sell - row.price) / row.sell * 100).toFixed(2)}%)` : '--'}</td>
+        ? `${formatStockPrice4(row.sell - row.price)} (${((row.sell - row.price) / row.sell * 100).toFixed(2)}%)` : '--'}</td></>}
       <td style={{ fontWeight: 600 }} className={getWaitDayClass(timingByTicker.get(row.ticker.toUpperCase())?.daysUntilPriorAcquisitionWindowClears ?? null)}>{timingLabel(row.ticker)}</td>
     </tr>)}</tbody>
   </table></div>
@@ -166,13 +172,23 @@ export async function loadTargetDistances() {
     lotCounts.set(ticker, (lotCounts.get(ticker) || 0) + Number(lot.lotCount ?? lot.lots.length))
   }
   const preferencesByTicker = new Map(preferences.map((preference) => [preference.ticker.toUpperCase(), preference]))
-  const inputs: TargetDistanceInput[] = tickers.map((ticker) => ({
-    ticker,
-    ...calculateTickerTargets(getSplitAdjustedTargetBasePrice(latest.get(ticker), splits, today),
-      lotCounts.get(ticker) || 0, settings, preferencesByTicker.get(ticker)),
-    price: prices.get(ticker)?.price ?? null,
-    priceLabel: prices.get(ticker)?.priceLabel ?? 'Unavailable',
-  }))
+  const inputs: TargetDistanceInput[] = tickers.map((ticker) => {
+    const preference = preferencesByTicker.get(ticker)
+    const transaction = latest.get(ticker)
+    const tradeBasePrice = getSplitAdjustedTargetBasePrice(transaction, splits, today)
+    const targetBasePrice = preference?.buyOnDip && preference.buyOnDipPrice != null
+      && Number.isFinite(preference.buyOnDipPrice) && preference.buyOnDipPrice > 0
+      ? preference.buyOnDipPrice : tradeBasePrice
+    return {
+      ticker,
+      ...calculateTickerTargets(tradeBasePrice, lotCounts.get(ticker) || 0, settings, preference),
+      price: prices.get(ticker)?.price ?? null,
+      priceLabel: prices.get(ticker)?.priceLabel ?? 'Unavailable',
+      targetBasePrice,
+      targetBaseMarker: getTargetBaseMarker(targetBasePrice, transaction),
+      buyOnDip: Boolean(preference?.buyOnDip),
+    }
+  })
   const excluded = inputs.filter((row) => row.price == null || row.buy == null || row.sell == null
     || !Number.isFinite(row.buy) || !Number.isFinite(row.sell) || row.buy <= 0 || row.sell <= row.buy).map((row) => row.ticker)
   return { inputs, excluded, warning }
@@ -218,7 +234,8 @@ export default function TargetDistanceSection({ acquisitionTiming, openLots = []
     <h4>Large Losses</h4>
     <p className="muted-text">Remaining purchase lots more than 40% below their split-adjusted purchase price,
       largest percentage loss first. Dividend lots and fully sold lots are excluded. Uses the same current prices
-      as the distance section; valid targets, holding yearly loss and display-lot counts are not required.</p>
+      as the distance section; valid targets, holding yearly loss and display-lot counts are not required.
+      Target % uses the dashboard graph with the current price between buy and sell targets and a last-trade base marker.</p>
     {result ? <LargeLossTable inputs={result.inputs} openLots={openLots} acquisitionTiming={acquisitionTiming} /> : null}
     </div>
   </details>

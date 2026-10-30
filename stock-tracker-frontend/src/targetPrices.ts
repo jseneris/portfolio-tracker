@@ -7,11 +7,10 @@ export function normalizeTargetSettings(settings: UserTargetSettings): UserTarge
   return {
     basePurchaseSize: positive(settings.basePurchaseSize, 300),
     saleTargetPercent: positive(settings.saleTargetPercent, 10),
-    buyTargetPercentUnder3DisplayLots: positive(settings.buyTargetPercentUnder3DisplayLots, 5),
-    buyTargetPercentFor3DisplayLots: positive(settings.buyTargetPercentFor3DisplayLots, 10),
-    buyTargetPercentFor4DisplayLots: positive(settings.buyTargetPercentFor4DisplayLots, 15),
-    buyTargetPercentFor5DisplayLots: positive(settings.buyTargetPercentFor5DisplayLots, 20),
-    buyTargetPercentFor6OrMoreDisplayLots: positive(settings.buyTargetPercentFor6OrMoreDisplayLots, 25),
+    buyTargetPercentAtBaseSize: positive(settings.buyTargetPercentAtBaseSize, 10),
+    buyTargetPercentBasePlus1: positive(settings.buyTargetPercentBasePlus1, 15),
+    buyTargetPercentBasePlus2: positive(settings.buyTargetPercentBasePlus2, 20),
+    buyTargetPercentBasePlus3OrMore: positive(settings.buyTargetPercentBasePlus3OrMore, 25),
     buyOnDipBuyTargetPercent: Number.isFinite(dip) && dip > 0 && dip < 100 ? dip : 1,
   }
 }
@@ -48,18 +47,25 @@ export function calculateTickerTargets(
   settings: UserTargetSettings,
   preference: TickerPreference | undefined
 ): { buy: number | null; sell: number | null } {
-  if (preference?.buyOnDip && preference.buyOnDipPrice != null && Number.isFinite(preference.buyOnDipPrice) && preference.buyOnDipPrice > 0) {
+  const baseSize = Number.isFinite(Number(preference?.baseSize)) ? Number(preference?.baseSize) : 3
+  // Tickers below their base display-lot size are automatically treated as Buy on Dip,
+  // anchored at the captured dip price or, if none, the last buy/sell price.
+  const dipAnchor = preference?.buyOnDip && preference.buyOnDipPrice != null
+    && Number.isFinite(preference.buyOnDipPrice) && preference.buyOnDipPrice > 0
+    ? preference.buyOnDipPrice
+    : displayLotCount < baseSize ? basePrice : null
+  if (dipAnchor != null && Number.isFinite(dipAnchor) && dipAnchor > 0) {
     return {
-      buy: Number((preference.buyOnDipPrice * (1 - settings.buyOnDipBuyTargetPercent / 100)).toFixed(8)),
-      sell: Number((preference.buyOnDipPrice * 1.10).toFixed(8)),
+      buy: Number((dipAnchor * (1 - settings.buyOnDipBuyTargetPercent / 100)).toFixed(8)),
+      sell: Number((dipAnchor * 1.10).toFixed(8)),
     }
   }
 
-  const buyPercent = displayLotCount < 3 ? settings.buyTargetPercentUnder3DisplayLots
-    : displayLotCount === 3 ? settings.buyTargetPercentFor3DisplayLots
-    : displayLotCount === 4 ? settings.buyTargetPercentFor4DisplayLots
-    : displayLotCount === 5 ? settings.buyTargetPercentFor5DisplayLots
-    : settings.buyTargetPercentFor6OrMoreDisplayLots
+  const lotsAboveBaseSize = displayLotCount - baseSize
+  const buyPercent = lotsAboveBaseSize <= 0 ? settings.buyTargetPercentAtBaseSize
+    : lotsAboveBaseSize === 1 ? settings.buyTargetPercentBasePlus1
+    : lotsAboveBaseSize === 2 ? settings.buyTargetPercentBasePlus2
+    : settings.buyTargetPercentBasePlus3OrMore
   return {
     buy: basePrice == null ? null : basePrice * (1 - buyPercent / 100),
     sell: basePrice == null ? null : basePrice * (1 + settings.saleTargetPercent / 100),

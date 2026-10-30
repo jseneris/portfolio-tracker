@@ -66,14 +66,24 @@ describe('automatic Buy on Dip on sell-target hits', () => {
         VALUES (@userId, @ticker, @baseSize, @buyOnDip, @price, @restricted, @until)`);
   }
 
-  it.each([0, 1, 2, 3, 4])('does not enable Buy on Dip on a buy-target hit with %i display lots', async (count) => {
-    if (count) await setLots(count);
-    const trigger = count < 3 ? 95 : count === 3 ? 90 : 85;
+  it.each([3, 4])('does not enable Buy on Dip on a buy-target hit with %i display lots', async (count) => {
+    await setLots(count);
+    const trigger = count === 3 ? 90 : 85;
     await cycle(trigger);
     expect(await preference()).toBeUndefined();
     const alerts = await messages();
     expect(alerts).toHaveLength(1);
     expect(alerts[0]).toMatchObject({ type: 'buy-target-hit', targetPrice: trigger, triggerPrice: trigger });
+    expect(alerts[0].body).not.toContain('automatically enabled');
+  });
+
+  it.each([0, 1, 2])('automatically enables Buy on Dip at the last buy/sell price with %i display lots below the base size', async (count) => {
+    if (count) await setLots(count);
+    await cycle(95);
+    expect(await preference()).toMatchObject({ buyOnDip: true, buyOnDipPrice: 100, buyRestricted: false });
+    const alerts = await messages();
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({ type: 'buy-target-hit', targetPrice: 99, triggerPrice: 95 });
     expect(alerts[0].body).not.toContain('automatically enabled');
   });
 
@@ -101,7 +111,9 @@ describe('automatic Buy on Dip on sell-target hits', () => {
     await getPool().request().input('userId', sql.NVarChar, userId).query('DELETE FROM DisplayLots WHERE userId = @userId');
     await setLots(2);
     await cycle(111);
-    expect(await preference()).toMatchObject({ buyOnDip: true, buyOnDipPrice: 111 });
+    // Two lots are below the default base size, so Buy on Dip is enabled
+    // automatically at the last buy price before the sell target is evaluated.
+    expect(await preference()).toMatchObject({ buyOnDip: true, buyOnDipPrice: 100 });
   });
 
   it('does not enable above the base size when profitable shares cover the smallest display lot', async () => {

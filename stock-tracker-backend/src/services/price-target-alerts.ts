@@ -5,21 +5,20 @@ import { isUsMarketOpen } from './market-hours.js';
 import { sendPushNotification, type PushPayload } from './push-notifications.js';
 
 const DEFAULT_SALE_TARGET_PERCENT = 10;
-const DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS = 5;
-const DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS = 10;
-const DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS = 15;
-const DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS = 20;
-const DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS = 25;
+const DEFAULT_BUY_TARGET_PERCENT_AT_BASE_SIZE = 10;
+const DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_1 = 15;
+const DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_2 = 20;
+const DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_3_OR_MORE = 25;
 const DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT = 1;
+const DEFAULT_BASE_SIZE = 3;
 const QUANTITY_TOLERANCE = 1e-6;
 
 type TargetSettings = {
   saleTargetPercent: number;
-  buyTargetPercentUnder3DisplayLots: number;
-  buyTargetPercentFor3DisplayLots: number;
-  buyTargetPercentFor4DisplayLots: number;
-  buyTargetPercentFor5DisplayLots: number;
-  buyTargetPercentFor6OrMoreDisplayLots: number;
+  buyTargetPercentAtBaseSize: number;
+  buyTargetPercentBasePlus1: number;
+  buyTargetPercentBasePlus2: number;
+  buyTargetPercentBasePlus3OrMore: number;
   buyOnDipBuyTargetPercent: number;
 };
 
@@ -60,12 +59,11 @@ function key(userId: string, ticker: string): string {
   return `${userId}\u0000${ticker}`;
 }
 
-function getBuyTargetPercent(settings: TargetSettings, displayLotCount: number): number {
-  if (displayLotCount < 3) return settings.buyTargetPercentUnder3DisplayLots;
-  if (displayLotCount === 3) return settings.buyTargetPercentFor3DisplayLots;
-  if (displayLotCount === 4) return settings.buyTargetPercentFor4DisplayLots;
-  if (displayLotCount === 5) return settings.buyTargetPercentFor5DisplayLots;
-  return settings.buyTargetPercentFor6OrMoreDisplayLots;
+function getBuyTargetPercent(settings: TargetSettings, lotsAboveBaseSize: number): number {
+  if (lotsAboveBaseSize <= 0) return settings.buyTargetPercentAtBaseSize;
+  if (lotsAboveBaseSize === 1) return settings.buyTargetPercentBasePlus1;
+  if (lotsAboveBaseSize === 2) return settings.buyTargetPercentBasePlus2;
+  return settings.buyTargetPercentBasePlus3OrMore;
 }
 
 function countDisplayLots(lotsCsv: string | null): number {
@@ -162,8 +160,8 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
       WHERE remainingQuantity > 0
     `),
     pool.request().query(`
-      SELECT userId, saleTargetPercent, buyTargetPercentUnder3DisplayLots, buyTargetPercentFor3DisplayLots,
-             buyTargetPercentFor4DisplayLots, buyTargetPercentFor5DisplayLots, buyTargetPercentFor6OrMoreDisplayLots,
+      SELECT userId, saleTargetPercent, buyTargetPercentAtBaseSize, buyTargetPercentBasePlus1,
+             buyTargetPercentBasePlus2, buyTargetPercentBasePlus3OrMore,
              buyOnDipBuyTargetPercent
       FROM UserSettings
     `),
@@ -208,21 +206,19 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
   for (const row of settingsResult.recordset as any[]) {
     settingsByUser.set(String(row.userId), {
       saleTargetPercent: positiveOr(row.saleTargetPercent, DEFAULT_SALE_TARGET_PERCENT),
-      buyTargetPercentUnder3DisplayLots: positiveOr(row.buyTargetPercentUnder3DisplayLots, DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS),
-      buyTargetPercentFor3DisplayLots: positiveOr(row.buyTargetPercentFor3DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS),
-      buyTargetPercentFor4DisplayLots: positiveOr(row.buyTargetPercentFor4DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS),
-      buyTargetPercentFor5DisplayLots: positiveOr(row.buyTargetPercentFor5DisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS),
-      buyTargetPercentFor6OrMoreDisplayLots: positiveOr(row.buyTargetPercentFor6OrMoreDisplayLots, DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS),
+      buyTargetPercentAtBaseSize: positiveOr(row.buyTargetPercentAtBaseSize, DEFAULT_BUY_TARGET_PERCENT_AT_BASE_SIZE),
+      buyTargetPercentBasePlus1: positiveOr(row.buyTargetPercentBasePlus1, DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_1),
+      buyTargetPercentBasePlus2: positiveOr(row.buyTargetPercentBasePlus2, DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_2),
+      buyTargetPercentBasePlus3OrMore: positiveOr(row.buyTargetPercentBasePlus3OrMore, DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_3_OR_MORE),
       buyOnDipBuyTargetPercent: buyOnDipPercentOr(row.buyOnDipBuyTargetPercent),
     });
   }
   const defaultSettings: TargetSettings = {
     saleTargetPercent: DEFAULT_SALE_TARGET_PERCENT,
-    buyTargetPercentUnder3DisplayLots: DEFAULT_BUY_TARGET_PERCENT_UNDER_3_DISPLAY_LOTS,
-    buyTargetPercentFor3DisplayLots: DEFAULT_BUY_TARGET_PERCENT_FOR_3_DISPLAY_LOTS,
-    buyTargetPercentFor4DisplayLots: DEFAULT_BUY_TARGET_PERCENT_FOR_4_DISPLAY_LOTS,
-    buyTargetPercentFor5DisplayLots: DEFAULT_BUY_TARGET_PERCENT_FOR_5_DISPLAY_LOTS,
-    buyTargetPercentFor6OrMoreDisplayLots: DEFAULT_BUY_TARGET_PERCENT_FOR_6_OR_MORE_DISPLAY_LOTS,
+    buyTargetPercentAtBaseSize: DEFAULT_BUY_TARGET_PERCENT_AT_BASE_SIZE,
+    buyTargetPercentBasePlus1: DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_1,
+    buyTargetPercentBasePlus2: DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_2,
+    buyTargetPercentBasePlus3OrMore: DEFAULT_BUY_TARGET_PERCENT_BASE_PLUS_3_OR_MORE,
     buyOnDipBuyTargetPercent: DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT,
   };
 
@@ -299,33 +295,54 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
     const settings = settingsByUser.get(userId) ?? defaultSettings;
     const preference = preferences.get(k);
     const base = latestTx.get(k);
+    const lotCount = displayLotCounts.get(k) ?? 0;
+    const baseSize = preference?.baseSize ?? DEFAULT_BASE_SIZE;
 
-    let sellTarget: number | null = null;
-    let buyTarget: number | null = null;
+    let basePrice: number | null = null;
     if (base && Number.isFinite(base.price) && base.price > 0 && base.transactionDate) {
       // Mirrors getSplitAdjustedTargetBasePrice() on the dashboard.
       const splitMultiplier = activeSplits
         .filter((split) => split.userId === userId && split.ticker === ticker && base.transactionDate <= split.splitDate)
         .reduce((product, split) => product * split.multiplier, 1);
-      const basePrice = base.price / splitMultiplier;
-      sellTarget = basePrice * (1 + settings.saleTargetPercent / 100);
-      buyTarget = basePrice * (1 - getBuyTargetPercent(settings, displayLotCounts.get(k) ?? 0) / 100);
+      basePrice = base.price / splitMultiplier;
     }
 
-    if (preference?.buyOnDip && preference.buyOnDipPrice != null && Number.isFinite(preference.buyOnDipPrice) && preference.buyOnDipPrice > 0) {
-      sellTarget = Number((preference.buyOnDipPrice * 1.10).toFixed(8));
-      buyTarget = Number((preference.buyOnDipPrice * (1 - settings.buyOnDipBuyTargetPercent / 100)).toFixed(8));
+    let buyOnDipPrice = preference?.buyOnDip && preference.buyOnDipPrice != null
+      && Number.isFinite(preference.buyOnDipPrice) && preference.buyOnDipPrice > 0
+      ? preference.buyOnDipPrice
+      : null;
+
+    // Any holding below its base display-lot size is automatically treated as Buy on Dip,
+    // anchored at the split-adjusted last buy/sell price (falling back to the current price).
+    let autoEnabledBelowBase = false;
+    if (!preference?.buyOnDip && lotCount < baseSize && !preference?.isBuyRestricted) {
+      const anchor = basePrice ?? price;
+      autoEnabledBelowBase = await enableBuyOnDipAtTrigger(pool, userId, ticker, anchor, today);
+      if (autoEnabledBelowBase) {
+        buyOnDipPrice = anchor;
+      }
+    }
+
+    const dipAnchor = buyOnDipPrice ?? (lotCount < baseSize ? basePrice : null);
+
+    let sellTarget: number | null = null;
+    let buyTarget: number | null = null;
+    if (dipAnchor != null && Number.isFinite(dipAnchor) && dipAnchor > 0) {
+      sellTarget = Number((dipAnchor * 1.10).toFixed(8));
+      buyTarget = Number((dipAnchor * (1 - settings.buyOnDipBuyTargetPercent / 100)).toFixed(8));
+    } else if (basePrice != null && Number.isFinite(basePrice) && basePrice > 0) {
+      sellTarget = basePrice * (1 + settings.saleTargetPercent / 100);
+      buyTarget = basePrice * (1 - getBuyTargetPercent(settings, lotCount - baseSize) / 100);
     }
 
     if (sellTarget != null && price >= sellTarget) {
-      const lotCount = displayLotCounts.get(k) ?? 0;
-      const withinBaseSize = lotCount <= (preference?.baseSize ?? 3);
+      const withinBaseSize = lotCount <= baseSize;
       const smallestLot = smallestDisplayLot.get(k);
       const profitableQuantity = (purchaseLotsByKey.get(k) ?? [])
         .filter((lot) => lot.unitCost < price)
         .reduce((sum, lot) => sum + lot.remainingQuantity, 0);
       const insufficientProfitableShares = smallestLot != null && profitableQuantity + QUANTITY_TOLERANCE < smallestLot;
-      const enabledBuyOnDip = !preference?.buyOnDip && (withinBaseSize || insufficientProfitableShares)
+      const enabledBuyOnDip = !preference?.buyOnDip && !autoEnabledBelowBase && (withinBaseSize || insufficientProfitableShares)
         ? await enableBuyOnDipAtTrigger(pool, userId, ticker, price, today)
         : false;
       const reason = withinBaseSize

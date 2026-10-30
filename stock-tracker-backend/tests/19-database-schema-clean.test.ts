@@ -91,14 +91,14 @@ describe('19. Database Schema - Clean Install', () => {
       'id',
       'userId',
       'saleTargetPercent',
-      'buyTargetPercentUnder3DisplayLots',
-      'buyTargetPercentFor3DisplayLots',
-      'buyTargetPercentFor4DisplayLots',
-      'buyTargetPercentFor5DisplayLots',
-      'buyTargetPercentFor6OrMoreDisplayLots',
+      'buyTargetPercentAtBaseSize',
+      'buyTargetPercentBasePlus1',
+      'buyTargetPercentBasePlus2',
+      'buyTargetPercentBasePlus3OrMore',
       'createdAt',
       'updatedAt',
       'buyOnDipBuyTargetPercent',
+      'basePurchaseSize',
     ]);
 
     const userTickerPreferencesColumnsResult = await pool.request().query(`

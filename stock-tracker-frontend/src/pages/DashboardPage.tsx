@@ -198,6 +198,33 @@ function calculateTargetProximity(
     : { percent: buyRatio, direction: 'buy' }
 }
 
+export function TargetPercentGraph({ price, buy, sell, basePrice = null, baseMarker, buyOnDip = false }: {
+  price: number | null
+  buy: number | null
+  sell: number | null
+  basePrice?: number | null
+  baseMarker?: ReturnType<typeof getTargetBaseMarker>
+  buyOnDip?: boolean
+}) {
+  const { percent, direction } = calculateTargetProximity(price, sell, buy)
+  if (percent == null) return <>{formatPercent2(null)}</>
+  const marker = baseMarker ?? getTargetBaseMarker(basePrice, undefined)
+  const basePosition = getTargetBarPosition(basePrice, buy, sell)
+  const pricePosition = getTargetBarPosition(price, buy, sell)
+  return <DashboardTooltip
+    className={`target-proximity target-proximity-${direction ?? 'neutral'}${percent >= 100 ? ' target-proximity-hit' : ''}`}
+    message={(buyOnDip ? 'Buy on Dip. ' : '') + (getTargetProximityLabel(direction, basePrice, buy, sell)
+      ?? 'Target proximity') + `. ${marker.label}`}
+  >
+    <span className="target-proximity-value">{formatPercent2(percent)}</span>
+    <span className="target-proximity-track">
+      <span className="target-proximity-fill" style={{ width: `${pricePosition ?? 0}%` }} />
+      {basePosition != null ? <span className={marker.className} style={{ left: `${basePosition}%` }}
+        title={marker.label} aria-label={marker.label} /> : null}
+    </span>
+  </DashboardTooltip>
+}
+
 function toDateOnly(value: string): string {
   if (typeof value !== 'string' || value.length < 10) {
     return ''
@@ -493,6 +520,7 @@ export default function DashboardPage() {
   function calculateSaleTargetsByTicker(
     summary: PortfolioSummary,
     latestByTicker: Map<string, StockTransaction>,
+    displayLotCountsByTicker: Record<string, number>,
     settings: UserTargetSettings,
     splitEvents: StockSplitEvent[],
     snapshotDate: string,
@@ -501,9 +529,10 @@ export default function DashboardPage() {
     const targets: Record<string, number | null> = {}
     for (const stock of summary.stocks) {
       const ticker = String(stock.ticker || '').toUpperCase()
+      const displayLotCount = Number(displayLotCountsByTicker[ticker] || 0)
       const baseTx = latestByTicker.get(ticker)
       const basePrice = getSplitAdjustedTargetBasePrice(baseTx, splitEvents, snapshotDate)
-      targets[ticker] = calculateTickerTargets(basePrice, 0, settings, preferencesByTicker[ticker]).sell
+      targets[ticker] = calculateTickerTargets(basePrice, displayLotCount, settings, preferencesByTicker[ticker]).sell
     }
 
     return targets
@@ -763,10 +792,6 @@ export default function DashboardPage() {
         ? tickerPreference.buyOnDipPrice
         : getSplitAdjustedTargetBasePrice(latestTargetTransaction, splitEvents, snapshotDate)
       const targetBaseMarker = getTargetBaseMarker(targetBasePrice, latestTargetTransaction)
-      const buyTarget = buyTargetsByTicker[row.ticker] ?? null
-      const sellTarget = saleTargetsByTicker[row.ticker] ?? null
-      const targetBasePosition = getTargetBarPosition(targetBasePrice, buyTarget, sellTarget)
-      const targetPricePosition = getTargetBarPosition(hydrated?.latestPrice ?? null, buyTarget, sellTarget)
 
       return {
         ticker: row.ticker,
@@ -784,8 +809,6 @@ export default function DashboardPage() {
         targetDirection: targetProximity.direction,
         targetBasePrice,
         targetBaseMarker,
-        targetBasePosition,
-        targetPricePosition,
         buyOnDip: Boolean(tickerPreference?.buyOnDip),
         isBuyRestricted: Boolean(tickerPreference?.isBuyRestricted),
         buyRestrictedUntil: tickerPreference?.buyRestrictedUntil ?? null,
@@ -1015,6 +1038,7 @@ export default function DashboardPage() {
       setSaleTargetsByTicker(calculateSaleTargetsByTicker(
         summary,
         latestByTicker,
+        displayLotCountsByTicker,
         normalizedSettings,
         splitEventsResult,
         snapshotDate,
@@ -1536,29 +1560,9 @@ export default function DashboardPage() {
                       ) : row.targetProximityPercent == null ? (
                         formatPercent2(null)
                       ) : (
-                        <DashboardTooltip
-                          className={`target-proximity target-proximity-${row.targetDirection ?? 'neutral'}${row.targetProximityPercent >= 100 ? ' target-proximity-hit' : ''}`}
-                          message={(row.buyOnDip ? 'Buy on Dip. ' : '') + (getTargetProximityLabel(
-                            row.targetDirection,
-                            row.targetBasePrice,
-                            buyTargetsByTicker[row.ticker],
-                            saleTargetsByTicker[row.ticker]
-                          ) ?? 'Target proximity') + `. ${row.targetBaseMarker.label}`}
-                        >
-                          <span className="target-proximity-value">{formatPercent2(row.targetProximityPercent)}</span>
-                          <span className="target-proximity-track">
-                            <span
-                              className="target-proximity-fill"
-                              style={{ width: `${row.targetPricePosition ?? 0}%` }}
-                            />
-                            {row.targetBasePosition != null ? (
-                              <span className={row.targetBaseMarker.className}
-                                style={{ left: `${row.targetBasePosition}%` }}
-                                title={row.targetBaseMarker.label}
-                                aria-label={row.targetBaseMarker.label} />
-                            ) : null}
-                          </span>
-                        </DashboardTooltip>
+                        <TargetPercentGraph price={row.latestPrice} buy={buyTargetsByTicker[row.ticker] ?? null}
+                          sell={saleTargetsByTicker[row.ticker] ?? null} basePrice={row.targetBasePrice}
+                          baseMarker={row.targetBaseMarker} buyOnDip={row.buyOnDip} />
                       )}
                     </td>
                     <td className="holdings-secondary-column">

@@ -67,11 +67,10 @@ describe('18. User Settings - Target Preferences', () => {
     expect(response.body).toEqual({
       basePurchaseSize: 300,
       saleTargetPercent: 10,
-      buyTargetPercentUnder3DisplayLots: 5,
-      buyTargetPercentFor3DisplayLots: 10,
-      buyTargetPercentFor4DisplayLots: 15,
-      buyTargetPercentFor5DisplayLots: 20,
-      buyTargetPercentFor6OrMoreDisplayLots: 25,
+      buyTargetPercentAtBaseSize: 10,
+      buyTargetPercentBasePlus1: 15,
+      buyTargetPercentBasePlus2: 20,
+      buyTargetPercentBasePlus3OrMore: 25,
       buyOnDipBuyTargetPercent: 1,
     });
   });
@@ -80,11 +79,10 @@ describe('18. User Settings - Target Preferences', () => {
     const payload = {
       basePurchaseSize: 450.25,
       saleTargetPercent: 12.5,
-      buyTargetPercentUnder3DisplayLots: 4.5,
-      buyTargetPercentFor3DisplayLots: 9.25,
-      buyTargetPercentFor4DisplayLots: 13,
-      buyTargetPercentFor5DisplayLots: 17.75,
-      buyTargetPercentFor6OrMoreDisplayLots: 22.5,
+      buyTargetPercentAtBaseSize: 9.25,
+      buyTargetPercentBasePlus1: 13,
+      buyTargetPercentBasePlus2: 17.75,
+      buyTargetPercentBasePlus3OrMore: 22.5,
       buyOnDipBuyTargetPercent: 2.5,
     };
 
@@ -115,22 +113,20 @@ describe('18. User Settings - Target Preferences', () => {
     const firstPayload = {
       basePurchaseSize: 300,
       saleTargetPercent: 11,
-      buyTargetPercentUnder3DisplayLots: 6,
-      buyTargetPercentFor3DisplayLots: 11,
-      buyTargetPercentFor4DisplayLots: 16,
-      buyTargetPercentFor5DisplayLots: 21,
-      buyTargetPercentFor6OrMoreDisplayLots: 26,
+      buyTargetPercentAtBaseSize: 11,
+      buyTargetPercentBasePlus1: 16,
+      buyTargetPercentBasePlus2: 21,
+      buyTargetPercentBasePlus3OrMore: 26,
       buyOnDipBuyTargetPercent: 1.5,
     };
 
     const secondPayload = {
       basePurchaseSize: 500,
       saleTargetPercent: 14,
-      buyTargetPercentUnder3DisplayLots: 7,
-      buyTargetPercentFor3DisplayLots: 12,
-      buyTargetPercentFor4DisplayLots: 17,
-      buyTargetPercentFor5DisplayLots: 22,
-      buyTargetPercentFor6OrMoreDisplayLots: 27,
+      buyTargetPercentAtBaseSize: 12,
+      buyTargetPercentBasePlus1: 17,
+      buyTargetPercentBasePlus2: 22,
+      buyTargetPercentBasePlus3OrMore: 27,
       buyOnDipBuyTargetPercent: 3,
     };
 
@@ -168,11 +164,10 @@ describe('18. User Settings - Target Preferences', () => {
       .send({
         basePurchaseSize: 300,
         saleTargetPercent: 0,
-        buyTargetPercentUnder3DisplayLots: 5,
-        buyTargetPercentFor3DisplayLots: 10,
-        buyTargetPercentFor4DisplayLots: 15,
-        buyTargetPercentFor5DisplayLots: 20,
-        buyTargetPercentFor6OrMoreDisplayLots: 25,
+        buyTargetPercentAtBaseSize: 10,
+        buyTargetPercentBasePlus1: 15,
+        buyTargetPercentBasePlus2: 20,
+        buyTargetPercentBasePlus3OrMore: 25,
         buyOnDipBuyTargetPercent: 1,
       })
       .expect(400);
@@ -183,11 +178,10 @@ describe('18. User Settings - Target Preferences', () => {
       .send({
         basePurchaseSize: 300,
         saleTargetPercent: 10,
-        buyTargetPercentUnder3DisplayLots: 5,
-        buyTargetPercentFor3DisplayLots: 10,
-        buyTargetPercentFor4DisplayLots: 15,
-        buyTargetPercentFor5DisplayLots: 20,
-        buyTargetPercentFor6OrMoreDisplayLots: 1001,
+        buyTargetPercentAtBaseSize: 10,
+        buyTargetPercentBasePlus1: 15,
+        buyTargetPercentBasePlus2: 20,
+        buyTargetPercentBasePlus3OrMore: 1001,
         buyOnDipBuyTargetPercent: 1,
       })
       .expect(400);
@@ -200,11 +194,10 @@ describe('18. User Settings - Target Preferences', () => {
       .send({
         basePurchaseSize: 300,
         saleTargetPercent: 10,
-        buyTargetPercentUnder3DisplayLots: 5,
-        buyTargetPercentFor3DisplayLots: 10,
-        buyTargetPercentFor4DisplayLots: 15,
-        buyTargetPercentFor5DisplayLots: 20,
-        buyTargetPercentFor6OrMoreDisplayLots: 25,
+        buyTargetPercentAtBaseSize: 10,
+        buyTargetPercentBasePlus1: 15,
+        buyTargetPercentBasePlus2: 20,
+        buyTargetPercentBasePlus3OrMore: 25,
         buyOnDipBuyTargetPercent: value,
       })
       .expect(400);
@@ -217,11 +210,10 @@ describe('18. User Settings - Target Preferences', () => {
       .send({
         basePurchaseSize: value,
         saleTargetPercent: 10,
-        buyTargetPercentUnder3DisplayLots: 5,
-        buyTargetPercentFor3DisplayLots: 10,
-        buyTargetPercentFor4DisplayLots: 15,
-        buyTargetPercentFor5DisplayLots: 20,
-        buyTargetPercentFor6OrMoreDisplayLots: 25,
+        buyTargetPercentAtBaseSize: 10,
+        buyTargetPercentBasePlus1: 15,
+        buyTargetPercentBasePlus2: 20,
+        buyTargetPercentBasePlus3OrMore: 25,
         buyOnDipBuyTargetPercent: 1,
       })
       .expect(400);

@@ -9,9 +9,9 @@ import { getLargeLossRows, LargeLossTable, getTargetDistanceRows, loadTargetDist
 const input: TargetDistanceInput = { ticker: 'TEST', price: 100, buy: 80, sell: 160, priceLabel: 'Stored close 2026-10-23' }
 const settings: api.UserTargetSettings = {
   basePurchaseSize: 300,
-  saleTargetPercent: 60, buyTargetPercentUnder3DisplayLots: 20, buyTargetPercentFor3DisplayLots: 25,
-  buyTargetPercentFor4DisplayLots: 30, buyTargetPercentFor5DisplayLots: 35,
-  buyTargetPercentFor6OrMoreDisplayLots: 40, buyOnDipBuyTargetPercent: 2,
+  saleTargetPercent: 60, buyTargetPercentAtBaseSize: 20,
+  buyTargetPercentBasePlus1: 30, buyTargetPercentBasePlus2: 35,
+  buyTargetPercentBasePlus3OrMore: 40, buyOnDipBuyTargetPercent: 2,
 }
 
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers() })
@@ -62,18 +62,51 @@ describe('large purchase-lot losses', () => {
     expect(rows.map(({ lossPercent }) => lossPercent)).toEqual([70, expect.closeTo(55), expect.closeTo(55)])
   })
 
-  it('renders the same target details and timing, plus purchase-lot data, without distance filters', () => {
+  it('replaces target price/distance columns with the dashboard graph while retaining lot details and timing', () => {
     const html = renderToStaticMarkup(createElement(StaticRouter, { location: '/review' },
       createElement(LargeLossTable, { inputs: [{ ...input, buy: 95 }], openLots: [purchaseLot] })))
     for (const text of ['Acquired', '2025-01-02', 'Purchase price', '$200.0000', '50.00%',
-      'Buy target', 'Above buy target',
-      'Sell target', 'Below sell target', 'Prior acquisition window', 'Unknown']) {
+      'Target %', 'target-proximity-track', 'target-proximity-fill', '95.00%', 'Prior acquisition window', 'Unknown']) {
       expect(html).toContain(text)
     }
+    for (const header of ['Buy target', 'Above buy target', 'Sell target', 'Below sell target']) {
+      expect(html).not.toContain(`<th>${header}</th>`)
+    }
+    expect(html.match(/<th>/g)).toHaveLength(8)
     expect(html.match(/href="\/stocks\/TEST"/g)).toHaveLength(1)
     expect(html).not.toContain('Price as of')
     expect(html).not.toContain('30% to 40% below purchase price')
     expect(html).not.toContain('Stored close 2026-10-23')
+  })
+
+  it.each([
+    [80, 'buy', '0%', '100.00%'],
+    [100, 'buy', '25%', '80.00%'],
+    [140, 'sell', '75%', '87.50%'],
+    [170, 'sell', '100%', '106.25%'],
+  ])('shows the dashboard target graph at price %s with its shared direction and position', (price, direction, width, percent) => {
+    const html = renderToStaticMarkup(createElement(StaticRouter, { location: '/review' },
+      createElement(LargeLossTable, {
+        inputs: [{ ...input, price, targetBasePrice: 100,
+          targetBaseMarker: { className: 'target-proximity-base target-proximity-base-buy', label: 'Base price: $100.0000 (Buy)' } }],
+        openLots: [{ ...purchaseLot, unitCost: 400 }],
+      })))
+    expect(html).toContain(`target-proximity-${direction}`)
+    expect(html).toContain(`class="target-proximity-fill" style="width:${width}"`)
+    expect(html).toContain(`class="target-proximity-value">${percent}`)
+    expect(html).toContain('target-proximity-base-buy')
+    expect(html).toContain('style="left:25%"')
+    expect(html).toContain('aria-label="Base price: $100.0000 (Buy)"')
+  })
+
+  it('uses the captured Buy on Dip anchor in the target graph tooltip and marker', () => {
+    const html = renderToStaticMarkup(createElement(StaticRouter, { location: '/review' },
+      createElement(LargeLossTable, {
+        inputs: [{ ...input, buy: 99, sell: 110, buyOnDip: true, targetBasePrice: 100 }],
+        openLots: [purchaseLot],
+      })))
+    expect(html).toContain('aria-label="Buy on Dip. Approaching buy target (-1.00%). Base price: $100.0000"')
+    expect(html).toContain('style="left:9.090909090909092%"')
   })
 
   it('marks only lots held for more than one year with a 1y+ badge', () => {
@@ -98,6 +131,8 @@ describe('large purchase-lot losses', () => {
     const html = renderToStaticMarkup(createElement(StaticRouter, { location: '/review' },
       createElement(LargeLossTable, { inputs, openLots: [purchaseLot] })))
     expect(html).toContain('<td>--</td>')
+    expect(html).toContain('<th>Target %</th>')
+    expect(html).not.toContain('target-proximity-track')
     expect(html).toContain('No qualifying purchase lots in this tier.')
   })
 })
@@ -190,8 +225,13 @@ describe('target-distance tiers', () => {
 })
 
 describe('shared dashboard targets', () => {
-  it.each([[2, 80], [3, 75], [4, 70], [5, 65], [6, 60], [7, 60]])('uses display lot count %s', (count, buy) => {
+  it.each([[3, 80], [4, 70], [5, 65], [6, 60], [7, 60]])('uses display lot count %s relative to the default base size', (count, buy) => {
     expect(calculateTickerTargets(100, count, settings, undefined)).toEqual({ buy, sell: 160 })
+  })
+
+  it('treats tickers below their base size as Buy on Dip anchored at the last buy/sell price', () => {
+    expect(calculateTickerTargets(100, 2, settings, undefined)).toEqual({ buy: 98, sell: 110 })
+    expect(calculateTickerTargets(null, 2, settings, undefined)).toEqual({ buy: null, sell: null })
   })
 
   it('uses buy-on-dip overrides even without a transaction base', () => {
@@ -229,7 +269,10 @@ function mockPortfolio(time: string) {
     price: 100, amount: 100, transactionDate: '2026-10-01',
   }])
   vi.spyOn(api, 'getUserTargetSettings').mockResolvedValue(settings)
-  vi.spyOn(api, 'getDisplayLots').mockResolvedValue([])
+  vi.spyOn(api, 'getDisplayLots').mockResolvedValue([{
+    id: 'lots', userId: 'user', ticker: 'TEST', lots: [1, 1, 1], lotCount: 3,
+    totalQuantity: 3, createdAt: '2026-10-01', updatedAt: '2026-10-01',
+  }])
   vi.spyOn(api, 'getAllStockSplits').mockResolvedValue([])
   vi.spyOn(api, 'getTickerPreferences').mockResolvedValue([])
   vi.spyOn(api, 'getHistoricalPrices').mockResolvedValue([{
@@ -246,7 +289,9 @@ describe('target-distance price loading', () => {
     const result = await loadTargetDistances()
     expect(live).not.toHaveBeenCalled()
     expect(api.getHistoricalPrices).toHaveBeenCalledWith('2026-10-24', '2026-10-24', ['TEST'], true)
-    expect(result.inputs[0]).toEqual({ ...input, buy: 80, sell: 160 })
+    expect(result.inputs[0]).toMatchObject({ ...input, buy: 80, sell: 160,
+      targetBasePrice: 100, buyOnDip: false,
+      targetBaseMarker: { className: 'target-proximity-base target-proximity-base-buy', label: 'Base price: $100.0000 (Buy)' } })
     expect(result.warning).toBeNull()
   })
 
@@ -279,7 +324,20 @@ describe('target-distance price loading', () => {
     vi.mocked(api.getAllStockSplits).mockResolvedValue([{
       id: 'split', ticker: 'TEST', splitDate: '2026-10-05', ratioNumerator: 2, ratioDenominator: 1, multiplier: 2,
     }])
-    expect((await loadTargetDistances()).inputs[0]).toMatchObject({ buy: 80, sell: 160 })
+    expect((await loadTargetDistances()).inputs[0]).toMatchObject({ buy: 80, sell: 160, targetBasePrice: 100,
+      targetBaseMarker: { className: 'target-proximity-base target-proximity-base-sell', label: 'Base price: $100.0000 (Sale)' } })
+  })
+
+  it('loads the captured dip anchor instead of the last trade price for graph positioning', async () => {
+    mockPortfolio('2026-10-24T16:00:00Z')
+    vi.mocked(api.getTickerPreferences).mockResolvedValue([{
+      ticker: 'TEST', baseSize: 3, buyOnDip: true, buyOnDipPrice: 120,
+      buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null,
+    }])
+    expect((await loadTargetDistances()).inputs[0]).toMatchObject({
+      buy: 117.6, sell: 132, targetBasePrice: 120, buyOnDip: true,
+      targetBaseMarker: { label: 'Base price: $120.0000 (Buy)' },
+    })
   })
 
   it('falls back to stored prices with an explicit warning when live pricing fails', async () => {
