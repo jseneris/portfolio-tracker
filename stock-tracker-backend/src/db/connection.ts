@@ -203,6 +203,15 @@ async function createTablesIfNotExist() {
         updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
       );
 
+    IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'CompanyFundamentals')
+      CREATE TABLE CompanyFundamentals (
+        ticker NVARCHAR(10) PRIMARY KEY,
+        metricsJson NVARCHAR(MAX) NOT NULL,
+        source NVARCHAR(50) NOT NULL DEFAULT 'yahoo-finance',
+        createdAt DATETIME2 NOT NULL DEFAULT GETUTCDATE(),
+        updatedAt DATETIME2 NOT NULL DEFAULT GETUTCDATE()
+      );
+
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'WatchlistItems')
       CREATE TABLE WatchlistItems (
         id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),

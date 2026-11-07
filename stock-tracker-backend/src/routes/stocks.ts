@@ -6,6 +6,7 @@ import YahooFinance from 'yahoo-finance2';
 import { fetchCurrentPrices } from '../services/current-prices.js';
 import { restrictBuyingAfterLossSale } from '../services/loss-sale-restriction.js';
 import { changeStockTransactionDate, parseTransactionDate, TransactionDateError } from '../services/stock-transaction-date.js';
+import { refreshCompanyFundamentals, FundamentalsRefreshSummary } from '../services/company-fundamentals.js';
 
 const router = Router();
 const yahooFinance = new YahooFinance();
@@ -2951,6 +2952,7 @@ export interface IDailyEodSyncSummary {
   splitsDiscovered: number;
   splitsInserted: number;
   failedTickers: Array<{ ticker: string; error: string }>;
+  fundamentals: FundamentalsRefreshSummary;
 }
 
 // Global end-of-day job: stores today's close for every ticker any user holds (plus benchmarks)
@@ -2974,6 +2976,7 @@ export async function runDailyEodSync(): Promise<IDailyEodSyncSummary> {
     splitsDiscovered: 0,
     splitsInserted: 0,
     failedTickers: [],
+    fundamentals: { tickersChecked: 0, refreshed: 0, skippedFresh: 0, failedTickers: [] },
   };
 
   const splitLookbackStartIso = toIsoDate(addUtcDays(parseDateOnly(todayIso), -7));
@@ -3016,6 +3019,10 @@ export async function runDailyEodSync(): Promise<IDailyEodSyncSummary> {
       });
     }
   }
+
+  // Refresh cached company fundamentals used by AI insights; benchmark index
+  // tickers are excluded and per-ticker failures are reported, not thrown.
+  summary.fundamentals = await refreshCompanyFundamentals(tickers);
 
   return summary;
 }

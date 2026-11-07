@@ -103,10 +103,10 @@ Authentication and scoping notes:
 ### POST /api/portfolio-insights/chat
 - Same local-only and account-access restrictions as status. Nonlocal access returns `403`, including direct endpoint requests.
 - Body: `{ question, history, reportId? }`. The Insights UI no longer generates a report or supplies `reportId`.
-- Without `reportId`, loads a fresh user-scoped portfolio snapshot for each question, with saved AI assumptions where enabled. Sends calculated context and recent conversation to Copilot, without generating intermediate AI explanations.
+- Without `reportId`, loads a fresh user-scoped portfolio snapshot for each question, with saved AI assumptions where enabled. The snapshot also includes per-ticker price history statistics (trailing 1M/3M/6M/YTD/1Y returns, 52-week range, annualized volatility, max drawdown computed from stored closes over roughly the last year) and cached company fundamentals from `CompanyFundamentals` (refreshed by the daily EOD job; may be stale or missing). Sends calculated context and recent conversation to Copilot, without generating intermediate AI explanations.
 - Limits: 2,000-character question, 8,000-character answer, at most 12 history messages, bounded to the newest 30,000 history characters, and 10 questions per user per minute.
 - Legacy `reportId` requests still use the user's cached report and return `404` when it expires or belongs to another user.
-- Review sections and AI responses no longer offer Send to Messages actions; previously saved messages remain readable.
+- AI chat answers offer a Send to Messages action that saves the question/answer pair through `POST /api/messages/ai-chat`. Review sections still do not offer Send to Messages; previously saved messages remain readable.
 
 ### GET /api/user-settings/profile
 - Returns the authenticated user's `aiInsightsEnabled` feature flag.

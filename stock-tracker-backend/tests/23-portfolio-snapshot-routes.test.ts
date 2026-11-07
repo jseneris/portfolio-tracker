@@ -55,12 +55,24 @@ function queueCash() {
   mocks.query.mockResolvedValueOnce({ recordset: [{ deposits: 2000, withdrawals: 100, interest: 20, fees: 5 }] });
   mocks.query.mockResolvedValueOnce({ recordset: [{ buys: 500, sells: 50 }] });
 }
+function queueMarketContext() {
+  mocks.query.mockResolvedValueOnce({ recordset: [
+    { ticker: 'BIG', marketDate: '2026-08-25', closePrice: 8 },
+    { ticker: 'BIG', marketDate: '2026-09-25', closePrice: 10 },
+  ] });
+  mocks.query.mockResolvedValueOnce({ recordset: [
+    { ticker: 'BIG', metricsJson: '{"trailingPE":24.5}', updatedAt: '2026-11-07T10:00:00' },
+  ] });
+}
 function queueReview(rows = lots, assumptionsEnabled = false) {
   mocks.query.mockResolvedValueOnce({ recordset: [{ aiInsightsEnabled: true }] });
   mocks.query.mockResolvedValueOnce({ recordset: rows });
   queueCash();
   mocks.query.mockResolvedValueOnce({ recordset: [{ aiAssumptionsEnabled: assumptionsEnabled }] });
   mocks.query.mockResolvedValueOnce({ recordsets: [[{ ticker: 'BIG', lotsCsv: '1,2,3' }], [{ ticker: 'BIG', baseSize: 3 }]] });
+  // With assumptions enabled, the holding review context query runs before the
+  // market-context queries; those tests queue the context result, then call queueMarketContext().
+  if (!assumptionsEnabled) queueMarketContext();
 }
 
 describe('read-only portfolio snapshot routing', () => {
@@ -174,7 +186,7 @@ describe('read-only portfolio snapshot routing', () => {
       }).expect(200);
       expect(mocks.chat.mock.calls[1][0]).toContain('"quantity":200');
       expect(mocks.chat.mock.calls[1][0]).toContain('Current portfolio answer.');
-      expect(mocks.query).toHaveBeenCalledTimes(12);
+      expect(mocks.query).toHaveBeenCalledTimes(16);
     });
   });
 
@@ -189,6 +201,9 @@ describe('read-only portfolio snapshot routing', () => {
     const reviewPrompt = mocks.generate.mock.calls[0][0];
     expect(reviewPrompt).toContain('"ticker":"SMALL"');
     expect(reviewPrompt).toContain('"availableCash":1465');
+    expect(reviewPrompt).toContain('"priceHistoryStats"');
+    expect(reviewPrompt).toContain('"companyFundamentals"');
+    expect(reviewPrompt).toContain('"trailingPE":24.5');
     expect(reviewPrompt).not.toContain(id);
     expect(mocks.input.mock.calls.every(([name, _type, value]) => name === 'userId' && value === id)).toBe(true);
     for (const [query] of mocks.query.mock.calls) {
@@ -203,7 +218,7 @@ describe('read-only portfolio snapshot routing', () => {
       .send({ reportId: response.body.reportId, question: 'Tell me about SMALL and my cash', history: [] }).expect(200);
     expect(mocks.chat.mock.calls[0][0]).toContain(JSON.stringify(response.body.snapshot));
     // Chat checks access but does not reload or mutate the cached snapshot.
-    expect(mocks.query).toHaveBeenCalledTimes(7);
+    expect(mocks.query).toHaveBeenCalledTimes(9);
 
     mocks.query.mockResolvedValueOnce({ recordset: [{ aiInsightsEnabled: true }] });
     await request(app).post('/insights/chat').set('x-user-id', user())
@@ -254,6 +269,7 @@ describe('read-only portfolio snapshot routing', () => {
           lastAcquisitionDate: '2026-01-01', lastDividendDate: null },
       ],
     ] });
+    queueMarketContext();
     const response = await request(app).post('/insights').set('x-user-id', id).expect(200);
     expect(response.body.snapshot.assumptions.investmentHorizonYears).toBe(10);
     expect(response.body.snapshot.holdingReviewContext[0]).toMatchObject({

@@ -76,6 +76,10 @@ This document reflects the schema currently created by [stock-tracker-backend/sr
 - Purpose: shared historical close cache (`ticker`, `priceDate`, `source`).
 - Global table (no `userId`).
 
+### CompanyFundamentals
+- Purpose: shared cache of per-ticker fundamentals (`metricsJson` holds valuation ratios, margins, growth, balance-sheet figures, dividend metrics, and beta mapped from Yahoo `quoteSummary`).
+- Global table (no `userId`). Refreshed by the daily EOD sync, skipping entries updated within the last 20 hours; benchmark index tickers are excluded. AI insights read it with user-scoped, read-only queries.
+
 ### Users
 - Purpose: identity profile table.
 - `aiInsightsEnabled` (`BIT NOT NULL DEFAULT 0`) controls access to AI portfolio insights. It is not user-editable through the public API.

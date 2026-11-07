@@ -4,6 +4,8 @@ import { getCashSummary } from './cash-summary.js';
 import { loadAiPreferences } from './ai-preferences.js';
 import { loadHoldingReviewContext } from './holding-review-context.js';
 import { loadRecommendedLotAmount, RecommendedLotAmount } from './recommended-lot-amount.js';
+import { loadPriceHistoryStats, TickerPriceHistoryStats } from './price-history-stats.js';
+import { loadCompanyFundamentalsForUser, CompanyFundamentals } from './company-fundamentals.js';
 
 export type PortfolioLotRow = {
   ticker: string;
@@ -106,6 +108,8 @@ export type PortfolioSnapshot = ReturnType<typeof buildPortfolioSnapshot> & {
   assumptions?: Awaited<ReturnType<typeof loadAiPreferences>>;
   holdingReviewContext?: Awaited<ReturnType<typeof loadHoldingReviewContext>>;
   recommendedLotAmount?: RecommendedLotAmount;
+  priceHistoryStats?: TickerPriceHistoryStats[];
+  companyFundamentals?: CompanyFundamentals[];
 };
 
 export async function loadPortfolioSnapshot(userId: string, options: { review?: boolean } = {}) {
@@ -139,6 +143,10 @@ export async function loadPortfolioSnapshot(userId: string, options: { review?: 
   snapshot.recommendedLotAmount = await loadRecommendedLotAmount(userId, snapshot.holdings, cash.availableCash);
   if (options.review || snapshot.assumptions) {
     snapshot.holdingReviewContext = await loadHoldingReviewContext(userId, snapshot.holdings, snapshot.generatedAt.slice(0, 10), snapshot.openLots);
+  }
+  if (!options.review) {
+    snapshot.priceHistoryStats = await loadPriceHistoryStats(userId, snapshot.generatedAt.slice(0, 10));
+    snapshot.companyFundamentals = await loadCompanyFundamentalsForUser(userId);
   }
   return {
     rows: result.recordset,
