@@ -15,6 +15,14 @@ export function normalizeTargetSettings(settings: UserTargetSettings): UserTarge
   }
 }
 
+function isMoreRecentTransaction(candidate: StockTransaction, existing: StockTransaction): boolean {
+  const candidateDate = new Date(candidate.transactionDate).getTime()
+  const existingDate = new Date(existing.transactionDate).getTime()
+  if (candidateDate !== existingDate) return candidateDate > existingDate
+  // Same-day transactions: the most recently created buy/sell wins.
+  return new Date(candidate.createdAt ?? 0).getTime() > new Date(existing.createdAt ?? 0).getTime()
+}
+
 export function buildLatestBuyOrSellByTicker(transactions: StockTransaction[]): Map<string, StockTransaction> {
   const latest = new Map<string, StockTransaction>()
   for (const tx of transactions) {
@@ -22,7 +30,7 @@ export function buildLatestBuyOrSellByTicker(transactions: StockTransaction[]): 
     const ticker = String(tx.ticker || '').toUpperCase()
     if ((type !== 'buy' && type !== 'sell') || !ticker || !Number.isFinite(Number(tx.price)) || Number(tx.price) <= 0) continue
     const existing = latest.get(ticker)
-    if (!existing || new Date(tx.transactionDate).getTime() > new Date(existing.transactionDate).getTime()) latest.set(ticker, tx)
+    if (!existing || isMoreRecentTransaction(tx, existing)) latest.set(ticker, tx)
   }
   return latest
 }
