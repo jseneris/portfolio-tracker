@@ -296,7 +296,8 @@ export function ReviewSections({
       </table></div> : <p>No largest individual display lot is valued at $1,500 or more.</p>}
       </div>
     </details>
-    <TargetDistanceSection acquisitionTiming={review.snapshot.holdingReviewContext} openLots={review.snapshot.openLots} />
+    <TargetDistanceSection acquisitionTiming={review.snapshot.holdingReviewContext} openLots={review.snapshot.openLots}
+      lotSaleAssessments={review.snapshot.lotSaleAssessments} />
     {missing.length ? <details className="panel review-collapsible"><summary><h3>Holdings without a stored close</h3></summary>
       <div className="review-section-content"><p>{missing.map((fact, index) =>
         <Fragment key={fact.id}>{index ? ', ' : ''}<TickerLink ticker={fact.ticker} /></Fragment>)}</p></div>

@@ -10,6 +10,7 @@ import { getWaitDayClass } from '../reviewMessages'
 import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, normalizeTargetSettings } from '../targetPrices'
 import { getTargetBaseMarker, isUsMarketOpenNow, TargetPercentGraph } from './DashboardPage'
 import { TickerInfoBadges } from '../tickerBadges'
+import LotSaleAssessmentTable from './LotSaleAssessmentTable'
 
 export type TargetDistanceInput = {
   ticker: string
@@ -194,7 +195,9 @@ export async function loadTargetDistances() {
   return { inputs, excluded, warning }
 }
 
-export default function TargetDistanceSection({ acquisitionTiming, openLots = [] }: { acquisitionTiming?: AcquisitionTiming; openLots?: OpenLots }) {
+export default function TargetDistanceSection({ acquisitionTiming, openLots = [], lotSaleAssessments }: {
+  acquisitionTiming?: AcquisitionTiming; openLots?: OpenLots; lotSaleAssessments?: PortfolioReview['snapshot']['lotSaleAssessments']
+}) {
   const [result, setResult] = useState<Awaited<ReturnType<typeof loadTargetDistances>> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -237,6 +240,7 @@ export default function TargetDistanceSection({ acquisitionTiming, openLots = []
       as the distance section; valid targets, holding yearly loss and display-lot counts are not required.
       Target % uses the dashboard graph with the current price between buy and sell targets and a last-trade base marker.</p>
     {result ? <LargeLossTable inputs={result.inputs} openLots={openLots} acquisitionTiming={acquisitionTiming} /> : null}
+    <LotSaleAssessmentTable assessments={lotSaleAssessments} />
     </div>
   </details>
 }

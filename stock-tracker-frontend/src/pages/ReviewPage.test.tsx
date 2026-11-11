@@ -76,7 +76,8 @@ describe('calculated Review page', () => {
       performanceData: { stockTransactions: [], cashTransactions: [], comparisonPoints: [] },
     }))
     for (const text of ['Recommended lot amount', 'Largest concentrations',
-      'Potential Sales', 'Distance from buy and sell targets', 'Large Losses', 'Holdings without a stored close', 'Largest display-lot value at least 5× a $300 lot size ($1,500)']) {
+      'Potential Sales', 'Distance from buy and sell targets', 'Large Losses', 'Lot-specific sale assessment',
+      'Holdings without a stored close', 'Largest display-lot value at least 5× a $300 lot size ($1,500)']) {
       expect(html).toContain(text)
     }
     expect(html).not.toContain('Portfolio snapshot')

@@ -440,6 +440,30 @@ export type PortfolioInsightsReport = {
       percentOfPricedEquities: number | null
       percentOfPortfolio: number | null
     }>
+    lotSaleAssessments?: Array<{
+      lotIndex: number
+      ticker: string
+      sourceType: string
+      acquisitionDate: string
+      quantity: number
+      unitCost: number
+      saleDate: string
+      closePrice: number | null
+      marketDate: string | null
+      estimatedLoss: number | null
+      priorWindowStartsOn: string
+      postSaleWindowEndsOn: string
+      status: 'unavailable' | 'no_loss' | 'prior_exposure' | 'no_tracked_prior_exposure'
+      unavailableReason: string | null
+      potentialAffectedShares: number | null
+      potentialDeferredLoss: number | null
+      replacementLots: Array<{
+        lotIndex: number
+        acquisitionDate: string
+        sourceType: string
+        quantity: number
+      }>
+    }>
     openLots: Array<{
       ticker: string
       sourceType: string

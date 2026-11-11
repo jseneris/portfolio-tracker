@@ -92,8 +92,8 @@ describe('read-only portfolio snapshot routing', () => {
       mocks.available.mockResolvedValue({ available: true });
     });
 
-    function queueCalculatedReview() {
-      mocks.query.mockResolvedValueOnce({ recordset: lots });
+    function queueCalculatedReview(rows = lots) {
+      mocks.query.mockResolvedValueOnce({ recordset: rows });
       queueCash();
       mocks.query.mockResolvedValueOnce({ recordsets: [
         [{ ticker: 'BIG', lotsCsv: '1,2,3' }], [{ ticker: 'BIG', baseSize: 3 }],
@@ -108,6 +108,10 @@ describe('read-only portfolio snapshot routing', () => {
       expect(response.body.snapshot.assumptions).toBeNull();
       expect(response.body.snapshot.holdingReviewContext).toHaveLength(2);
       expect(response.body.snapshot.recommendedLotAmount).toBeDefined();
+      expect(response.body.snapshot.lotSaleAssessments).toHaveLength(2);
+      expect(response.body.snapshot.lotSaleAssessments[1]).toMatchObject({
+        ticker: 'SMALL', sourceType: 'dividend', status: 'no_loss',
+      });
       expect(response.body.facts).toContainEqual(expect.objectContaining({ type: 'concentration', ticker: 'BIG' }));
       expect(response.body).not.toHaveProperty('reportId');
       expect(response.body).not.toHaveProperty('explanations');
@@ -119,6 +123,35 @@ describe('read-only portfolio snapshot routing', () => {
         expect(query).not.toContain('aiAssumptionsEnabled');
         expect(query).not.toMatch(/\b(INSERT|UPDATE|DELETE|MERGE)\b/i);
       }
+    });
+
+    it('returns independent lot-sale assessments from user-scoped open lots without extra queries or writes', async () => {
+      const id = user();
+      const saleDate = new Date().toISOString().slice(0, 10);
+      const priorDate = new Date(Date.parse(`${saleDate}T00:00:00Z`) - 30 * 86400000).toISOString().slice(0, 10);
+      queueCalculatedReview([
+        { ...lots[0], unitCost: 20 },
+        { ...lots[0], purchaseDate: priorDate, remainingQuantity: 20, unitCost: 20 },
+      ]);
+      const response = await request(app).get('/review').set('x-user-id', id).expect(200);
+      expect(response.body.snapshot.lotSaleAssessments).toEqual([
+        expect.objectContaining({
+          lotIndex: 0, saleDate, status: 'prior_exposure', potentialAffectedShares: 20,
+          estimatedLoss: 1000, potentialDeferredLoss: 200,
+          replacementLots: [expect.objectContaining({ lotIndex: 1, quantity: 20, acquisitionDate: priorDate })],
+        }),
+        expect.objectContaining({
+          lotIndex: 1, saleDate, status: 'no_tracked_prior_exposure',
+          estimatedLoss: 200, potentialAffectedShares: 0, potentialDeferredLoss: 0,
+        }),
+      ]);
+      expect(mocks.query).toHaveBeenCalledTimes(5);
+      for (const [query] of mocks.query.mock.calls) {
+        expect(query).toContain('@userId');
+        expect(query).not.toMatch(/\b(INSERT|UPDATE|DELETE|MERGE)\b/i);
+      }
+      expect(mocks.input.mock.calls.filter(([name]) => name === 'userId').every(([, , value]) => value === id)).toBe(true);
+      expect(mocks.generate).not.toHaveBeenCalled();
     });
 
     it('requires authentication for Review and AI status', async () => {
