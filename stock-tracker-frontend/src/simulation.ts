@@ -222,7 +222,7 @@ export function simulatePortfolio(input: SimulationInput): SimulationResult {
           if (holding.lots.length < baseSize && holding.dipPrice == null) holding.dipPrice = holding.basePrice
           const targets = calculateTickerTargets(holding.basePrice, holding.lots.length, state.settings, {
             ticker, baseSize, buyOnDip: holding.dipPrice != null, buyOnDipPrice: holding.dipPrice,
-            buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null,
+            buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null, note: null,
           })
           if (targets.buy != null) targets.buy = Number(targets.buy.toFixed(8))
           if (targets.sell != null) targets.sell = Number(targets.sell.toFixed(8))

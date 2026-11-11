@@ -716,12 +716,6 @@ body {
   gap: 0.35rem;
 }
 
-.stock-target-current-price {
-  font-size: 0.95rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
 .stock-target-track {
   position: relative;
   height: 0.6rem;

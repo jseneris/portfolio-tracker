@@ -1499,6 +1499,7 @@ export default function DashboardPage() {
                         isBuyRestricted: row.isBuyRestricted,
                         buyRestrictedUntil: row.buyRestrictedUntil,
                         restrictionSalePrice: tickerPreferencesByTicker[row.ticker]?.restrictionSalePrice ?? null,
+                        note: tickerPreferencesByTicker[row.ticker]?.note ?? null,
                       }, largestDisplayLotValues[row.ticker] ?? null, basePurchaseSize).map((badge) => (
                         <DashboardTooltip key={badge.symbol} className={`ticker-info-badge ticker-info-badge-${badge.tone}`} message={badge.message}>
                           <span className={badge.symbol === '\u2013' ? 'ticker-info-badge-dash' : undefined}>{badge.symbol}</span>

@@ -10,7 +10,7 @@ function bar(date: string, overrides: Partial<SimulationBar> = {}): SimulationBa
 }
 function preference(baseSize = 3): TickerPreference {
   return { ticker: 'AAA', baseSize, buyOnDip: false, buyOnDipPrice: null, buyRestricted: false,
-    buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null }
+    buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null, note: null }
 }
 function fixture(overrides: Partial<SimulationInput> = {}): SimulationInput {
   return {

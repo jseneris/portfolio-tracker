@@ -237,7 +237,7 @@ describe('shared dashboard targets', () => {
   it('uses buy-on-dip overrides even without a transaction base', () => {
     const preference: api.TickerPreference = {
       ticker: 'TEST', baseSize: 1, buyOnDip: true, buyOnDipPrice: 100,
-      buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null,
+      buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null, note: null,
     }
     expect(calculateTickerTargets(null, 6, settings, preference)).toEqual({ buy: 98, sell: 110 })
     expect(calculateTickerTargets(null, 6, settings, undefined)).toEqual({ buy: null, sell: null })
@@ -332,7 +332,7 @@ describe('target-distance price loading', () => {
     mockPortfolio('2026-10-24T16:00:00Z')
     vi.mocked(api.getTickerPreferences).mockResolvedValue([{
       ticker: 'TEST', baseSize: 3, buyOnDip: true, buyOnDipPrice: 120,
-      buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null,
+      buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null, note: null,
     }])
     expect((await loadTargetDistances()).inputs[0]).toMatchObject({
       buy: 117.6, sell: 132, targetBasePrice: 120, buyOnDip: true,

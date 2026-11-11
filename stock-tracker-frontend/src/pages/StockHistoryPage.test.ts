@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { StockSplitEvent, StockTransaction } from '../api'
 import {
   buildThreeMonthChartPoints,
   calculateYearlyPerformance,
+  CurrentPriceStat,
   findPriceOnOrBefore,
   getStockDocumentTitle,
   getStockHeading,
@@ -44,6 +47,32 @@ const PRICES = [
   { priceDate: '2025-12-31', closePrice: 200 },
   { priceDate: '2026-09-04', closePrice: 250 },
 ]
+
+describe('current price and target stat', () => {
+  it('shows the price once with target values and position', () => {
+    const html = renderToStaticMarkup(createElement(CurrentPriceStat, {
+      price: 100, buy: 90, sell: 110,
+    }))
+    expect(html).toContain('Current Price')
+    expect(html).toContain('<div class="value">$100.00</div>')
+    expect(html).not.toContain('Live:')
+    expect(html).not.toContain('Latest close:')
+    expect(html).not.toContain('stock-target-current-price')
+    expect(html).toContain('Buy $90.0000')
+    expect(html).toContain('Sell $110.0000')
+    expect(html).toContain('left:50%')
+    expect(html).toContain('aria-label="Price $100.0000 between buy target $90.0000 and sell target $110.0000"')
+  })
+
+  it('shows the price and unavailable targets when targets cannot be calculated', () => {
+    const html = renderToStaticMarkup(createElement(CurrentPriceStat, {
+      price: 100, buy: null, sell: null,
+    }))
+    expect(html).toContain('<div class="value">$100.00</div>')
+    expect(html).toContain('Targets unavailable')
+    expect(html).not.toContain('stock-target-track')
+  })
+})
 
 describe('stock detail page heading', () => {
   it('shows the company name and ticker when available', () => {

@@ -72,6 +72,38 @@ function formatNumber(value: number | null, digits = 6) {
   return Number(value).toFixed(digits)
 }
 
+export function CurrentPriceStat({ price, buy, sell }: {
+  price: number | null
+  buy: number | null
+  sell: number | null
+}) {
+  const position = getTargetPricePosition(price, buy, sell)
+  return (
+    <div className="stat stock-target-stat">
+      <div className="label">Current Price</div>
+      <div className="value">{formatCurrency2(price)}</div>
+      {buy != null && sell != null ? (
+        <>
+          <div className="stock-target-track"
+            role="img"
+            aria-label={`Price ${formatStockPrice4(price)} between buy target ${formatStockPrice4(buy)} and sell target ${formatStockPrice4(sell)}`}>
+            <span className="stock-target-track-fill"
+              style={{ width: `${position ?? 0}%` }} />
+            {position != null ? (
+              <span className="stock-target-current-marker"
+                style={{ left: `${position}%` }} />
+            ) : null}
+          </div>
+          <div className="stock-target-range">
+            <span>Buy {formatStockPrice4(buy)}</span>
+            <span>Sell {formatStockPrice4(sell)}</span>
+          </div>
+        </>
+      ) : <span className="muted-text">Targets unavailable</span>}
+    </div>
+  )
+}
+
 function formatPercent2(value: number | null) {
   if (value == null || Number.isNaN(Number(value))) {
     return '--'
@@ -636,6 +668,7 @@ export default function StockHistoryPage() {
   const [buyOnDip, setBuyOnDip] = useState(false)
   const [buyOnDipPrice, setBuyOnDipPrice] = useState<number | null>(null)
   const [baseSize, setBaseSize] = useState('3')
+  const [note, setNote] = useState('')
   const [targetPreference, setTargetPreference] = useState<TickerPreference>()
   const [targetSettings, setTargetSettings] = useState<UserTargetSettings>({
     basePurchaseSize: 300,
@@ -865,11 +898,6 @@ export default function StockHistoryPage() {
       setForm((prev) => (prev.type === form.type && prev.quantity !== suggested ? { ...prev, quantity: suggested as string } : prev))
     }
   }, [showAddTransactionModal, form.type, effectivePrice, targetSettings.basePurchaseSize, displayLotEntries])
-  const stockTargetPricePosition = getTargetPricePosition(
-    effectivePrice,
-    stockTargets.buy,
-    stockTargets.sell
-  )
   const threeMonthChartPoints = useMemo(
     () => buildThreeMonthChartPoints(historicalPrices, ticker, new Date().toISOString().slice(0, 10)),
     [historicalPrices, ticker]
@@ -1412,6 +1440,7 @@ export default function StockHistoryPage() {
       setTargetPreference(tickerPreference)
       setTargetSettings(normalizeTargetSettings(userTargetSettings))
       setBaseSize(String(tickerPreference.baseSize ?? 3))
+      setNote(tickerPreference.note ?? '')
       setBuyOnDip(tickerPreference.buyOnDip)
       setBuyOnDipPrice(tickerPreference.buyOnDipPrice)
       setBuyRestricted(tickerPreference.buyRestricted)
@@ -1924,8 +1953,10 @@ export default function StockHistoryPage() {
         buyOnDipPrice: buyOnDip ? buyOnDipPrice : null,
         buyRestricted,
         buyRestrictedUntil: buyRestricted ? buyRestrictedUntil : null,
+        note: note.trim() || null,
       })
       setBaseSize(String(preference.baseSize))
+      setNote(preference.note ?? '')
       setBuyOnDip(preference.buyOnDip)
       setBuyOnDipPrice(preference.buyOnDipPrice)
       setBuyRestricted(preference.buyRestricted)
@@ -2068,6 +2099,16 @@ export default function StockHistoryPage() {
                       />
                     </label>
                   ) : null}
+                  <label className="note-label">
+                    Note
+                    <textarea
+                      value={note}
+                      onChange={(event) => setNote(event.target.value)}
+                      disabled={savingTickerPreference}
+                      placeholder="Add a note about this stock..."
+                      rows={4}
+                    />
+                  </label>
                   <div className="form-actions">
                     <button className="button button-primary" type="submit" disabled={savingTickerPreference || (buyRestricted && !buyRestrictedUntil)}>
                       {savingTickerPreference ? 'Saving...' : 'Save Preferences'}
@@ -2098,11 +2139,18 @@ export default function StockHistoryPage() {
       ) : null}
 
       {!loading && !error && summary ? (
-        <div className="panel">
-          <h3 className="ticker-summary-heading">Summary &amp; Performance</h3>
+        <>
+          {note ? (
+            <div className="panel panel-note">
+              <h4 style={{ marginTop: 0 }}>Note</h4>
+              <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{note}</p>
+            </div>
+          ) : null}
+          <div className="panel">
+            <h3 className="ticker-summary-heading">Summary &amp; Performance</h3>
           <div className="stat-grid">
             <div className="stat"><div className="label">Total Shares</div><div className="value">{formatNumber(summary.totalShares, 6)}</div></div>
-            <div className="stat"><div className="label">Current Price</div><div className="value">{formatCurrency2(effectivePrice)}</div></div>
+            <CurrentPriceStat price={effectivePrice} buy={stockTargets.buy} sell={stockTargets.sell} />
             <div className="stat">
               <div className="label">Change %</div>
               <div className={`value ${getPerformanceClassName(livePriceChangePercent)}`}>{formatPercent2(livePriceChangePercent)}</div>
@@ -2132,30 +2180,6 @@ export default function StockHistoryPage() {
               </div>
               <div className="hint">click to manage</div>
             </button>
-            <div className="stat stock-target-stat">
-              <div className="label">Target</div>
-              <div className="stock-target-current-price">
-                {livePrice != null ? 'Live' : 'Latest close'}: {formatStockPrice4(effectivePrice)}
-              </div>
-              {stockTargets.buy != null && stockTargets.sell != null ? (
-                <>
-                  <div className="stock-target-track"
-                    role="img"
-                    aria-label={`Price ${formatStockPrice4(effectivePrice)} between buy target ${formatStockPrice4(stockTargets.buy)} and sell target ${formatStockPrice4(stockTargets.sell)}`}>
-                    <span className="stock-target-track-fill"
-                      style={{ width: `${stockTargetPricePosition ?? 0}%` }} />
-                    {stockTargetPricePosition != null ? (
-                      <span className="stock-target-current-marker"
-                        style={{ left: `${stockTargetPricePosition}%` }} />
-                    ) : null}
-                  </div>
-                  <div className="stock-target-range">
-                    <span>Buy {formatStockPrice4(stockTargets.buy)}</span>
-                    <span>Sell {formatStockPrice4(stockTargets.sell)}</span>
-                  </div>
-                </>
-              ) : <span className="muted-text">Targets unavailable</span>}
-            </div>
           </div>
 
           {splitEvents.length > 0 ? (
@@ -2193,6 +2217,7 @@ export default function StockHistoryPage() {
             </div>
           ) : null}
         </div>
+        </>
       ) : null}
 
       {!loading && !error ? (
