@@ -31,7 +31,7 @@ import {
 } from '../api'
 import { formatCurrency2, formatStockPrice4, getLocalDateString } from '../formatters'
 import { calculatePortfolioSnapshot, calculateTickerYearlyGainLoss, calculateYearlyGainLoss, createSplitMultiplierResolver } from '../portfolioSnapshot'
-import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, getTargetPricePosition, normalizeTargetSettings } from '../targetPrices'
+import { buildLatestBuyOrSellByTicker, calculateTickerTargets, checkInsufficientSharesForSmallestLot, getSmallestDisplayLotShares, getSplitAdjustedTargetBasePrice, getTargetPricePosition, normalizeTargetSettings } from '../targetPrices'
 import { getLargestDisplayLotValues, getTickerInfoBadges } from '../tickerBadges'
 export { getSplitAdjustedTargetBasePrice } from '../targetPrices'
 
@@ -83,6 +83,26 @@ function formatDateOnlyLabel(value: string | null | undefined): string {
 }
 
 export { getLargestDisplayLotValues, getTickerInfoBadges } from '../tickerBadges'
+
+export function BuyTargetBadges({ override, buyTarget, basePurchaseSize, smallestLot }: {
+  override: number | null
+  buyTarget: number | null
+  basePurchaseSize: number
+  smallestLot: number | null
+}) {
+  const insufficient = checkInsufficientSharesForSmallestLot(basePurchaseSize, buyTarget, smallestLot)
+  if (override == null && !insufficient) return null
+  return (
+    <sup className="ticker-info-badges">
+      {override != null ? (
+        <DashboardTooltip className="ticker-info-badge ticker-info-badge-green" message={`Target Buy Price Override: ${formatStockPrice4(override)}.`}>💰</DashboardTooltip>
+      ) : null}
+      {insufficient ? (
+        <DashboardTooltip className="ticker-info-badge ticker-info-badge-red" message="Buy target would not buy more shares than the smallest display lot at the Base Purchase Size.">!</DashboardTooltip>
+      ) : null}
+    </sup>
+  )
+}
 
 export function DashboardTooltip({ message, className, children }: { message: string; className: string; children: ReactNode }) {
   const id = useId()
@@ -493,6 +513,16 @@ export default function DashboardPage() {
   const [tickerPreferencesByTicker, setTickerPreferencesByTicker] = useState<Record<string, TickerPreference>>({})
   const [displayLotCountsByTicker, setDisplayLotCountsByTicker] = useState<Record<string, number>>({})
   const [displayLots, setDisplayLots] = useState<DisplayLot[]>([])
+  const smallestLotsByTicker = useMemo(() => {
+    const grouped = new Map<string, DisplayLot[]>()
+    for (const lot of displayLots) {
+      const ticker = lot.ticker.trim().toUpperCase()
+      const lots = grouped.get(ticker) ?? []
+      lots.push(lot)
+      grouped.set(ticker, lots)
+    }
+    return new Map(Array.from(grouped, ([ticker, lots]) => [ticker, getSmallestDisplayLotShares(lots)]))
+  }, [displayLots])
   const [basePurchaseSize, setBasePurchaseSize] = useState(300)
   const snapshotDate = new Date().toISOString().slice(0, 10)
   const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([])
@@ -1474,6 +1504,14 @@ export default function DashboardPage() {
                   const isExpanded = expandedHoldingTickers.has(row.ticker)
                   const liveChangePercent = changePercentByTicker[row.ticker]
                   const changePercent = row.dailyChangePercent
+                  const targetBadges = (
+                    <BuyTargetBadges
+                      override={tickerPreferencesByTicker[row.ticker]?.targetBuyPriceOverride ?? null}
+                      buyTarget={buyTargetsByTicker[row.ticker] ?? null}
+                      basePurchaseSize={basePurchaseSize}
+                      smallestLot={smallestLotsByTicker.get(row.ticker) ?? null}
+                    />
+                  )
 
                   return (
                   <Fragment key={row.ticker}>
@@ -1500,11 +1538,13 @@ export default function DashboardPage() {
                         buyRestrictedUntil: row.buyRestrictedUntil,
                         restrictionSalePrice: tickerPreferencesByTicker[row.ticker]?.restrictionSalePrice ?? null,
                         note: tickerPreferencesByTicker[row.ticker]?.note ?? null,
-                      }, largestDisplayLotValues[row.ticker] ?? null, basePurchaseSize).map((badge) => (
+                        targetBuyPriceOverride: tickerPreferencesByTicker[row.ticker]?.targetBuyPriceOverride ?? null,
+                      }, largestDisplayLotValues[row.ticker] ?? null, basePurchaseSize).filter((badge) => badge.symbol !== '💰').map((badge) => (
                         <DashboardTooltip key={badge.symbol} className={`ticker-info-badge ticker-info-badge-${badge.tone}`} message={badge.message}>
                           <span className={badge.symbol === '\u2013' ? 'ticker-info-badge-dash' : undefined}>{badge.symbol}</span>
                         </DashboardTooltip>
                       ))}</sup>
+                      <span className="holdings-mobile-target-badges">{targetBadges}</span>
                     </td>
                     <td>
                       {holdingsLoading && row.latestPrice == null ? (
@@ -1549,6 +1589,7 @@ export default function DashboardPage() {
                       ) : (
                         formatStockPrice4(buyTargetsByTicker[row.ticker] ?? null)
                       )}
+                      {targetBadges}
                     </td>
                     <td>
                       {holdingsLoading ? (
@@ -1592,7 +1633,7 @@ export default function DashboardPage() {
                           <div><dt>Market Value</dt><dd>{formatCurrency2(row.marketValue)}</dd></div>
                           <div><dt>Gain/Loss</dt><dd className={getPerformanceClassName(row.gainLoss)}>{formatCurrency2(row.gainLoss)}</dd></div>
                           <div><dt>Yearly Gain</dt><dd className={getPerformanceClassName(row.yearlyGainLoss)}>{formatCurrency2(row.yearlyGainLoss)}</dd></div>
-                          <div><dt>Buy Target</dt><dd>{formatStockPrice4(buyTargetsByTicker[row.ticker] ?? null)}</dd></div>
+                          <div><dt>Buy Target</dt><dd>{formatStockPrice4(buyTargetsByTicker[row.ticker] ?? null)}{targetBadges}</dd></div>
                           <div><dt>Sale Target</dt><dd>{formatStockPrice4(saleTargetsByTicker[row.ticker] ?? null)}</dd></div>
                           <div>
                             <dt>Weight</dt>

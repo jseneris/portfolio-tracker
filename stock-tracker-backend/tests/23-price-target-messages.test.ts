@@ -112,6 +112,28 @@ describe('23. Price Target Messages', () => {
       expect(messages[0].targetPrice).toBeCloseTo(99, 6);
     });
 
+    it('uses the saved override for buy alerts instead of the calculated target', async () => {
+      await buyStock(TICKER, 10, 100, new Date('2026-01-05T15:00:00Z'));
+      await request(app)
+        .put(`/api/ticker-preferences/${TICKER}`)
+        .set('x-user-id', TEST_USER_ID)
+        .send({ buyOnDip: false, buyRestricted: false, targetBuyPriceOverride: 80 })
+        .expect(200);
+      const updated = await request(app)
+        .put(`/api/ticker-preferences/${TICKER}`)
+        .set('x-user-id', TEST_USER_ID)
+        .send({ buyOnDip: false, buyRestricted: false })
+        .expect(200);
+      expect(updated.body.targetBuyPriceOverride).toBe(80);
+
+      await runCycle(90);
+      expect(await listMessages()).toHaveLength(0);
+      await runCycle(80);
+      const messages = await listMessages();
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({ type: 'buy-target-hit', targetPrice: 80 });
+    });
+
     it('waits for the previous message to be read before sending again', async () => {
       await buyStock(TICKER, 10, 100, new Date('2026-01-05T15:00:00Z'));
 

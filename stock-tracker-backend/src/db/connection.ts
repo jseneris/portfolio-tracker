@@ -323,6 +323,9 @@ async function createTablesIfNotExist() {
     IF COL_LENGTH('UserTickerPreferences', 'note') IS NULL
       ALTER TABLE UserTickerPreferences ADD note NVARCHAR(MAX) NULL;
 
+    IF COL_LENGTH('UserTickerPreferences', 'targetBuyPriceOverride') IS NULL
+      ALTER TABLE UserTickerPreferences ADD targetBuyPriceOverride DECIMAL(18, 8) NULL;
+
     IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'StockExchanges')
       CREATE TABLE StockExchanges (
         id UNIQUEIDENTIFIER PRIMARY KEY,

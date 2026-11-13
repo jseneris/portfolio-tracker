@@ -1,4 +1,4 @@
-import type { StockTransaction, StockSplitEvent, TickerPreference, UserTargetSettings } from './api'
+import type { DisplayLot, StockTransaction, StockSplitEvent, TickerPreference, UserTargetSettings } from './api'
 import { createSplitMultiplierResolver } from './portfolioSnapshot'
 
 export function normalizeTargetSettings(settings: UserTargetSettings): UserTargetSettings {
@@ -55,6 +55,8 @@ export function calculateTickerTargets(
   settings: UserTargetSettings,
   preference: TickerPreference | undefined
 ): { buy: number | null; sell: number | null } {
+  const override = preference?.targetBuyPriceOverride
+  const buyOverride = override != null && Number.isFinite(override) && override > 0 ? override : null
   const baseSize = Number.isFinite(Number(preference?.baseSize)) ? Number(preference?.baseSize) : 3
   // Tickers below their base display-lot size are automatically treated as Buy on Dip,
   // anchored at the captured dip price or, if none, the last buy/sell price.
@@ -64,7 +66,7 @@ export function calculateTickerTargets(
     : displayLotCount < baseSize ? basePrice : null
   if (dipAnchor != null && Number.isFinite(dipAnchor) && dipAnchor > 0) {
     return {
-      buy: Number((dipAnchor * (1 - settings.buyOnDipBuyTargetPercent / 100)).toFixed(8)),
+      buy: buyOverride ?? Number((dipAnchor * (1 - settings.buyOnDipBuyTargetPercent / 100)).toFixed(8)),
       sell: Number((dipAnchor * 1.10).toFixed(8)),
     }
   }
@@ -75,9 +77,44 @@ export function calculateTickerTargets(
     : lotsAboveBaseSize === 2 ? settings.buyTargetPercentBasePlus2
     : settings.buyTargetPercentBasePlus3OrMore
   return {
-    buy: basePrice == null ? null : basePrice * (1 - buyPercent / 100),
+    buy: buyOverride ?? (basePrice == null ? null : basePrice * (1 - buyPercent / 100)),
     sell: basePrice == null ? null : basePrice * (1 + settings.saleTargetPercent / 100),
   }
+}
+
+export function getSmallestDisplayLotShares(displayLots: DisplayLot[]): number | null {
+  let smallest: number | null = null
+  for (const row of displayLots) {
+    for (const quantity of row.lots) {
+      const value = Number(quantity)
+      if (Number.isFinite(value) && value > 0 && (smallest == null || value < smallest)) smallest = value
+    }
+  }
+  return smallest
+}
+
+export function checkInsufficientSharesForSmallestLot(
+  basePurchaseSize: number,
+  buyPrice: number | null,
+  smallestDisplayLotShares: number | null
+): boolean {
+  return Number.isFinite(basePurchaseSize) && basePurchaseSize > 0
+    && buyPrice != null && Number.isFinite(buyPrice) && buyPrice > 0
+    && smallestDisplayLotShares != null && Number.isFinite(smallestDisplayLotShares) && smallestDisplayLotShares > 0
+    && basePurchaseSize / buyPrice <= smallestDisplayLotShares
+}
+
+export function getSuggestedBuyPrice(basePurchaseSize: number, smallestDisplayLotShares: number | null): number | null {
+  if (!Number.isFinite(basePurchaseSize) || basePurchaseSize <= 0
+    || smallestDisplayLotShares == null || !Number.isFinite(smallestDisplayLotShares) || smallestDisplayLotShares <= 0) return null
+  const wholeShares = Math.floor(smallestDisplayLotShares) + 1
+  const cents = Math.round(basePurchaseSize * 100)
+  if (!Number.isSafeInteger(wholeShares) || !Number.isSafeInteger(cents) || cents <= 0
+    || Math.abs(basePurchaseSize * 100 - cents) > 1e-6) return null
+  const priceUnits = BigInt(cents) * 1000000n / BigInt(wholeShares)
+  if (priceUnits < 1n) return null
+  const maxPriceUnits = 999999999999000000n
+  return Number(priceUnits > maxPriceUnits ? maxPriceUnits : priceUnits) / 1e8
 }
 
 export function getTargetPricePosition(

@@ -13,8 +13,8 @@ import {
   getStockProfileByTicker,
   getStockTransactions,
 } from '../api'
-import { formatCurrency2 } from '../formatters'
-import { calculatePortfolioSnapshot } from '../portfolioSnapshot'
+import { formatCurrency2, getLocalDateString } from '../formatters'
+import { calculatePortfolioSnapshot, calculateTickerYearlyGainLoss } from '../portfolioSnapshot'
 import { TickerInfoBadges } from '../tickerBadges'
 
 export type AllocationGroupBy = 'ticker' | 'industry' | 'size'
@@ -245,6 +245,49 @@ export function buildAllocationSlices(args: {
   }
 }
 
+export function getAllocationYears(
+  stockTransactions: StockTransaction[], cashTransactions: CashTransaction[], currentYear: number
+): number[] {
+  const years = [...stockTransactions, ...cashTransactions]
+    .map((transaction) => Number(toDateOnly(transaction.transactionDate).slice(0, 4)))
+    .filter((year) => Number.isInteger(year) && year >= 1900 && year <= currentYear)
+  const firstYear = years.length ? Math.min(...years) : currentYear
+  return Array.from({ length: currentYear - firstYear + 1 }, (_, index) => currentYear - index)
+}
+
+export function buildAllocationYearlyGainLoss(args: {
+  slices: AllocationSlice[]
+  stockTransactions: StockTransaction[]
+  cashTransactions: CashTransaction[]
+  holdings: ReturnType<typeof calculatePortfolioSnapshot>['holdings']
+  previousHoldings: ReturnType<typeof calculatePortfolioSnapshot>['holdings']
+  snapshotDate: string
+}): Record<string, number | null> {
+  const current = new Map(args.holdings.map((holding) => [holding.ticker, holding.marketValue]))
+  const previous = new Map(args.previousHoldings.map((holding) => [holding.ticker, holding.marketValue]))
+  const yearStart = `${args.snapshotDate.slice(0, 4)}-01-01`
+  const cashGainLoss = args.cashTransactions.reduce((sum, transaction) => {
+    const date = toDateOnly(transaction.transactionDate)
+    if (date < yearStart || date > args.snapshotDate) return sum
+    const amount = Number(transaction.amount)
+    if (!Number.isFinite(amount)) return sum
+    if (transaction.type === 'interest') return sum + amount
+    if (transaction.type === 'fee') return sum - amount
+    return sum
+  }, 0)
+  return Object.fromEntries(args.slices.map((slice) => {
+    if (slice.isCash) return [slice.key, cashGainLoss]
+    const gains = slice.tickers.map((ticker) => calculateTickerYearlyGainLoss({
+      stockTransactions: args.stockTransactions,
+      ticker,
+      currentMarketValue: current.get(ticker) ?? null,
+      previousYearEndMarketValue: previous.has(ticker) ? previous.get(ticker) ?? null : 0,
+      snapshotDate: args.snapshotDate,
+    }))
+    return [slice.key, gains.some((gain) => gain == null) ? null : gains.reduce<number>((sum, gain) => sum + (gain ?? 0), 0)]
+  }))
+}
+
 function AllocationDonutChart({ data }: { data: AllocationChartData }) {
   const center = 100
   const outerRadius = 90
@@ -323,7 +366,14 @@ export default function AllocationsPage() {
   const [error, setError] = useState<string | null>(null)
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null)
 
-  const snapshotDate = new Date().toISOString().slice(0, 10)
+  const today = getLocalDateString()
+  const currentYear = Number(today.slice(0, 4))
+  const [selectedYear, setSelectedYear] = useState(currentYear)
+  const snapshotDate = selectedYear === currentYear ? today : `${selectedYear}-12-31`
+  const years = useMemo(() => {
+    const availableYears = getAllocationYears(stockTransactions, cashTransactions, currentYear)
+    return availableYears.includes(selectedYear) ? availableYears : [...availableYears, selectedYear].sort((a, b) => b - a)
+  }, [stockTransactions, cashTransactions, currentYear, selectedYear])
 
   async function loadAllocations() {
     setLoading(true)
@@ -352,7 +402,7 @@ export default function AllocationsPage() {
 
       const [pricesResult, currentPricesResult, profilesResult] = await Promise.all([
         transactionsResult.length > 0
-          ? getHistoricalPrices(historicalStartDate, snapshotDate)
+          ? getHistoricalPrices(historicalStartDate, today)
           : Promise.resolve([] as HistoricalPrice[]),
         tickers.length > 0
           ? getCurrentPrices(tickers)
@@ -401,23 +451,34 @@ export default function AllocationsPage() {
     return () => window.removeEventListener(PORTFOLIO_UPDATED_EVENT, handlePortfolioUpdated)
   }, [])
 
-  const allocation = useMemo(() => {
+  const { allocation, yearlyGainLoss } = useMemo(() => {
     const snapshot = calculatePortfolioSnapshot({
       stockTransactions,
       cashTransactions,
       historicalPrices,
       splitEvents,
       snapshotDate,
-      currentPricesByTicker,
+      currentPricesByTicker: selectedYear === currentYear ? currentPricesByTicker : {},
     })
 
-    return buildAllocationSlices({
+    const allocationData = buildAllocationSlices({
       groupBy,
       holdings: snapshot.holdings,
       profilesByTicker,
       availableCash: snapshot.availableCash,
     })
-  }, [cashTransactions, currentPricesByTicker, groupBy, historicalPrices, profilesByTicker, snapshotDate, splitEvents, stockTransactions])
+    const previousSnapshot = calculatePortfolioSnapshot({
+      stockTransactions, cashTransactions, historicalPrices, splitEvents,
+      snapshotDate: `${selectedYear - 1}-12-31`,
+    })
+    return {
+      allocation: allocationData,
+      yearlyGainLoss: buildAllocationYearlyGainLoss({
+        slices: allocationData.slices, stockTransactions, cashTransactions,
+        holdings: snapshot.holdings, previousHoldings: previousSnapshot.holdings, snapshotDate,
+      }),
+    }
+  }, [cashTransactions, currentPricesByTicker, currentYear, groupBy, historicalPrices, profilesByTicker, selectedYear, snapshotDate, splitEvents, stockTransactions])
 
   const sortedSlices = useMemo(() => sortAllocationSlices(allocation.slices, sortColumn, sortDirection), [allocation, sortColumn, sortDirection])
 
@@ -448,7 +509,7 @@ export default function AllocationsPage() {
       <div className="panel row-between">
         <div>
           <h2>Allocations</h2>
-          <p>Current portfolio allocation by ticker, industry, or size, including available cash.</p>
+          <p>Portfolio allocation by ticker, industry, or size, including available cash.</p>
         </div>
         <div className="stack-right">
           <div className="inline-actions">
@@ -477,11 +538,20 @@ export default function AllocationsPage() {
 
       {loading ? (
         <div className="panel">Loading allocations...</div>
-      ) : allocation.slices.length === 0 ? (
-        <div className="panel">No allocation data available. Add cash or stock transactions to see your allocation.</div>
       ) : (
         <div className="panel">
           <h3>Allocation {groupByOptions.find((option) => option.value === groupBy)?.label}</h3>
+          <label className="allocation-year-selector">
+            Year
+            <select value={selectedYear} onChange={(event) => setSelectedYear(Number(event.target.value))}>
+              {years.map((year) => <option key={year} value={year}>{year}{year === currentYear ? ' (current)' : ''}</option>)}
+            </select>
+          </label>
+          <p className="muted-text">As of {snapshotDate}{selectedYear === currentYear ? ' (current prices when available)' : ' (latest stored closes on or before year end)'}.
+            Industry and size use current classifications.</p>
+          {allocation.slices.length === 0 ? (
+            <p>No allocation data available for this date.</p>
+          ) : <>
           <div className="allocation-layout">
             <div className="allocation-chart-wrap">
               <AllocationDonutChart data={allocation} />
@@ -500,6 +570,7 @@ export default function AllocationsPage() {
                     <th className="sortable-header" onClick={() => handleSort('percent')}>
                       Allocation{getSortIndicator('percent')}
                     </th>
+                    <th>Yearly Gain/Loss</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -519,6 +590,9 @@ export default function AllocationsPage() {
                       </td>
                       <td>{formatCurrency2(slice.value)}</td>
                       <td>{formatPercent2(slice.percent)}</td>
+                      <td className={yearlyGainLoss[slice.key] == null ? undefined : yearlyGainLoss[slice.key]! > 0 ? 'value-positive' : yearlyGainLoss[slice.key]! < 0 ? 'value-negative' : undefined}>
+                        {formatCurrency2(yearlyGainLoss[slice.key])}
+                      </td>
                     </tr>
                   ))}
                   <tr className="allocation-total-row">
@@ -526,10 +600,13 @@ export default function AllocationsPage() {
                     <td>Total</td>
                     <td>{formatCurrency2(allocation.total)}</td>
                     <td>{formatPercent2(100)}</td>
+                    <td>--</td>
                   </tr>
                 </tbody>
               </table>
             </div>
+            <p className="muted-text">Yearly gain/loss is for the selected year through the snapshot date. Group values sum the tickers held at that date;
+              cash reflects interest less fees. Sold-out tickers are not included. Unavailable prior-year prices are shown as --.</p>
           </div>
           {allocation.excludedTickers.length > 0 ? (
             <p className="allocation-note">
@@ -541,6 +618,7 @@ export default function AllocationsPage() {
               Available cash is negative ({formatCurrency2(allocation.availableCash)}) and is not shown as a slice.
             </p>
           ) : null}
+          </>}
         </div>
       )}
     </section>

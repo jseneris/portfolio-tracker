@@ -166,7 +166,7 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
       FROM UserSettings
     `),
     pool.request().query(`
-      SELECT userId, ticker, baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil
+      SELECT userId, ticker, baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil, targetBuyPriceOverride
       FROM UserTickerPreferences
     `),
     pool.request().query(`
@@ -222,13 +222,14 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
     buyOnDipBuyTargetPercent: DEFAULT_BUY_ON_DIP_BUY_TARGET_PERCENT,
   };
 
-  const preferences = new Map<string, { baseSize: number; buyOnDip: boolean; buyOnDipPrice: number | null; isBuyRestricted: boolean }>();
+  const preferences = new Map<string, { baseSize: number; buyOnDip: boolean; buyOnDipPrice: number | null; isBuyRestricted: boolean; targetBuyPriceOverride: number | null }>();
   for (const row of preferencesResult.recordset as any[]) {
     const restrictedUntil = toDateOnly(row.buyRestrictedUntil);
     preferences.set(key(String(row.userId), String(row.ticker).toUpperCase()), {
       baseSize: Number(row.baseSize ?? 3),
       buyOnDip: Boolean(row.buyOnDip),
       buyOnDipPrice: row.buyOnDipPrice == null ? null : Number(row.buyOnDipPrice),
+      targetBuyPriceOverride: row.targetBuyPriceOverride == null ? null : Number(row.targetBuyPriceOverride),
       isBuyRestricted: Boolean(row.buyRestricted) && restrictedUntil !== '' && today <= restrictedUntil,
     });
   }
@@ -333,6 +334,9 @@ export async function runPriceTargetAlertCycle(options: PriceTargetCycleOptions 
     } else if (basePrice != null && Number.isFinite(basePrice) && basePrice > 0) {
       sellTarget = basePrice * (1 + settings.saleTargetPercent / 100);
       buyTarget = basePrice * (1 - getBuyTargetPercent(settings, lotCount - baseSize) / 100);
+    }
+    if (preference?.targetBuyPriceOverride != null && Number.isFinite(preference.targetBuyPriceOverride) && preference.targetBuyPriceOverride > 0) {
+      buyTarget = preference.targetBuyPriceOverride;
     }
 
     if (sellTarget != null && price >= sellTarget) {

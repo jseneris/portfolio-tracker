@@ -26,13 +26,13 @@ describe('dashboard daily stock counts', () => {
   })
 
   describe('dashboard ticker info badges', () => {
-    const preference = { baseSize: 3, buyOnDip: false, buyOnDipPrice: null, note: null }
+    const preference = { baseSize: 3, buyOnDip: false, buyOnDipPrice: null, note: null, targetBuyPriceOverride: null }
 
     it('shows independent colored symbols, including multiple badges per ticker', () => {
       expect(getTickerInfoBadges(preference, null, 300)).toEqual([])
       expect(getTickerInfoBadges({ ...preference, baseSize: 2 }, null, 300))
         .toEqual([{ symbol: '\u2013', tone: 'red', message: 'Base size: 2 display lots (default is 3).' }])
-      const badges = getTickerInfoBadges({ baseSize: 4, buyOnDip: true, buyOnDipPrice: 100, note: null }, 1600, 300)
+      const badges = getTickerInfoBadges({ baseSize: 4, buyOnDip: true, buyOnDipPrice: 100, note: null, targetBuyPriceOverride: null }, 1600, 300)
       expect(badges.map(({ symbol, tone }) => ({ symbol, tone }))).toEqual([
         { symbol: 'B', tone: 'green' }, { symbol: '+', tone: 'green' }, { symbol: '5', tone: 'red' },
       ])

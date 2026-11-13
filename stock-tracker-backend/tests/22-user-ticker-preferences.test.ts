@@ -29,6 +29,8 @@ describe('22. User Ticker Preferences', () => {
       buyRestrictedUntil: null,
       isBuyRestricted: false,
       restrictionSalePrice: null,
+      note: null,
+      targetBuyPriceOverride: null,
     });
   });
 
@@ -48,6 +50,8 @@ describe('22. User Ticker Preferences', () => {
           buyRestrictedUntil: '2099-12-31',
           isBuyRestricted: true,
           restrictionSalePrice: null,
+          note: null,
+          targetBuyPriceOverride: null,
         });
       });
 
@@ -71,6 +75,8 @@ describe('22. User Ticker Preferences', () => {
       buyRestrictedUntil: null,
       isBuyRestricted: false,
       restrictionSalePrice: null,
+      note: null,
+      targetBuyPriceOverride: null,
     }]);
 
     const rowCount = await getPool().request()
@@ -103,11 +109,42 @@ describe('22. User Ticker Preferences', () => {
     expect(saved.body.baseSize).toBe(7);
   });
 
+  it('persists and retrieves target buy price override', async () => {
+    const response = await request(app)
+      .put('/api/ticker-preferences/MSFT')
+      .set('x-user-id', TEST_USER_ID)
+      .send({ buyOnDip: false, buyRestricted: false, buyRestrictedUntil: null, targetBuyPriceOverride: 250.12345678 })
+      .expect(200);
+
+    expect(response.body.targetBuyPriceOverride).toBe(250.12345678);
+
+    const saved = await request(app)
+      .get('/api/ticker-preferences/MSFT')
+      .set('x-user-id', TEST_USER_ID)
+      .expect(200);
+    expect(saved.body.targetBuyPriceOverride).toBe(250.12345678);
+
+    const updated = await request(app)
+      .put('/api/ticker-preferences/MSFT')
+      .set('x-user-id', TEST_USER_ID)
+      .send({ buyOnDip: false, buyRestricted: false, buyRestrictedUntil: null, targetBuyPriceOverride: null })
+      .expect(200);
+    expect(updated.body.targetBuyPriceOverride).toBeNull();
+  });
+
   it.each([0, -1, '100', 10000000000])('rejects invalid captured price %s', async (buyOnDipPrice) => {
     await request(app)
       .put('/api/ticker-preferences/MSFT')
       .set('x-user-id', TEST_USER_ID)
       .send({ buyOnDip: true, buyOnDipPrice, buyRestricted: false, buyRestrictedUntil: null })
+      .expect(400);
+  });
+
+  it.each([0, -1, '100', 10000000000])('rejects invalid target buy price override %s', async (targetBuyPriceOverride) => {
+    await request(app)
+      .put('/api/ticker-preferences/MSFT')
+      .set('x-user-id', TEST_USER_ID)
+      .send({ buyOnDip: false, buyRestricted: false, buyRestrictedUntil: null, targetBuyPriceOverride })
       .expect(400);
   });
 
@@ -128,6 +165,16 @@ describe('22. User Ticker Preferences', () => {
 
     expect(response.body.buyRestricted).toBe(true);
     expect(response.body.isBuyRestricted).toBe(false);
+  });
+
+  it('accepts valid target buy price override values', async () => {
+    const response = await request(app)
+      .put('/api/ticker-preferences/MSFT')
+      .set('x-user-id', TEST_USER_ID)
+      .send({ buyOnDip: false, buyRestricted: false, buyRestrictedUntil: null, targetBuyPriceOverride: 0.00000001 })
+      .expect(200);
+
+    expect(response.body.targetBuyPriceOverride).toBe(0.00000001);
   });
 
   it('rejects an enabled restriction without a valid date', async () => {
@@ -157,5 +204,6 @@ describe('22. User Ticker Preferences', () => {
       .expect(200);
 
     expect(otherUserResponse.body.buyOnDip).toBe(false);
+    expect(otherUserResponse.body.targetBuyPriceOverride).toBeNull();
   });
 });

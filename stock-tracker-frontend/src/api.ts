@@ -341,6 +341,7 @@ export type TickerPreference = {
   isBuyRestricted: boolean
   restrictionSalePrice: number | null
   note: string | null
+  targetBuyPriceOverride: number | null
 }
 
 export type UpdateTickerPreferenceInput = {
@@ -350,6 +351,7 @@ export type UpdateTickerPreferenceInput = {
   buyRestricted: boolean
   buyRestrictedUntil: string | null
   note?: string | null
+  targetBuyPriceOverride?: number | null
 }
 
 export type PortfolioInsightFact = {

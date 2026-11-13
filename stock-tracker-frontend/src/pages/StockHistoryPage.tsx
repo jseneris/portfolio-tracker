@@ -36,12 +36,23 @@ import {
 } from '../api'
 import { formatCurrency2, formatStockPrice4, getLocalDateString } from '../formatters'
 import { createSplitMultiplierResolver } from '../portfolioSnapshot'
-import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSplitAdjustedTargetBasePrice, getTargetPricePosition, normalizeTargetSettings } from '../targetPrices'
+import { buildLatestBuyOrSellByTicker, calculateTickerTargets, getSmallestDisplayLotShares, getSuggestedBuyPrice, getSplitAdjustedTargetBasePrice, getTargetPricePosition, normalizeTargetSettings } from '../targetPrices'
 import TransactionDateEditor from './TransactionDateEditor'
 import { TickerInfoBadges } from '../tickerBadges'
+import { InsufficientSharesBanner } from './InsufficientSharesBanner'
 
 const ALLOCATION_TOLERANCE = 1e-6
 const LOT_STATE_TOLERANCE = 1e-6
+
+export function TickerNote({ note }: { note: string }) {
+  if (!note) return null
+  return (
+    <details className="panel panel-note">
+      <summary><strong>Note</strong></summary>
+      <p>{note}</p>
+    </details>
+  )
+}
 
 type PositiveTransactionState = 'full' | 'partial' | 'empty'
 
@@ -667,6 +678,8 @@ export default function StockHistoryPage() {
   const [showSales, setShowSales] = useState(false)
   const [buyOnDip, setBuyOnDip] = useState(false)
   const [buyOnDipPrice, setBuyOnDipPrice] = useState<number | null>(null)
+  const [targetBuyPriceOverrideEnabled, setTargetBuyPriceOverrideEnabled] = useState(false)
+  const [targetBuyPriceOverride, setTargetBuyPriceOverride] = useState<number | null>(null)
   const [baseSize, setBaseSize] = useState('3')
   const [note, setNote] = useState('')
   const [targetPreference, setTargetPreference] = useState<TickerPreference>()
@@ -715,7 +728,7 @@ export default function StockHistoryPage() {
         modal?.querySelector<HTMLButtonElement>('button')?.click()
       }
       if (event.key !== 'Tab') return
-      const controls = modal?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)')
+      const controls = modal?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)')
       const first = controls?.[0]
       const last = controls?.[controls.length - 1]
       if (event.shiftKey && document.activeElement === first) {
@@ -834,6 +847,8 @@ export default function StockHistoryPage() {
     targetSettings,
     targetPreference
   )
+  const smallestDisplayLotShares = getSmallestDisplayLotShares(displayLots)
+  const suggestedBuyPrice = getSuggestedBuyPrice(targetSettings.basePurchaseSize, smallestDisplayLotShares)
   const highlightedDisplayLotCount = Number.isSafeInteger(Number(baseSize))
     ? Math.max(0, Number(baseSize))
     : 0
@@ -1445,6 +1460,8 @@ export default function StockHistoryPage() {
       setBuyOnDipPrice(tickerPreference.buyOnDipPrice)
       setBuyRestricted(tickerPreference.buyRestricted)
       setBuyRestrictedUntil(tickerPreference.buyRestrictedUntil ?? '')
+      setTargetBuyPriceOverride(tickerPreference.targetBuyPriceOverride ?? null)
+      setTargetBuyPriceOverrideEnabled(tickerPreference.targetBuyPriceOverride != null && tickerPreference.targetBuyPriceOverride > 0)
 
       const earliestTxDate = txData.reduce((earliest, transaction) => {
         const transactionDate = toDateOnly(transaction.transactionDate)
@@ -1945,6 +1962,12 @@ export default function StockHistoryPage() {
       return
     }
 
+    const overridePrice = targetBuyPriceOverrideEnabled ? targetBuyPriceOverride : null
+    if (targetBuyPriceOverrideEnabled && (overridePrice === null || !Number.isFinite(overridePrice) || overridePrice < 0.00000001 || overridePrice > 9999999999.99)) {
+      setTickerPreferenceError('Target buy price must be between 0.00000001 and 9999999999.99.')
+      return
+    }
+
     setSavingTickerPreference(true)
     try {
       const preference = await updateTickerPreference(ticker, {
@@ -1954,6 +1977,7 @@ export default function StockHistoryPage() {
         buyRestricted,
         buyRestrictedUntil: buyRestricted ? buyRestrictedUntil : null,
         note: note.trim() || null,
+        targetBuyPriceOverride: overridePrice,
       })
       setBaseSize(String(preference.baseSize))
       setNote(preference.note ?? '')
@@ -1961,6 +1985,8 @@ export default function StockHistoryPage() {
       setBuyOnDipPrice(preference.buyOnDipPrice)
       setBuyRestricted(preference.buyRestricted)
       setBuyRestrictedUntil(preference.buyRestrictedUntil ?? '')
+      setTargetBuyPriceOverride(preference.targetBuyPriceOverride ?? null)
+      setTargetBuyPriceOverrideEnabled(preference.targetBuyPriceOverride != null && preference.targetBuyPriceOverride > 0)
       setTargetPreference(preference)
       setSuccess(`${ticker} trading preferences saved.`)
       emitPortfolioUpdated()
@@ -2014,33 +2040,39 @@ export default function StockHistoryPage() {
       {error ? <div className="panel status status-error">{error}</div> : null}
       {success ? <div className="panel status status-success">{success}</div> : null}
 
+      {!loading ? (
+        <InsufficientSharesBanner
+          ticker={ticker}
+          buyPrice={stockTargets.buy}
+          basePurchaseSize={targetSettings.basePurchaseSize}
+          smallestDisplayLotShares={smallestDisplayLotShares}
+          isOverride={targetPreference?.targetBuyPriceOverride != null}
+        />
+      ) : null}
+
       {showSettingsModal ? (
       <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="ticker-settings-title"
         onClick={(event) => {
           if (event.target === event.currentTarget && !savingTickerPreference) setShowSettingsModal(false)
         }}>
-        <div ref={settingsModalRef} className="modal-card modal-card-wide modal-card-scrollable">
-          <div className="row-between">
-            <h3 id="ticker-settings-title">Settings - {ticker}</h3>
+        <div ref={settingsModalRef} className="modal-card modal-card-wide modal-card-scrollable ticker-settings-modal">
+          <div className="row-between ticker-settings-header">
+            <div>
+              <h3 id="ticker-settings-title">{ticker} settings</h3>
+              <p className="hint">Manage trading preferences and display lots for this ticker.</p>
+            </div>
             <button className="button" type="button" onClick={() => setShowSettingsModal(false)} disabled={savingTickerPreference}>
               Close
             </button>
           </div>
         <div className="ticker-page-settings-content">
-          <button className="button" type="button" onClick={() => {
-            setShowSettingsModal(false)
-            openInitialPurchaseModal()
-          }} disabled={!ticker || buyTransactionsAscending.length === 0 || savingTickerPreference}>
-            Mark Initial Purchases
-          </button>
           {!loading && !error ? (
-            <div className="panel panel-tight ticker-preferences-panel">
+            <div className="ticker-preferences-panel">
               <div className="ticker-preferences-content">
-                <div>
-                  <h3>Trading Preferences</h3>
-                  <p className="hint">Set {ticker}&apos;s base display-lot size for the dashboard comparison; it defaults to 3.</p>
-                </div>
                 <form className="ticker-preferences-form" onSubmit={onSaveTickerPreference}>
+                  <div className="ticker-settings-section">
+                  <h4>Display lots</h4>
+                  <p className="hint">Base size is used for the dashboard comparison and defaults to 3.</p>
                   <label className="ticker-base-size">
                     Base size
                     <input
@@ -2053,6 +2085,9 @@ export default function StockHistoryPage() {
                       required
                     />
                   </label>
+                  </div>
+                  <div className="ticker-settings-section">
+                  <h4>Trading preferences</h4>
                   <label className="checkbox-label">
                     <input
                       type="checkbox"
@@ -2071,6 +2106,7 @@ export default function StockHistoryPage() {
                     />
                     Buy on Dip
                   </label>
+                  <div className="ticker-settings-option">
                   <label className="checkbox-label">
                     <input
                       type="checkbox"
@@ -2099,6 +2135,49 @@ export default function StockHistoryPage() {
                       />
                     </label>
                   ) : null}
+                  </div>
+                  <div className="ticker-settings-option">
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={targetBuyPriceOverrideEnabled}
+                      onChange={(event) => {
+                        const checked = event.target.checked
+                        setTargetBuyPriceOverrideEnabled(checked)
+                        if (checked && targetBuyPriceOverride == null) setTargetBuyPriceOverride(suggestedBuyPrice)
+                      }}
+                      disabled={savingTickerPreference}
+                    />
+                    Target Buy Price Override
+                  </label>
+                  {targetBuyPriceOverrideEnabled ? (
+                    <label className="ticker-price-override">
+                      Price
+                      <input
+                        type="number"
+                        step="0.00000001"
+                        min="0.00000001"
+                        max="9999999999.99"
+                        value={targetBuyPriceOverride === null ? '' : targetBuyPriceOverride}
+                        onChange={(event) => {
+                          const value = event.target.value.trim()
+                          setTargetBuyPriceOverride(value === '' ? null : Number(value))
+                        }}
+                        disabled={savingTickerPreference}
+                        required
+                      />
+                    </label>
+                  ) : (
+                    <p className="hint ticker-price-override-info">
+                      {suggestedBuyPrice == null || smallestDisplayLotShares == null
+                        ? 'A suggested price is unavailable without a valid display lot and purchase size.'
+                        : <>Suggested price: <strong>${suggestedBuyPrice.toFixed(8)}</strong> to buy {Math.floor(smallestDisplayLotShares) + 1} whole shares, more than the smallest display lot.</>}
+                    </p>
+                  )}
+                  </div>
+                  </div>
+                  <div className="ticker-settings-section">
+                  <h4>Notes</h4>
                   <label className="note-label">
                     Note
                     <textarea
@@ -2109,6 +2188,7 @@ export default function StockHistoryPage() {
                       rows={4}
                     />
                   </label>
+                  </div>
                   <div className="form-actions">
                     <button className="button button-primary" type="submit" disabled={savingTickerPreference || (buyRestricted && !buyRestrictedUntil)}>
                       {savingTickerPreference ? 'Saving...' : 'Save Preferences'}
@@ -2120,6 +2200,18 @@ export default function StockHistoryPage() {
               {success ? <div className="status status-success">{success}</div> : null}
             </div>
           ) : null}
+          <div className="ticker-settings-section ticker-settings-purchases">
+            <div>
+              <h4>Initial purchases</h4>
+              <p className="hint">Select transactions to include in the initial buy performance breakdown.</p>
+            </div>
+            <button className="button" type="button" onClick={() => {
+              setShowSettingsModal(false)
+              openInitialPurchaseModal()
+            }} disabled={!ticker || buyTransactionsAscending.length === 0 || savingTickerPreference}>
+              Mark Initial Purchases
+            </button>
+          </div>
         </div>
         </div>
       </div>
@@ -2140,12 +2232,7 @@ export default function StockHistoryPage() {
 
       {!loading && !error && summary ? (
         <>
-          {note ? (
-            <div className="panel panel-note">
-              <h4 style={{ marginTop: 0 }}>Note</h4>
-              <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{note}</p>
-            </div>
-          ) : null}
+          <TickerNote note={note} />
           <div className="panel">
             <h3 className="ticker-summary-heading">Summary &amp; Performance</h3>
           <div className="stat-grid">

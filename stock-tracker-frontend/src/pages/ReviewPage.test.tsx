@@ -73,11 +73,12 @@ describe('calculated Review page', () => {
   it('shows all standard sections even when saved AI assumptions are disabled', () => {
     const html = renderWithRouter(createElement(ReviewSections, {
       review,
+      basePurchaseSize: 300,
       performanceData: { stockTransactions: [], cashTransactions: [], comparisonPoints: [] },
     }))
     for (const text of ['Recommended lot amount', 'Largest concentrations',
       'Potential Sales', 'Distance from buy and sell targets', 'Large Losses', 'Lot-specific sale assessment',
-      'Holdings without a stored close', 'Largest display-lot value at least 5× a $300 lot size ($1,500)']) {
+      'Holdings without a stored close', 'Largest display-lot value at least 3× Base Purchase Size']) {
       expect(html).toContain(text)
     }
     expect(html).not.toContain('Portfolio snapshot')
@@ -86,7 +87,7 @@ describe('calculated Review page', () => {
     expect(html).not.toContain('Important limitations')
     expect(html).not.toContain('Stored closes may be stale.')
     expect(html).not.toContain('Cash deployment')
-    expect(html).toContain('No largest individual display lot is valued at $1,500 or more.')
+    expect(html).toContain('No largest individual display lot is valued at $900.00 or more.')
     expect(html).not.toContain('href="/stocks/BELOW"')
     expect(html.indexOf('<h3>Recommended lot amount</h3>'))
       .toBeLessThan(html.indexOf('<h3>Largest concentrations</h3>'))
@@ -112,6 +113,7 @@ describe('calculated Review page', () => {
   it('retains explicit empty-section messages', () => {
     const html = renderWithRouter(createElement(ReviewSections, {
       review: { ...review, facts: [], snapshot: { ...review.snapshot, holdingReviewContext: [] } },
+      basePurchaseSize: 300,
     }))
     expect(html).toContain('No holding reached')
     expect(html).toContain('Potential Sales')
@@ -216,7 +218,7 @@ describe('recommended lot amount', () => {
 })
 
 describe('largest lots in concentrations review', () => {
-  it('uses the largest individual display lot times the stored close for the $1,500 threshold', () => {
+  it('uses the configured purchase size, includes the 3x boundary, and sorts by descending multiple', () => {
     const snapshot = {
       ...review.snapshot,
       holdings: [{
@@ -229,16 +231,46 @@ describe('largest lots in concentrations review', () => {
         marketValue: 1336, unrealizedGainLoss: 336, companyName: null, sector: null,
         industry: null, sizeClassification: null, profileUpdatedAt: null,
         percentOfPricedEquities: null, percentOfPortfolio: null,
+      }, {
+        ticker: 'EXACT', quantity: 3, costBasis: 750, closePrice: 250, marketDate: '2026-10-26',
+        marketValue: 750, unrealizedGainLoss: 0, companyName: null, sector: null,
+        industry: null, sizeClassification: null, profileUpdatedAt: null,
+        percentOfPricedEquities: null, percentOfPortfolio: null,
+      }, {
+        ticker: 'NOQUOTE', quantity: 100, costBasis: 1000, closePrice: null, marketDate: null,
+        marketValue: null, unrealizedGainLoss: null, companyName: null, sector: null,
+        industry: null, sizeClassification: null, profileUpdatedAt: null,
+        percentOfPricedEquities: null, percentOfPortfolio: null,
       }],
       holdingReviewContext: [
         { ...holding, ticker: 'SNOW', displayLotCount: 3, largestDisplayLot: 5 },
         { ...holding, ticker: 'BELOW', displayLotCount: 3, largestDisplayLot: 4 },
+        { ...holding, ticker: 'EXACT', displayLotCount: 1, largestDisplayLot: 3 },
+        { ...holding, ticker: 'NOQUOTE', displayLotCount: 1, largestDisplayLot: 100 },
       ],
     }
 
-    expect(getHoldingsWithLargeLots(snapshot)).toEqual([
-      { ticker: 'SNOW', largestDisplayLot: 5, closePrice: 334, marketDate: '2026-10-26', marketValue: 1670 },
+    expect(getHoldingsWithLargeLots(snapshot, 250)).toEqual([
+      { ticker: 'SNOW', largestDisplayLot: 5, closePrice: 334, marketDate: '2026-10-26', marketValue: 1670, multiple: 6.68 },
+      { ticker: 'BELOW', largestDisplayLot: 4, closePrice: 334, marketDate: '2026-10-26', marketValue: 1336, multiple: 5.344 },
+      { ticker: 'EXACT', largestDisplayLot: 3, closePrice: 250, marketDate: '2026-10-26', marketValue: 750, multiple: 3 },
     ])
+    expect(getHoldingsWithLargeLots(snapshot, 250.01).map((lot) => lot.ticker)).toEqual(['SNOW', 'BELOW'])
+    expect(getHoldingsWithLargeLots(snapshot, 0)).toEqual([])
+
+    const html = renderWithRouter(createElement(ReviewSections, { review: { ...review, snapshot }, basePurchaseSize: 250 }))
+    expect(html).toContain('Base Purchase Size: $250.00; threshold: $750.00.')
+    expect(html).toContain('<th>Multiple</th>')
+    expect(html).toContain('6.68×')
+    expect(html).toContain('3.00×')
+    expect(html.indexOf('href="/stocks/SNOW"')).toBeLessThan(html.indexOf('href="/stocks/BELOW"'))
+    expect(html.indexOf('href="/stocks/BELOW"')).toBeLessThan(html.indexOf('href="/stocks/EXACT"'))
+  })
+
+  it('reports settings errors instead of showing an assumed threshold', () => {
+    const html = renderWithRouter(createElement(ReviewSections, { review, basePurchaseSize: null, settingsError: 'Unable to load settings' }))
+    expect(html).toContain('Unable to load settings')
+    expect(html).not.toContain('No largest individual display lot is valued at')
   })
 })
 

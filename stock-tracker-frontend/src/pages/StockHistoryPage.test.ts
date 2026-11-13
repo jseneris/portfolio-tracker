@@ -6,6 +6,7 @@ import {
   buildThreeMonthChartPoints,
   calculateYearlyPerformance,
   CurrentPriceStat,
+  TickerNote,
   findPriceOnOrBefore,
   getStockDocumentTitle,
   getStockHeading,
@@ -47,6 +48,16 @@ const PRICES = [
   { priceDate: '2025-12-31', closePrice: 200 },
   { priceDate: '2026-09-04', closePrice: 250 },
 ]
+
+describe('ticker note', () => {
+  it('renders a collapsed note with a visible heading and preserves line breaks', () => {
+    const html = renderToStaticMarkup(createElement(TickerNote, { note: 'First line\nSecond line' }))
+    expect(html).toContain('<details class="panel panel-note">')
+    expect(html).toContain('<summary><strong>Note</strong></summary>')
+    expect(html).toContain('First line\nSecond line')
+    expect(renderToStaticMarkup(createElement(TickerNote, { note: '' }))).toBe('')
+  })
+})
 
 describe('current price and target stat', () => {
   it('shows the price once with target values and position', () => {

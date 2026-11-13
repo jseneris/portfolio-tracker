@@ -18,7 +18,7 @@ import { normalizeTargetSettings } from './targetPrices'
 export type TickerInfoBadge = { symbol: string; tone: 'green' | 'red'; message: string }
 
 export function getTickerInfoBadges(
-  preference: Pick<TickerPreference, 'baseSize' | 'buyOnDip' | 'buyOnDipPrice' | 'note'>
+  preference: Pick<TickerPreference, 'baseSize' | 'buyOnDip' | 'buyOnDipPrice' | 'note' | 'targetBuyPriceOverride'>
     & Partial<Pick<TickerPreference, 'isBuyRestricted' | 'buyRestrictedUntil' | 'restrictionSalePrice'>>,
   largestDisplayLotValue: number | null,
   basePurchaseSize: number
@@ -36,6 +36,7 @@ export function getTickerInfoBadges(
   }
   if (preference.note) badges.push({ symbol: 'N', tone: 'green', message: preference.note })
   if (preference.buyOnDip) badges.push({ symbol: 'B', tone: 'green', message: `Buy on Dip is enabled${preference.buyOnDipPrice != null ? ` with a base price of ${formatStockPrice4(preference.buyOnDipPrice)}` : ''}.` })
+  if (preference.targetBuyPriceOverride != null) badges.push({ symbol: '💰', tone: 'green', message: `Target Buy Price Override: ${formatStockPrice4(preference.targetBuyPriceOverride)}.` })
   if (preference.baseSize !== 3) badges.push({
     symbol: preference.baseSize < 3 ? '\u2013' : '+',
     tone: preference.baseSize < 3 ? 'red' : 'green',

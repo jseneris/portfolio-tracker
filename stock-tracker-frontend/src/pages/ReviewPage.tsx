@@ -5,6 +5,7 @@ import {
   getPortfolioComparisonAll,
   getPortfolioReview,
   getStockTransactions,
+  getUserTargetSettings,
   type CashTransaction,
   type PortfolioComparisonPoint,
   type PortfolioReview,
@@ -19,10 +20,10 @@ import { TickerInfoBadges } from '../tickerBadges'
 type ReviewHolding = NonNullable<PortfolioReview['snapshot']['holdingReviewContext']>[number]
 type RecommendedLotAmount = NonNullable<PortfolioReview['snapshot']['recommendedLotAmount']>
 const percent = (value: number | undefined) => value == null ? '--' : `${value.toFixed(2)}%`
-const ASSUMED_LOT_SIZE = 300
-const LARGEST_LOT_MULTIPLE = 5
+const LARGEST_LOT_MULTIPLE = 3
 
-export function getHoldingsWithLargeLots(snapshot: PortfolioReview['snapshot']) {
+export function getHoldingsWithLargeLots(snapshot: PortfolioReview['snapshot'], basePurchaseSize: number) {
+  if (!Number.isFinite(basePurchaseSize) || basePurchaseSize <= 0) return []
   const largestDisplayLots = new Map(
     (snapshot.holdingReviewContext ?? []).map((holding) => [holding.ticker, holding.largestDisplayLot])
   )
@@ -30,17 +31,20 @@ export function getHoldingsWithLargeLots(snapshot: PortfolioReview['snapshot']) 
     .map((holding) => {
       const largestDisplayLot = largestDisplayLots.get(holding.ticker) ?? 0
       const closePrice = holding.closePrice
+      const marketValue = closePrice == null ? null : largestDisplayLot * closePrice
       return {
         ticker: holding.ticker,
         largestDisplayLot,
         closePrice,
         marketDate: holding.marketDate,
-        marketValue: closePrice == null ? null : largestDisplayLot * closePrice,
+        marketValue,
+        multiple: marketValue == null ? null : marketValue / basePurchaseSize,
       }
     })
-    .filter((holding): holding is typeof holding & { marketValue: number } => holding.marketValue != null &&
-      holding.marketValue >= ASSUMED_LOT_SIZE * LARGEST_LOT_MULTIPLE)
-    .sort((a, b) => b.marketValue - a.marketValue)
+    .filter((holding): holding is typeof holding & { marketValue: number; multiple: number } =>
+      holding.marketValue != null && Number.isFinite(holding.marketValue)
+      && holding.multiple != null && Number.isFinite(holding.multiple) && holding.multiple >= LARGEST_LOT_MULTIPLE)
+    .sort((a, b) => b.multiple - a.multiple || a.ticker.localeCompare(b.ticker))
 }
 
 function TickerLink({ ticker }: { ticker: string }) {
@@ -260,8 +264,12 @@ export function PerformanceSection({
 export function ReviewSections({
   review,
   performanceData,
+  basePurchaseSize,
+  settingsError,
 }: {
   review: PortfolioReview
+  basePurchaseSize: number | null
+  settingsError?: string | null
   performanceData?: {
     stockTransactions: StockTransaction[]
     cashTransactions: CashTransaction[]
@@ -270,7 +278,7 @@ export function ReviewSections({
 }) {
   const concentrations = review.facts.filter((fact) => fact.type === 'concentration')
   const missing = review.facts.filter((fact) => fact.type === 'missing_price')
-  const largeLots = getHoldingsWithLargeLots(review.snapshot)
+  const largeLots = basePurchaseSize == null ? [] : getHoldingsWithLargeLots(review.snapshot, basePurchaseSize)
   return <>
     <p className="insights-timestamp">Updated {new Date(review.generatedAt).toLocaleString()}</p>
     {performanceData ? <PerformanceSection {...performanceData} /> : null}
@@ -283,17 +291,23 @@ export function ReviewSections({
         <tbody>{concentrations.map((fact) => <tr key={fact.id}><td><strong><TickerLink ticker={fact.ticker} /></strong></td>
           <td>{percent(fact.percentOfEquities)}</td><td>{formatCurrency2(fact.marketValue)}</td></tr>)}</tbody>
       </table></div> : <p>No holding reached the 20% concentration review threshold.</p>}
-      <h4>Largest display-lot value at least 5× a $300 lot size ($1,500)</h4>
-      <p className="muted-text">Values use the largest individual display lot × latest stored close. The price date is shown for verification.</p>
+      <h4>Largest display-lot value at least 3× Base Purchase Size</h4>
+      {settingsError ? <p className="status status-error" role="alert">{settingsError}</p> : basePurchaseSize == null ? (
+        <p role="status">Loading Base Purchase Size...</p>
+      ) : <>
+      <p className="muted-text">Base Purchase Size: {formatCurrency2(basePurchaseSize)}; threshold: {formatCurrency2(basePurchaseSize * LARGEST_LOT_MULTIPLE)}.
+        Values use the largest individual display lot × latest stored close. Ordered by largest multiple; the price date is shown for verification.</p>
       {largeLots.length ? <div className="table-scroll"><table className="table">
-        <thead><tr><th>Ticker</th><th>Largest display lot (shares)</th><th>Stored close</th><th>Price as of</th><th>Largest display-lot value</th></tr></thead>
+        <thead><tr><th>Ticker</th><th>Largest display lot (shares)</th><th>Stored close</th><th>Price as of</th><th>Largest display-lot value</th><th>Multiple</th></tr></thead>
         <tbody>{largeLots.map((lot) => <tr key={lot.ticker}>
           <td><strong><TickerLink ticker={lot.ticker} /></strong></td>
           <td>{lot.largestDisplayLot}</td>
           <td>{formatCurrency2(lot.closePrice)}</td><td>{lot.marketDate ?? 'Unknown'}</td>
           <td>{formatCurrency2(lot.marketValue)}</td>
+          <td>{lot.multiple.toFixed(2)}×</td>
         </tr>)}</tbody>
-      </table></div> : <p>No largest individual display lot is valued at $1,500 or more.</p>}
+      </table></div> : <p>No largest individual display lot is valued at {formatCurrency2(basePurchaseSize * LARGEST_LOT_MULTIPLE)} or more.</p>}
+      </>}
       </div>
     </details>
     <TargetDistanceSection acquisitionTiming={review.snapshot.holdingReviewContext} openLots={review.snapshot.openLots}
@@ -316,6 +330,8 @@ export default function ReviewPage() {
   } | null>(null)
   const [performanceLoading, setPerformanceLoading] = useState(true)
   const [performanceError, setPerformanceError] = useState<string | null>(null)
+  const [basePurchaseSize, setBasePurchaseSize] = useState<number | null>(null)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -325,6 +341,17 @@ export default function ReviewPage() {
       if (!cancelled) setError(err instanceof Error ? err.message : 'Unable to load portfolio review.')
     }).finally(() => {
       if (!cancelled) setLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [])
+  useEffect(() => {
+    let cancelled = false
+    getUserTargetSettings().then((settings) => {
+      const amount = Number(settings.basePurchaseSize)
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error('Base Purchase Size must be a positive amount.')
+      if (!cancelled) setBasePurchaseSize(amount)
+    }).catch((err: unknown) => {
+      if (!cancelled) setSettingsError(err instanceof Error ? err.message : 'Unable to load Base Purchase Size.')
     })
     return () => { cancelled = true }
   }, [])
@@ -359,7 +386,7 @@ export default function ReviewPage() {
       {performanceLoading ? <p role="status">Loading performance summaries...</p>
         : performanceError ? <p className="status status-error" role="alert">{performanceError}</p>
           : null}
-      <ReviewSections review={review} performanceData={performanceData ?? undefined} />
+      <ReviewSections review={review} performanceData={performanceData ?? undefined} basePurchaseSize={basePurchaseSize} settingsError={settingsError} />
     </> : null}
   </div>
 }

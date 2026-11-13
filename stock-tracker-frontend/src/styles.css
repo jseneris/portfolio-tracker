@@ -583,10 +583,34 @@ body {
 
 .ticker-page-settings-content {
   display: grid;
-  justify-items: start;
-  gap: 0.75rem;
-  padding-top: 0.75rem;
+  gap: 1rem;
+  padding-top: 1rem;
 }
+
+.ticker-settings-header { align-items: flex-start; gap: 1rem; }
+.ticker-settings-header h3 { margin: 0; }
+.ticker-settings-header p { margin: 0.3rem 0 0; }
+.ticker-settings-section {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid #d9e2ec;
+  border-radius: 0.6rem;
+  background: #f8fafc;
+}
+.ticker-settings-section h4 { margin: 0; color: #0f172a; }
+.ticker-settings-section p { margin: 0; }
+.ticker-settings-option { display: grid; gap: 0.35rem; }
+.ticker-settings-section .note-label { width: 100%; }
+.ticker-settings-section textarea { width: 100%; }
+.ticker-settings-purchases { grid-template-columns: 1fr auto; align-items: center; }
+.insufficient-shares-notice { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.insufficient-shares-notice summary { cursor: pointer; }
+.insufficient-shares-notice p { margin: 0.75rem 0 0; }
+.panel-note { background: #f3edfa; color: #4c3a63; border-color: #dacbea; }
+.panel-note summary { cursor: pointer; }
+.panel-note p { margin: 0.75rem 0 0; white-space: pre-wrap; }
+.holdings-mobile-target-badges { display: none; }
 
 .stock-title-row {
   display: flex;
@@ -984,8 +1008,7 @@ body {
 
 .ticker-preferences-form {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-  align-items: end;
+  grid-template-columns: 1fr;
   gap: 0.75rem;
 }
 
@@ -1042,6 +1065,26 @@ body {
   border-radius: 0.4rem;
   padding: 0.35rem 0.5rem;
   font: inherit;
+}
+
+.ticker-price-override {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.ticker-price-override input {
+  width: 10rem;
+  min-height: 2.25rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+
+.ticker-price-override-info {
+  font-size: 0.82rem;
 }
 
 .lot-count-difference {
@@ -1975,6 +2018,21 @@ body {
   justify-content: center;
 }
 
+.allocation-year-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.allocation-year-selector select {
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.4rem;
+  background: #fff;
+}
+
 .allocation-chart {
   width: 320px;
   max-width: 100%;
@@ -2042,6 +2100,9 @@ body {
 }
 
 @media (max-width: 640px) {
+  .holdings-mobile-target-badges { display: inline; }
+  .ticker-settings-purchases { grid-template-columns: 1fr; }
+  .ticker-settings-purchases .button { justify-self: start; }
   input,
   select,
   textarea {

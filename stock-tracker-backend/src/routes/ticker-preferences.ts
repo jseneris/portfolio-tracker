@@ -13,6 +13,7 @@ type TickerPreferenceRow = {
   buyRestrictedUntil: Date | string | null;
   restrictionSalePrice: number | null;
   note: string | null;
+  targetBuyPriceOverride: number | null;
 };
 
 function normalizeTicker(value: unknown): string {
@@ -57,12 +58,14 @@ function mapPreference(row: TickerPreferenceRow, today: string) {
     isBuyRestricted: buyRestricted && buyRestrictedUntil != null && today <= buyRestrictedUntil,
     restrictionSalePrice: row.restrictionSalePrice == null ? null : Number(row.restrictionSalePrice),
     note: row.note ?? null,
+    targetBuyPriceOverride: row.targetBuyPriceOverride == null ? null : Number(row.targetBuyPriceOverride),
   };
 }
 
 const preferenceSelect = `
   SELECT preference.ticker, preference.baseSize, preference.buyOnDip, preference.buyOnDipPrice,
-    preference.buyRestricted, preference.buyRestrictedUntil, preference.note, restrictionSale.price AS restrictionSalePrice
+    preference.buyRestricted, preference.buyRestrictedUntil, preference.note, preference.targetBuyPriceOverride,
+    restrictionSale.price AS restrictionSalePrice
   FROM UserTickerPreferences preference
   OUTER APPLY (
     SELECT TOP 1 sale.price
@@ -112,7 +115,7 @@ router.get('/:ticker', async (req: Request, res: Response) => {
     const row = result.recordset[0] as TickerPreferenceRow | undefined;
     res.json(row
       ? mapPreference(row, new Date().toISOString().slice(0, 10))
-      : { ticker, baseSize: 3, buyOnDip: false, buyOnDipPrice: null, buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null, note: null });
+      : { ticker, baseSize: 3, buyOnDip: false, buyOnDipPrice: null, buyRestricted: false, buyRestrictedUntil: null, isBuyRestricted: false, restrictionSalePrice: null, note: null, targetBuyPriceOverride: null });
   } catch (error) {
     res.status(500).json({ error: String(error) });
   }
@@ -128,6 +131,8 @@ router.put('/:ticker', async (req: Request, res: Response) => {
     const buyRestricted = req.body?.buyRestricted;
     const buyRestrictedUntil = normalizeDateOnly(req.body?.buyRestrictedUntil);
     const note = typeof req.body?.note === 'string' ? (req.body.note.trim() || null) : null;
+    const targetBuyPriceOverride = req.body?.targetBuyPriceOverride;
+    const hasTargetBuyPriceOverride = Object.prototype.hasOwnProperty.call(req.body ?? {}, 'targetBuyPriceOverride');
 
     if (!ticker || ticker.length > 10) {
       return res.status(400).json({ error: 'ticker must be between 1 and 10 characters' });
@@ -140,6 +145,9 @@ router.put('/:ticker', async (req: Request, res: Response) => {
     }
     if (buyOnDipPrice != null && (typeof buyOnDipPrice !== 'number' || !Number.isFinite(buyOnDipPrice) || buyOnDipPrice < 0.00000001 || buyOnDipPrice >= 10000000000)) {
       return res.status(400).json({ error: 'buyOnDipPrice must be a positive price within the supported range' });
+    }
+    if (targetBuyPriceOverride != null && (typeof targetBuyPriceOverride !== 'number' || !Number.isFinite(targetBuyPriceOverride) || targetBuyPriceOverride < 0.00000001 || targetBuyPriceOverride >= 10000000000)) {
+      return res.status(400).json({ error: 'targetBuyPriceOverride must be a positive price within the supported range' });
     }
     if (buyRestricted && buyRestrictedUntil == null) {
       return res.status(400).json({ error: 'buyRestrictedUntil is required when buyRestricted is enabled' });
@@ -158,6 +166,8 @@ router.put('/:ticker', async (req: Request, res: Response) => {
       .input('buyRestricted', sql.Bit, buyRestricted)
       .input('buyRestrictedUntil', sql.Date, storedRestrictionDate)
       .input('note', sql.NVarChar(sql.MAX), note)
+      .input('targetBuyPriceOverride', sql.Decimal(18, 8), targetBuyPriceOverride ?? null)
+      .input('hasTargetBuyPriceOverride', sql.Bit, hasTargetBuyPriceOverride)
       .query(`
         MERGE UserTickerPreferences AS target
         USING (SELECT @userId AS userId, @ticker AS ticker) AS source
@@ -169,10 +179,11 @@ router.put('/:ticker', async (req: Request, res: Response) => {
                      buyRestricted = @buyRestricted,
                      buyRestrictedUntil = @buyRestrictedUntil,
                      note = @note,
+                     targetBuyPriceOverride = CASE WHEN @hasTargetBuyPriceOverride = 1 THEN @targetBuyPriceOverride ELSE target.targetBuyPriceOverride END,
                      updatedAt = GETUTCDATE()
         WHEN NOT MATCHED THEN
-          INSERT (id, userId, ticker, baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil, note)
-          VALUES (NEWID(), @userId, @ticker, COALESCE(@baseSize, 3), @buyOnDip, CASE WHEN @buyOnDip = 1 THEN @buyOnDipPrice ELSE NULL END, @buyRestricted, @buyRestrictedUntil, @note);
+          INSERT (id, userId, ticker, baseSize, buyOnDip, buyOnDipPrice, buyRestricted, buyRestrictedUntil, note, targetBuyPriceOverride)
+          VALUES (NEWID(), @userId, @ticker, COALESCE(@baseSize, 3), @buyOnDip, CASE WHEN @buyOnDip = 1 THEN @buyOnDipPrice ELSE NULL END, @buyRestricted, @buyRestrictedUntil, @note, @targetBuyPriceOverride);
         ${preferenceSelect}
         WHERE preference.userId = @userId AND preference.ticker = @ticker;
       `);
